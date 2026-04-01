@@ -57,22 +57,19 @@ public class SprintReport
     public DateTime? EndDate { get; set; }
     public List<SprintIssue> Issues { get; set; } = new();
 
-    // ── Counts ────────────────────────────────────────────────────────────────
     public int TotalIssues => Issues.Count;
     public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
     public int InProgressCount => Issues.Count(i => i.StatusCategoryKey == "indeterminate");
     public int ToDoCount => Issues.Count(i => i.StatusCategoryKey == "new");
 
-    // ── Story points ──────────────────────────────────────────────────────────
     public int TotalStoryPoints => Issues.Sum(i => i.StoryPoints ?? 0);
     public int DoneStoryPoints => Issues.Where(i => i.StatusCategoryKey == "done").Sum(i => i.StoryPoints ?? 0);
     public bool HasStoryPoints => Issues.Any(i => i.StoryPoints.HasValue);
 
-    // ── Time ──────────────────────────────────────────────────────────────────
     public int TotalTimeSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
     public int TotalOriginalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
+    public int TotalRemainingEstimateSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
 
-    // ── Sprint timeline ───────────────────────────────────────────────────────
     public int TotalSprintDays => (StartDate.HasValue && EndDate.HasValue)
         ? Math.Max(1, (int)(EndDate.Value.Date - StartDate.Value.Date).TotalDays)
         : 14;
@@ -88,9 +85,6 @@ public class SprintReport
     public double SprintProgressPct => (double)ElapsedDays / TotalSprintDays * 100;
     public double CompletionPct => TotalIssues == 0 ? 0 : (double)DoneCount / TotalIssues * 100;
 
-    // ── Risk ──────────────────────────────────────────────────────────────────
-    // Gap between how far through the sprint we are and how much work is done.
-    // >15% gap = At Risk, >35% gap = Behind.
     public SprintRisk RiskLevel
     {
         get
@@ -106,13 +100,20 @@ public class SprintReport
         }
     }
 
-    // ── At-risk issues ────────────────────────────────────────────────────────
-    // Not-done issues that are likely to miss the sprint:
-    //   • Still "To Do" when sprint is >50% through
-    //   • "In Progress" but no worklog in the last 2 days (stale)
-    //   • Remaining estimate > days remaining
     public List<SprintIssue> AtRiskIssues => Issues
-        .Where(i => (i.StatusCategoryKey != "done" && i.Status != "In Review")  && IsAtRisk(i))
+        .Where(i => (i.StatusCategoryKey != "done" && i.Status != "In Review") && IsAtRisk(i))
+        .ToList();
+
+    // Epics derived from sprint issues (used by delivery dashboard)
+    public List<EpicSummary> EpicSummaries => Issues
+        .GroupBy(i => i.EpicKey)
+        .Select(g => new EpicSummary
+        {
+            Key = g.Key,
+            Name = g.First().EpicName,
+            Issues = g.ToList()
+        })
+        .OrderBy(e => string.IsNullOrEmpty(e.Key) ? "ZZZ" : e.Key)
         .ToList();
 
     private bool IsAtRisk(SprintIssue issue)
@@ -134,7 +135,7 @@ public class SprintIssue
     public string Summary { get; set; } = "";
     public string IssueType { get; set; } = "";
     public string Status { get; set; } = "";
-    public string StatusCategoryKey { get; set; } = ""; // "new" | "indeterminate" | "done"
+    public string StatusCategoryKey { get; set; } = "";
     public string Assignee { get; set; } = "Unassigned";
     public string Priority { get; set; } = "Medium";
     public int? StoryPoints { get; set; }
@@ -144,10 +145,52 @@ public class SprintIssue
     public int TimeSpentSeconds { get; set; }
     public string RemainingEstimate { get; set; } = "-";
     public int RemainingEstimateSeconds { get; set; }
+    public string EpicKey { get; set; } = "";
+    public string EpicName { get; set; } = "No Epic";
     public List<WorklogEntry> Worklogs { get; set; } = new();
     public bool IsExpanded { get; set; }
 
     public int DaysSinceLastWorklog => Worklogs.Any()
         ? Math.Max(0, (int)(DateTime.Today - Worklogs.Max(w => w.Started).Date).TotalDays)
         : 999;
+}
+
+// ── Jira Saved Filter ─────────────────────────────────────────────────────────
+
+public class JiraFilter
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Jql { get; set; } = "";
+    public string Description { get; set; } = "";
+}
+
+// ── Epic Summary (aggregated from sprint issues) ──────────────────────────────
+
+public class EpicSummary
+{
+    public string Key { get; set; } = "";
+    public string Name { get; set; } = "";
+    public List<SprintIssue> Issues { get; set; } = new();
+
+    public int TotalIssues => Issues.Count;
+    public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
+    public int InProgressCount => Issues.Count(i => i.StatusCategoryKey == "indeterminate");
+    public int ToDoCount => Issues.Count(i => i.StatusCategoryKey == "new");
+
+    public int TotalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
+    public int TotalSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
+    public int TotalRemainingSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
+
+    public double CompletionPct => TotalIssues == 0 ? 0
+        : (double)DoneCount / TotalIssues * 100;
+
+    public double HoursVariancePct => TotalEstimateSeconds == 0 ? 0
+        : (TotalSpentSeconds - TotalEstimateSeconds) / (double)TotalEstimateSeconds * 100;
+
+    public bool IsOverBudget => TotalEstimateSeconds > 0 && TotalSpentSeconds > TotalEstimateSeconds;
+
+    public string DisplayName => string.IsNullOrEmpty(Name) || Name == "No Epic"
+        ? (string.IsNullOrEmpty(Key) ? "No Epic" : Key)
+        : $"{Key} {Name}" ;
 }

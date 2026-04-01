@@ -1,0 +1,792 @@
+@page "/delivery"
+@rendermode InteractiveServer
+@inject JiraService JiraService
+@inject IJSRuntime JS
+@using JiraReportingTool.Models
+
+<PageTitle>Team Delivery Dashboard</PageTitle>
+
+<h1 class="mb-3">Team Delivery Dashboard</h1>
+
+<!-- ── Load form ─────────────────────────────────────────────────────────── -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+
+            <!-- Saved filter -->
+            <div class="col-md-auto">
+                <label class="form-label small text-muted mb-1">Jira Saved Filter</label>
+                <div class="d-flex gap-2">
+                    <select class="form-select" style="width:280px"
+                            @bind="SelectedFilterId"
+                            disabled="@(FiltersLoading || !string.IsNullOrEmpty(SprintId))">
+                        <option value="">— select a filter —</option>
+                        @foreach (var f in MyFilters)
+                        {
+                            <option value="@f.Id" title="@f.Jql">@f.Name</option>
+                        }
+                    </select>
+                    @if (FiltersLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm align-self-center text-muted"></span>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(SelectedFilterJql))
+                {
+                    <div class="text-muted small mt-1 text-truncate" style="max-width:280px" title="@SelectedFilterJql">
+                        JQL: @SelectedFilterJql
+                    </div>
+                }
+            </div>
+
+            <!-- OR divider -->
+            <div class="col-auto d-flex align-items-center pb-1">
+                <span class="text-muted fw-semibold">or</span>
+            </div>
+
+            <!-- Sprint ID -->
+            <div class="col-auto">
+                <label class="form-label small text-muted mb-1">Sprint ID</label>
+                <input class="form-control" style="width:140px"
+                       @bind="SprintId" @onkeyup="HandleKeyUp"
+                       placeholder="e.g. 6690"
+                       disabled="@(!string.IsNullOrEmpty(SelectedFilterId))" />
+            </div>
+
+            <div class="col-auto">
+                <button class="btn btn-primary" @onclick="LoadData"
+                        disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId)))">
+                    @if (IsLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    }
+                    Load
+                </button>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+@if (ErrorMessage != null)
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+@if (Report != null)
+{
+    <!-- ── Sprint Health Bar ──────────────────────────────────────────────── -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold @(Report.CompletionPct >= 80 ? "text-success" : Report.CompletionPct >= 50 ? "text-warning" : "text-danger")">
+                        @((int)FilteredReport.CompletionPct)%
+                    </div>
+                    <div class="text-muted small">Sprint Completion</div>
+                    <div class="progress mt-2" style="height:5px">
+                        <div class="progress-bar bg-success" style="width:@((int)FilteredReport.CompletionPct)%"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold">@Fmt(FilteredReport.TotalTimeSpentSeconds)<span class="fs-6 text-muted"> / @Fmt(FilteredReport.TotalOriginalEstimateSeconds)</span></div>
+                    <div class="text-muted small">Hours Logged / Planned</div>
+                    @if (FilteredReport.TotalOriginalEstimateSeconds > 0)
+                    {
+                        var budgetPct = (int)((double)FilteredReport.TotalTimeSpentSeconds / FilteredReport.TotalOriginalEstimateSeconds * 100);
+                        <div class="progress mt-2" style="height:5px">
+                            <div class="progress-bar @(budgetPct > 100 ? "bg-danger" : "bg-primary")" style="width:@Math.Min(budgetPct,100)%"></div>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold">@Fmt(FilteredReport.TotalRemainingEstimateSeconds)</div>
+                    <div class="text-muted small">Hours Remaining</div>
+                    <div class="text-muted small mt-1">@Report.DaysRemaining days left in sprint</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100 border-@RiskColor(Report.RiskLevel) border-start border-3">
+                <div class="card-body py-3">
+                    <div class="fs-5 fw-bold">@RiskLabel(Report.RiskLevel)</div>
+                    <div class="text-muted small">Sprint Risk</div>
+                    <div class="text-muted small mt-1">@FilteredReport.AtRiskIssues.Count at-risk tasks</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Filters ────────────────────────────────────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body py-2">
+            <div class="row g-2 align-items-center">
+                <div class="col-auto">
+                    <label class="form-label small text-muted mb-0 me-1">Assignee</label>
+                    <div style="width:180px">
+                        <input class="form-control form-control-sm mb-1" placeholder="Search member…"
+                               @bind="AssigneeSearch" @bind:event="oninput" />
+                        <select class="form-select form-select-sm" @bind="FilterAssignee" @bind:after="OnFilterChanged">
+                            <option value="">All members</option>
+                            @foreach (var a in AssigneeOptions)
+                            {
+                                <option value="@a">@a</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="col-auto">
+                    <label class="form-label small text-muted mb-0 me-1">Epic</label>
+                    <div style="width:280px">
+                        <input class="form-control form-control-sm mb-1" placeholder="Search epic…"
+                               @bind="EpicSearch" @bind:event="oninput" />
+                        <select class="form-select form-select-sm" @bind="FilterEpic" @bind:after="OnFilterChanged">
+                            <option value="">All epics</option>
+                            @foreach (var e in EpicOptions)
+                            {
+                                <option value="@e.Key">@e.Key — @e.DisplayName</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                @if (!string.IsNullOrEmpty(FilterAssignee) || !string.IsNullOrEmpty(FilterEpic))
+                {
+                    <div class="col-auto">
+                        <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFilters">Clear filters</button>
+                    </div>
+                }
+                <div class="col-auto ms-auto">
+                    <span class="text-muted small">@FilteredIssues.Count of @Report.TotalIssues issues</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Tabs ───────────────────────────────────────────────────────────── -->
+    <ul class="nav nav-tabs mb-0">
+        <li class="nav-item">
+            <button class="nav-link @(ActiveTab=="remaining" ? "active" : "")" @onclick='() => SwitchTab("remaining")'>
+                Remaining Work
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(ActiveTab=="forecast" ? "active" : "")" @onclick='() => SwitchTab("forecast")'>
+                Hours &amp; Forecast
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(ActiveTab=="workload" ? "active" : "")" @onclick='() => SwitchTab("workload")'>
+                Workload
+            </button>
+        </li>
+    </ul>
+
+    <div class="card border-0 shadow-sm" style="border-top-left-radius:0">
+        <div class="card-body">
+
+            <!-- ══ TAB 1: REMAINING WORK ══════════════════════════════════ -->
+            @if (ActiveTab == "remaining")
+            {
+                <!-- Epic progress cards -->
+                <div class="row g-3 mb-4">
+                    @foreach (var epic in FilteredEpics)
+                    {
+                        var epicPct = (int)epic.CompletionPct;
+                        <div class="col-md-6 col-lg-4">
+                            <div class="card border-0 border-start border-3 @EpicBorderColor(epic) shadow-sm h-100">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-start mb-1">
+                                        <div>
+                                            <div class="fw-semibold text-truncate" style="max-width:200px" title="@epic.DisplayName">@epic.DisplayName</div>
+                                            <div class="text-muted small">@epic.Key</div>
+                                        </div>
+                                        <span class="badge @StatusBadgeFromPct(epicPct)">@epicPct%</span>
+                                    </div>
+                                    <div class="progress my-2" style="height:8px;border-radius:4px">
+                                        <div class="progress-bar bg-success" style="width:@Pct(epic.DoneCount,epic.TotalIssues)%"></div>
+                                        <div class="progress-bar bg-primary" style="width:@Pct(epic.InProgressCount,epic.TotalIssues)%"></div>
+                                        <div class="progress-bar bg-secondary opacity-25" style="width:@Pct(epic.ToDoCount,epic.TotalIssues)%"></div>
+                                    </div>
+                                    <div class="d-flex justify-content-between small text-muted">
+                                        <span>@epic.DoneCount/@epic.TotalIssues tasks done</span>
+                                        <span>@Fmt(epic.TotalRemainingSeconds) remaining</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <!-- Task table -->
+                <h6 class="text-muted text-uppercase small fw-semibold mb-2">Task Detail</h6>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Epic</th>
+                                <th>Key</th>
+                                <th>Task</th>
+                                <th>Assignee</th>
+                                <th style="width:80px">Status</th>
+                                <th style="width:75px">Est.</th>
+                                <th style="width:75px">Logged</th>
+                                <th style="width:75px">Remaining</th>
+                                <th style="width:110px">Progress</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var epic in FilteredEpics)
+                            {
+                                @foreach (var issue in epic.Issues)
+                                {
+                                    var pct = IssueProgress(issue);
+                                    <tr>
+                                        <td class="text-muted text-nowrap small">@(string.IsNullOrEmpty(issue.EpicKey) ? "—" : issue.EpicKey)</td>
+                                        <td class="fw-semibold text-nowrap">@issue.Key</td>
+                                        <td>@issue.Summary</td>
+                                        <td class="text-nowrap">@issue.Assignee</td>
+                                        <td><span class="badge @StatusBadge(issue.Status, issue.StatusCategoryKey)">@issue.Status</span></td>
+                                        <td class="text-nowrap">@(issue.OriginalEstimate == "-" ? "—" : issue.OriginalEstimate)</td>
+                                        <td class="text-nowrap">@(issue.TimeSpent == "-" ? "—" : issue.TimeSpent)</td>
+                                        <td class="text-nowrap @(issue.RemainingEstimateSeconds > Report.DaysRemaining * 8 * 3600 && issue.RemainingEstimateSeconds > 0 ? "text-danger fw-semibold" : "")">
+                                            @(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)
+                                        </td>
+                                        <td>
+                                            <div class="d-flex align-items-center gap-1">
+                                                <div class="progress flex-grow-1" style="height:5px;border-radius:3px">
+                                                    <div class="progress-bar @(pct > 100 ? "bg-danger" : pct == 100 ? "bg-success" : "bg-primary")"
+                                                         style="width:@Math.Min(pct,100)%"></div>
+                                                </div>
+                                                <span class="text-nowrap @(pct > 100 ? "text-danger fw-semibold" : pct == 100 ? "text-success" : "text-muted")" style="min-width:34px">@pct%</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+
+            <!-- ══ TAB 2: HOURS & FORECAST ════════════════════════════════ -->
+            @if (ActiveTab == "forecast")
+            {
+                <!-- Epic delivery status cards -->
+                <div class="row g-3 mb-4">
+                    @foreach (var epic in FilteredEpics)
+                    {
+                        var variance = epic.HoursVariancePct;
+                        var isOver = epic.IsOverBudget;
+                        var label = isOver ? "Over Budget" : Report.RiskLevel == SprintRisk.Behind ? "At Risk" : "On Track";
+                        var labelColor = isOver ? "danger" : Report.RiskLevel == SprintRisk.Behind ? "warning" : "success";
+                        <div class="col-md-6 col-lg-4">
+                            <div class="card border-0 shadow-sm h-100">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-start mb-2">
+                                        <div class="fw-semibold text-truncate" style="max-width:180px">@epic.DisplayName</div>
+                                        <span class="badge bg-@labelColor">@label</span>
+                                    </div>
+                                    <div class="row g-2 text-center small">
+                                        <div class="col-4">
+                                            <div class="fw-bold">@FmtH(epic.TotalEstimateSeconds)</div>
+                                            <div class="text-muted">Planned</div>
+                                        </div>
+                                        <div class="col-4">
+                                            <div class="fw-bold @(isOver ? "text-danger" : "")">@FmtH(epic.TotalSpentSeconds)</div>
+                                            <div class="text-muted">Logged</div>
+                                        </div>
+                                        <div class="col-4">
+                                            <div class="fw-bold @(variance > 0 ? "text-danger" : "text-success")">
+                                                @(variance > 0 ? "+" : "")@variance.ToString("0")%
+                                            </div>
+                                            <div class="text-muted">Variance</div>
+                                        </div>
+                                    </div>
+                                    @if (epic.TotalEstimateSeconds > 0)
+                                    {
+                                        var spentPct = Math.Min(100, (int)((double)epic.TotalSpentSeconds / epic.TotalEstimateSeconds * 100));
+                                        <div class="progress mt-2" style="height:6px;border-radius:3px">
+                                            <div class="progress-bar @(isOver ? "bg-danger" : "bg-primary")" style="width:@spentPct%"></div>
+                                        </div>
+                                        <div class="d-flex justify-content-between small text-muted mt-1">
+                                            <span>0h</span><span>@FmtH(epic.TotalEstimateSeconds) est.</span>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <!-- Estimated vs Actual chart -->
+                <h6 class="text-muted text-uppercase small fw-semibold mb-2">Estimated vs Actual Hours per Epic</h6>
+                <div style="max-height:320px">
+                    <canvas id="chart-forecast"></canvas>
+                </div>
+
+                <!-- Variance table -->
+                <h6 class="text-muted text-uppercase small fw-semibold mt-4 mb-2">Variance Detail</h6>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Epic</th>
+                                <th>Tasks</th>
+                                <th>Done</th>
+                                <th>Planned (h)</th>
+                                <th>Logged (h)</th>
+                                <th>Remaining (h)</th>
+                                <th>Variance</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var epic in FilteredEpics)
+                            {
+                                var v = epic.HoursVariancePct;
+                                <tr class="@(epic.IsOverBudget ? "table-danger" : "")">
+                                    <td class="fw-semibold">@epic.DisplayName</td>
+                                    <td>@epic.TotalIssues</td>
+                                    <td>@epic.DoneCount</td>
+                                    <td>@FmtH(epic.TotalEstimateSeconds)</td>
+                                    <td class="@(epic.IsOverBudget ? "text-danger fw-semibold" : "")">@FmtH(epic.TotalSpentSeconds)</td>
+                                    <td>@FmtH(epic.TotalRemainingSeconds)</td>
+                                    <td class="@(v > 0 ? "text-danger" : "text-success")">
+                                        @(v > 0 ? "+" : "")@v.ToString("0.0")%
+                                    </td>
+                                    <td>
+                                        @if (epic.IsOverBudget)
+                                        {
+                                            <span class="badge bg-danger">Over Budget</span>
+                                        }
+                                        else if (Report.RiskLevel == SprintRisk.Behind)
+                                        {
+                                            <span class="badge bg-warning text-dark">At Risk</span>
+                                        }
+                                        else
+                                        {
+                                            <span class="badge bg-success">On Track</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot class="table-light fw-semibold">
+                            <tr>
+                                <td>Total</td>
+                                <td>@FilteredIssues.Count</td>
+                                <td>@FilteredIssues.Count(i => i.StatusCategoryKey == "done")</td>
+                                <td>@FmtH(FilteredIssues.Sum(i => i.OriginalEstimateSeconds))</td>
+                                <td>@FmtH(FilteredIssues.Sum(i => i.TimeSpentSeconds))</td>
+                                <td>@FmtH(FilteredIssues.Sum(i => i.RemainingEstimateSeconds))</td>
+                                <td colspan="2"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+
+            <!-- ══ TAB 3: WORKLOAD ════════════════════════════════════════ -->
+            @if (ActiveTab == "workload")
+            {
+                <!-- Workload chart -->
+                <h6 class="text-muted text-uppercase small fw-semibold mb-2">Hours per Team Member</h6>
+                <div style="max-height:300px" class="mb-4">
+                    <canvas id="chart-workload"></canvas>
+                </div>
+
+                <!-- Per-assignee cards -->
+                @foreach (var group in AssigneeGroups)
+                {
+                    var issues = group.ToList();
+                    var logged = issues.Sum(i => i.TimeSpentSeconds);
+                    var remaining = issues.Sum(i => i.RemainingEstimateSeconds);
+                    var estimated = issues.Sum(i => i.OriginalEstimateSeconds);
+                    var done = issues.Count(i => i.StatusCategoryKey == "done");
+                    var inProg = issues.Count(i => i.StatusCategoryKey == "indeterminate");
+                    var stale = issues.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);
+                    var overloaded = estimated > 0 && logged > estimated;
+
+                    <div class="card border-0 shadow-sm mb-3">
+                        <div class="card-body" style="cursor:pointer" @onclick="() => ToggleMember(group.Key)">
+                            <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                <div class="d-flex align-items-center gap-3">
+                                    <div class="rounded-circle @(overloaded ? "bg-danger" : "bg-primary") text-white d-flex align-items-center justify-content-center fw-bold flex-shrink-0"
+                                         style="width:42px;height:42px;font-size:14px">
+                                        @Initials(group.Key)
+                                    </div>
+                                    <div>
+                                        <div class="fw-semibold">@group.Key</div>
+                                        <div class="small text-muted">
+                                            @done done · @inProg in progress · @(issues.Count - done - inProg) to do
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="d-flex align-items-center gap-3 flex-wrap">
+                                    <div class="text-center small">
+                                        <div class="fw-semibold">@FmtH(logged)</div>
+                                        <div class="text-muted">Logged</div>
+                                    </div>
+                                    <div class="text-center small">
+                                        <div class="fw-semibold">@FmtH(remaining)</div>
+                                        <div class="text-muted">Remaining</div>
+                                    </div>
+                                    <div class="text-center small">
+                                        <div class="fw-semibold @(overloaded ? "text-danger" : "")">@FmtH(estimated)</div>
+                                        <div class="text-muted">Planned</div>
+                                    </div>
+                                    @if (overloaded)
+                                    {
+                                        <span class="badge bg-danger">Overloaded</span>
+                                    }
+                                    @if (stale > 0)
+                                    {
+                                        <span class="badge bg-warning text-dark">⚠️ @stale stale</span>
+                                    }
+                                    <div style="width:100px">
+                                        <div class="progress" style="height:8px;border-radius:4px">
+                                            <div class="progress-bar bg-success" style="width:@Pct(done,issues.Count)%"></div>
+                                            <div class="progress-bar bg-primary" style="width:@Pct(inProg,issues.Count)%"></div>
+                                        </div>
+                                        <div class="text-muted small text-center">@Pct(done,issues.Count)%</div>
+                                    </div>
+                                    <span class="text-muted">@(ExpandedMembers.Contains(group.Key) ? "▲" : "▼")</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        @if (ExpandedMembers.Contains(group.Key))
+                        {
+                            <div class="card-footer bg-light p-0">
+                                <table class="table table-sm align-middle mb-0 small">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th>Epic</th>
+                                            <th>Key</th>
+                                            <th>Summary</th>
+                                            <th>Status</th>
+                                            <th>Logged</th>
+                                            <th>Remaining</th>
+                                            <th>Progress</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var issue in issues)
+                                        {
+                                            var pct = IssueProgress(issue);
+                                            <tr>
+                                                <td class="text-muted text-nowrap">@(string.IsNullOrEmpty(issue.EpicKey) ? "—" : issue.EpicKey)</td>
+                                                <td class="fw-semibold text-nowrap">@issue.Key</td>
+                                                <td>@issue.Summary</td>
+                                                <td><span class="badge @StatusBadge(issue.Status, issue.StatusCategoryKey)">@issue.Status</span>
+                                                    @if (issue.StatusCategoryKey == "indeterminate" && issue.DaysSinceLastWorklog >= 2 && issue.DaysSinceLastWorklog < 999)
+                                                    {
+                                                        <span class="badge bg-warning text-dark ms-1">@issue.DaysSinceLastWorklog d idle</span>
+                                                    }
+                                                </td>
+                                                <td class="text-nowrap">@(issue.TimeSpent == "-" ? "—" : issue.TimeSpent)</td>
+                                                <td class="text-nowrap">@(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)</td>
+                                                <td>
+                                                    <div class="d-flex align-items-center gap-1">
+                                                        <div class="progress flex-grow-1" style="height:5px;border-radius:3px">
+                                                            <div class="progress-bar @(pct > 100 ? "bg-danger" : pct == 100 ? "bg-success" : "bg-primary")"
+                                                                 style="width:@Math.Min(pct,100)%"></div>
+                                                        </div>
+                                                        <span class="text-nowrap @(pct > 100 ? "text-danger fw-semibold" : pct == 100 ? "text-success" : "text-muted")" style="min-width:34px">@pct%</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+
+        </div>
+    </div>
+}
+
+@code {
+    private string SprintId = "";
+    private bool IsLoading = false;
+    private string? ErrorMessage;
+    private SprintReport? Report;
+
+    // ── Saved filters ─────────────────────────────────────────────────────────
+    private List<JiraFilter> MyFilters = [];
+    private bool FiltersLoading = false;
+    private string SelectedFilterId = "";
+    private string SelectedFilterJql => MyFilters.FirstOrDefault(f => f.Id == SelectedFilterId)?.Jql ?? "";
+    private string ActiveTab = "remaining";
+    private HashSet<string> ExpandedMembers = new();
+    private bool _renderCharts;
+
+    // ── Filters ──────────────────────────────────────────────────────────────
+    private string FilterAssignee = "";
+    private string FilterEpic = "";
+    private string AssigneeSearch = "";
+    private string EpicSearch = "";
+
+    private IEnumerable<string> AssigneeOptions => Report?.Issues
+        .Select(i => i.Assignee).Distinct().Order()
+        .Where(a => string.IsNullOrEmpty(AssigneeSearch) || a.Contains(AssigneeSearch, StringComparison.OrdinalIgnoreCase))
+        ?? Enumerable.Empty<string>();
+
+    private IEnumerable<EpicSummary> EpicOptions => Report?.EpicSummaries
+        .Where(e => string.IsNullOrEmpty(EpicSearch) ||
+            e.Key.Contains(EpicSearch, StringComparison.OrdinalIgnoreCase) ||
+            e.DisplayName.Contains(EpicSearch, StringComparison.OrdinalIgnoreCase))
+        ?? Enumerable.Empty<EpicSummary>();
+
+    private List<SprintIssue> FilteredIssues => Report?.Issues
+        .Where(i =>
+            (string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee) &&
+            (string.IsNullOrEmpty(FilterEpic) || i.EpicKey == FilterEpic))
+        .ToList() ?? [];
+
+    private List<EpicSummary> FilteredEpics => FilteredIssues
+        .GroupBy(i => i.EpicKey)
+        .Select(g => new EpicSummary
+        {
+            Key = g.Key,
+            Name = g.First().EpicName,
+            Issues = g.ToList()
+        })
+        .OrderBy(e => string.IsNullOrEmpty(e.Key) ? "ZZZ" : e.Key)
+        .ToList();
+
+    // Filtered report acts as a sub-report for KPI calculations
+    private SprintReport FilteredReport => Report == null ? new() : new SprintReport
+    {
+        StartDate = Report.StartDate,
+        EndDate = Report.EndDate,
+        SprintName = Report.SprintName,
+        Issues = FilteredIssues
+    };
+
+    private IEnumerable<IGrouping<string, SprintIssue>> AssigneeGroups =>
+        FilteredIssues.GroupBy(i => i.Assignee).OrderBy(g => g.Key);
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        FiltersLoading = true;
+        try { MyFilters = await JiraService.GetMyFiltersAsync(); }
+        finally { FiltersLoading = false; }
+    }
+
+    // ── Load ─────────────────────────────────────────────────────────────────
+    private async Task LoadData()
+    {
+        var useFilter = !string.IsNullOrEmpty(SelectedFilterId) && !string.IsNullOrEmpty(SelectedFilterJql);
+        var useSprint = !useFilter && int.TryParse(SprintId.Trim(), out _);
+        if (!useFilter && !useSprint) return;
+
+        IsLoading = true;
+        ErrorMessage = null;
+        Report = null;
+        FilterAssignee = "";
+        FilterEpic = "";
+        AssigneeSearch = "";
+        EpicSearch = "";
+        ExpandedMembers.Clear();
+
+        try
+        {
+            Report = useFilter
+                ? await JiraService.GetDeliveryDataByFilterAsync(SelectedFilterJql)
+                : await JiraService.GetDeliveryDataAsync(int.Parse(SprintId.Trim()));
+            _renderCharts = true;
+        }
+        catch (HttpRequestException ex)
+        {
+            ErrorMessage = $"Failed to load data: {ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Unexpected error: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadData();
+    }
+
+    private void OnFilterChanged() => _renderCharts = true;
+
+    private void ClearFilters()
+    {
+        FilterAssignee = "";
+        FilterEpic = "";
+        AssigneeSearch = "";
+        EpicSearch = "";
+        _renderCharts = true;
+    }
+
+    private async Task SwitchTab(string tab)
+    {
+        ActiveTab = tab;
+        _renderCharts = true;
+        await Task.CompletedTask;
+    }
+
+    private void ToggleMember(string name)
+    {
+        if (!ExpandedMembers.Remove(name)) ExpandedMembers.Add(name);
+    }
+
+    // ── Charts ───────────────────────────────────────────────────────────────
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_renderCharts && Report != null)
+        {
+            _renderCharts = false;
+            if (ActiveTab == "forecast") await RenderForecastChart();
+            if (ActiveTab == "workload") await RenderWorkloadChart();
+        }
+    }
+
+    private async Task RenderForecastChart()
+    {
+        var epics = FilteredEpics;
+        var labels = epics.Select(e => e.DisplayName.Length > 20 ? e.DisplayName[..20] + "…" : e.DisplayName).ToArray();
+        var estimated = epics.Select(e => Math.Round(e.TotalEstimateSeconds / 3600.0, 1)).ToArray();
+        var logged = epics.Select(e => Math.Round(e.TotalSpentSeconds / 3600.0, 1)).ToArray();
+        var remaining = epics.Select(e => Math.Round(e.TotalRemainingSeconds / 3600.0, 1)).ToArray();
+
+        await JS.InvokeVoidAsync("renderChart", "chart-forecast", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels,
+                datasets = new object[]
+                {
+                    new { label = "Estimated (h)", data = estimated, backgroundColor = "rgba(99,102,241,0.7)", borderColor = "rgba(99,102,241,1)", borderWidth = 1 },
+                    new { label = "Logged (h)",    data = logged,    backgroundColor = "rgba(34,197,94,0.7)",  borderColor = "rgba(34,197,94,1)",  borderWidth = 1 },
+                    new { label = "Remaining (h)", data = remaining, backgroundColor = "rgba(251,191,36,0.7)", borderColor = "rgba(251,191,36,1)", borderWidth = 1 }
+                }
+            },
+            options = new
+            {
+                responsive = true,
+                maintainAspectRatio = true,
+                plugins = new { legend = new { position = "top" } },
+                scales = new { y = new { beginAtZero = true, title = new { display = true, text = "Hours" } } }
+            }
+        });
+    }
+
+    private async Task RenderWorkloadChart()
+    {
+        var groups = AssigneeGroups.ToList();
+        var labels = groups.Select(g => g.Key).ToArray();
+        var logged    = groups.Select(g => Math.Round(g.Sum(i => i.TimeSpentSeconds) / 3600.0, 1)).ToArray();
+        var remaining = groups.Select(g => Math.Round(g.Sum(i => i.RemainingEstimateSeconds) / 3600.0, 1)).ToArray();
+        var estimated = groups.Select(g => Math.Round(g.Sum(i => i.OriginalEstimateSeconds) / 3600.0, 1)).ToArray();
+
+        await JS.InvokeVoidAsync("renderChart", "chart-workload", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels,
+                datasets = new object[]
+                {
+                    new { label = "Planned (h)",   data = estimated, backgroundColor = "rgba(99,102,241,0.5)",  borderColor = "rgba(99,102,241,1)", borderWidth = 1 },
+                    new { label = "Logged (h)",     data = logged,    backgroundColor = "rgba(34,197,94,0.7)",   borderColor = "rgba(34,197,94,1)",  borderWidth = 1 },
+                    new { label = "Remaining (h)",  data = remaining, backgroundColor = "rgba(251,191,36,0.7)",  borderColor = "rgba(251,191,36,1)", borderWidth = 1 }
+                }
+            },
+            options = new
+            {
+                responsive = true,
+                maintainAspectRatio = true,
+                plugins = new { legend = new { position = "top" } },
+                scales = new
+                {
+                    x = new { stacked = false },
+                    y = new { beginAtZero = true, title = new { display = true, text = "Hours" } }
+                }
+            }
+        });
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    private static int IssueProgress(SprintIssue issue)
+    {
+        if (issue.StatusCategoryKey == "done") return 100;
+        if (issue.OriginalEstimateSeconds <= 0) return 0;
+        return Math.Max(0, (int)Math.Round((double)issue.TimeSpentSeconds / issue.OriginalEstimateSeconds * 100));
+    }
+
+    private static string StatusBadge(string statusName, string categoryKey) => statusName switch
+    {
+        "Dev Ready" => "bg-info text-dark",
+        "In Review" => "bg-warning text-dark",
+        _ => categoryKey switch
+        {
+            "done"          => "bg-success",
+            "indeterminate" => "bg-primary",
+            _               => "bg-secondary"
+        }
+    };
+
+    private static string StatusBadgeFromPct(int pct) =>
+        pct >= 100 ? "bg-success" : pct >= 50 ? "bg-primary" : "bg-secondary";
+
+    private static string EpicBorderColor(EpicSummary e) =>
+        e.IsOverBudget ? "border-danger" : e.CompletionPct >= 80 ? "border-success" : "border-primary";
+
+    private static string RiskColor(SprintRisk r) => r switch
+    {
+        SprintRisk.OnTrack => "success",
+        SprintRisk.AtRisk  => "warning",
+        _                  => "danger"
+    };
+
+    private static string RiskLabel(SprintRisk r) => r switch
+    {
+        SprintRisk.OnTrack => "✅ On Track",
+        SprintRisk.AtRisk  => "⚠️ At Risk",
+        _                  => "🔴 Behind"
+    };
+
+    private static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+             : name.Length >= 2  ? name[..2].ToUpper()
+             : name.ToUpper();
+    }
+
+    private static int Pct(int count, int total) =>
+        total == 0 ? 0 : (int)Math.Round((double)count / total * 100);
+
+    private static string Fmt(int seconds)
+    {
+        if (seconds <= 0) return "—";
+        var h = seconds / 3600;
+        var m = (seconds % 3600) / 60;
+        return h > 0 ? $"{h}h {m}m" : $"{m}m";
+    }
+
+    private static string FmtH(int seconds) =>
+        seconds <= 0 ? "0h" : $"{seconds / 3600.0:0.#}h";
+}

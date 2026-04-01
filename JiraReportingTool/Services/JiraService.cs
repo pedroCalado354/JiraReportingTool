@@ -23,6 +23,50 @@ public class JiraService
             new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
     }
 
+    // Jira Cloud hard-caps responses at 100 items per request.
+    // Uses POST /rest/api/3/search/jql with cursor-based pagination (nextPageToken).
+    private async Task<string> FetchAllPagesAsync(string jql, string fields)
+    {
+        var allIssues = new List<string>();
+        var fieldList = fields.Split(',').Select(f => f.Trim()).ToArray();
+        string? nextPageToken = null;
+
+        while (true)
+        {
+            var bodyDict = new Dictionary<string, object>
+            {
+                ["jql"] = Uri.UnescapeDataString(jql),
+                ["fields"] = fieldList,
+                ["maxResults"] = 100
+            };
+            if (nextPageToken != null)
+                bodyDict["nextPageToken"] = nextPageToken;
+
+            var body = JsonSerializer.Serialize(bodyDict);
+            using var content = new StringContent(body, Encoding.UTF8, "application/json");
+            var response = await _httpClient.PostAsync($"{_baseUrl}/rest/api/3/search/jql", content);
+            response.EnsureSuccessStatusCode();
+            var pageJson = await response.Content.ReadAsStringAsync();
+
+            using var doc = JsonDocument.Parse(pageJson);
+
+            if (!doc.RootElement.TryGetProperty("issues", out var issuesEl) || issuesEl.GetArrayLength() == 0)
+                break;
+
+            foreach (var issue in issuesEl.EnumerateArray())
+                allIssues.Add(issue.GetRawText());
+
+            nextPageToken = doc.RootElement.TryGetProperty("nextPageToken", out var npt) && npt.ValueKind == JsonValueKind.String
+                ? npt.GetString()
+                : null;
+
+            if (nextPageToken == null)
+                break;
+        }
+
+        return $"{{\"issues\":[{string.Join(",", allIssues)}]}}";
+    }
+
     public async Task<string> GetIssue(string issueKey)
     {
         var response = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/issue/{issueKey}");
@@ -44,11 +88,7 @@ public class JiraService
             $"issueType != Epic AND parent = \"{epicKey}\" ORDER BY created ASC");
         var fields = "summary,status,assignee,issuetype,timetracking,worklog";
 
-        var searchResponse = await _httpClient.GetAsync(
-            $"{_baseUrl}/rest/api/3/search/jql?jql={jql}&fields={fields}&maxResults=100");
-        searchResponse.EnsureSuccessStatusCode();
-        var searchJson = await searchResponse.Content.ReadAsStringAsync();
-
+        var searchJson = await FetchAllPagesAsync(jql, fields);
         report.Issues = ParseIssues(searchJson);
         return report;
     }
@@ -158,12 +198,93 @@ public class JiraService
             $"project = Jimpisoft AND \"Epic Link\" in \"{projectKey}\" AND sprint in {sprintId} ORDER BY status ASC, priority DESC");
         var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10016,customfield_10020";
 
-        var response = await _httpClient.GetAsync(
-            $"{_baseUrl}/rest/api/3/search/jql?jql={jql}&fields={fields}&maxResults=100");
-        response.EnsureSuccessStatusCode();
-        var json = await response.Content.ReadAsStringAsync();
-
+        var json = await FetchAllPagesAsync(jql, fields);
         return ParseSprintReport(json, projectKey);
+    }
+
+    // Fetches ALL issues in a sprint (no epic filter) with epic grouping — used by Team Delivery Dashboard
+    public Task<SprintReport> GetDeliveryDataAsync(int sprintId)
+    {
+        var jql = Uri.EscapeDataString($"sprint = {sprintId} ORDER BY status ASC, priority DESC");
+        return FetchDeliveryReportAsync(jql);
+    }
+
+    // Loads delivery data using the JQL from a saved Jira filter
+    public Task<SprintReport> GetDeliveryDataByFilterAsync(string filterJql)
+    {
+        var jql = Uri.EscapeDataString(filterJql);
+        return FetchDeliveryReportAsync(jql);
+    }
+
+    // Returns the current user's saved Jira filters
+    public async Task<List<JiraFilter>> GetMyFiltersAsync()
+    {
+        var response = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/filter/my?expand=jql");
+        if (!response.IsSuccessStatusCode) return [];
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+
+        var filters = new List<JiraFilter>();
+        foreach (var item in doc.RootElement.EnumerateArray())
+        {
+            filters.Add(new JiraFilter
+            {
+                Id = item.TryGetProperty("id", out var id) ? id.GetString() ?? "" : "",
+                Name = item.TryGetProperty("name", out var name) ? name.GetString() ?? "" : "",
+                Jql = item.TryGetProperty("jql", out var jql) ? jql.GetString() ?? "" : "",
+                Description = item.TryGetProperty("description", out var desc) ? desc.GetString() ?? "" : ""
+            });
+        }
+        return filters;
+    }
+
+    // Shared delivery fetch: paginate → parse → enrich epic names
+    private async Task<SprintReport> FetchDeliveryReportAsync(string encodedJql)
+    {
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent";
+
+        var json = await FetchAllPagesAsync(encodedJql, fields);
+        var report = ParseSprintReport(json, "");
+
+        var epicKeys = report.Issues
+            .Where(i => !string.IsNullOrEmpty(i.EpicKey))
+            .Select(i => i.EpicKey)
+            .Distinct()
+            .ToList();
+
+        if (epicKeys.Any())
+        {
+            var epicNames = await FetchEpicNamesAsync(epicKeys);
+            foreach (var issue in report.Issues)
+                if (epicNames.TryGetValue(issue.EpicKey, out var name))
+                    issue.EpicName = name;
+        }
+
+        return report;
+    }
+
+    private async Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys)
+    {
+        var keysJql = string.Join(",", epicKeys.Select(k => $"\"{k}\""));
+        var jql = Uri.EscapeDataString($"key in ({keysJql})");
+        var response = await _httpClient.GetAsync(
+            $"{_baseUrl}/rest/api/3/search/jql?jql={jql}&fields=summary&maxResults=500");
+
+        if (!response.IsSuccessStatusCode) return [];
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+
+        var map = new Dictionary<string, string>();
+        if (!doc.RootElement.TryGetProperty("issues", out var issues)) return map;
+        foreach (var item in issues.EnumerateArray())
+        {
+            var key = item.GetProperty("key").GetString() ?? "";
+            var summary = item.GetProperty("fields").GetProperty("summary").GetString() ?? key;
+            map[key] = summary;
+        }
+        return map;
     }
 
     private SprintReport ParseSprintReport(string json, string projectKey)
@@ -218,6 +339,22 @@ public class JiraService
             // Story points (customfield_10016)
             if (fields.TryGetProperty("customfield_10016", out var sp) && sp.ValueKind == JsonValueKind.Number)
                 issue.StoryPoints = sp.GetInt32();
+
+            // Epic Link — classic Jira: customfield_10014 holds the epic key directly
+            if (fields.TryGetProperty("customfield_10014", out var el) && el.ValueKind == JsonValueKind.String)
+                issue.EpicKey = el.GetString() ?? "";
+
+            // Fallback for next-gen: check if direct parent is an Epic
+            if (string.IsNullOrEmpty(issue.EpicKey) &&
+                fields.TryGetProperty("parent", out var parent) && parent.ValueKind != JsonValueKind.Null)
+            {
+                var parentType = parent.TryGetProperty("fields", out var pf) &&
+                                 pf.TryGetProperty("issuetype", out var pit)
+                    ? pit.GetProperty("name").GetString() ?? ""
+                    : "";
+                if (parentType == "Epic")
+                    issue.EpicKey = parent.GetProperty("key").GetString() ?? "";
+            }
 
             // Sprint metadata from first active sprint in customfield_10020
             if (report.SprintName == "" &&
