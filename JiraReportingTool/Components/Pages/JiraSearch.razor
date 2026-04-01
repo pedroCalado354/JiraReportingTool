@@ -1,0 +1,155 @@
+﻿@page "/jira"
+@rendermode InteractiveServer
+@inject JiraService JiraService
+
+<PageTitle>Jira Search</PageTitle>
+
+<h1 class="mb-4">Jira Search</h1>
+
+<div class="search-container">
+    <input class="form-control"
+           @bind="IssueKey"
+           placeholder="Enter issue key (e.g. JM-11755)" />
+
+    <button class="btn btn-primary mt-2" @onclick="GetIssue">
+        Get Issue
+    </button>
+</div>
+
+@if (IsLoading)
+{
+    <p class="mt-3 text-info">Loading...</p>
+}
+
+@if (Issue != null)
+{
+    <div class="card mt-4 shadow-sm">
+        <div class="card-header bg-dark text-white">
+            @Issue.Key - @Issue.Summary
+        </div>
+
+        <div class="card-body">
+            <table class="table table-striped">
+                <tbody>
+                    <tr>
+                        <th>Status</th>
+                        <td>@Issue.Status</td>
+                    </tr>
+                    <tr>
+                        <th>Assignee</th>
+                        <td>@Issue.Assignee</td>
+                    </tr>
+                    <tr>
+                        <th>Created</th>
+                        <td>@Issue.Created</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    @if (Issue?.Worklogs?.Any() == true)
+    {
+        <div class="card mt-4 shadow-sm">
+            <div class="card-header bg-secondary text-white">
+                Worklogs (@Issue.Worklogs.Count)
+            </div>
+
+            <div class="card-body">
+                <table class="table table-hover">
+                    <thead>
+                        <tr>
+                            <th>Author</th>
+                            <th>Time Spent</th>
+                            <th>Started</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var wl in Issue.Worklogs)
+                        {
+                            <tr>
+                                <td>@wl.Author</td>
+                                <td>@wl.TimeSpent</td>
+                                <td>@FormatDate(wl.Started)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    private string IssueKey;
+    private bool IsLoading = false;
+
+    private JiraIssueViewModel? Issue;
+
+    private async Task GetIssue()
+    {
+        if (string.IsNullOrWhiteSpace(IssueKey))
+            return;
+
+        IsLoading = true;
+
+        var json = await JiraService.GetIssue(IssueKey);
+
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+        var root = doc.RootElement;
+
+        Issue = new JiraIssueViewModel
+        {
+            Key = root.GetProperty("key").GetString(),
+            Summary = root.GetProperty("fields").GetProperty("summary").GetString(),
+            Status = root.GetProperty("fields").GetProperty("status").GetProperty("name").GetString(),
+            Assignee = root.GetProperty("fields").GetProperty("assignee").GetProperty("displayName").GetString(),
+            Created = root.GetProperty("fields").GetProperty("created").GetString()
+        };
+
+        var fields = root.GetProperty("fields");
+
+        if (fields.TryGetProperty("worklog", out var worklog))
+        {
+            var worklogsArray = worklog.GetProperty("worklogs");
+
+            foreach (var wl in worklogsArray.EnumerateArray())
+            {
+                Issue.Worklogs.Add(new WorklogItem
+                {
+                    Author = wl.GetProperty("author").GetProperty("displayName").GetString(),
+                    TimeSpent = wl.GetProperty("timeSpent").GetString(),
+                    Started = wl.GetProperty("started").GetString()
+                });
+            }
+        }
+
+        IsLoading = false;
+    }
+    private string FormatDate(string date)
+    {
+        if (DateTime.TryParse(date, out var dt))
+            return dt.ToString("dd MMM yyyy HH:mm");
+
+        return date;
+    }
+
+    public class JiraIssueViewModel
+    {
+        public string Key { get; set; }
+        public string Summary { get; set; }
+        public string Status { get; set; }
+        public string Assignee { get; set; }
+        public string Created { get; set; }
+
+        public List<WorklogItem> Worklogs { get; set; } = new();
+    }
+
+    public class WorklogItem
+    {
+        public string Author { get; set; }
+        public string TimeSpent { get; set; }
+        public string Started { get; set; }
+    }
+}
