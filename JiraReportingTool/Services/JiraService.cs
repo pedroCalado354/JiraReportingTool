@@ -199,7 +199,9 @@ public class JiraService
         var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10016,customfield_10020";
 
         var json = await FetchAllPagesAsync(jql, fields);
-        return ParseSprintReport(json, projectKey);
+        var (report, truncated) = ParseSprintReport(json, projectKey);
+        await FetchMissingWorklogsAsync(report, truncated);
+        return report;
     }
 
     // Fetches ALL issues in a sprint (no epic filter) with epic grouping — used by Team Delivery Dashboard
@@ -207,6 +209,18 @@ public class JiraService
     {
         var jql = Uri.EscapeDataString($"sprint = {sprintId} ORDER BY status ASC, priority DESC");
         return FetchDeliveryReportAsync(jql);
+    }
+
+    // Fetches all issues for a given epic inside a specific sprint — used by Epic Delivery Forecast
+    public async Task<SprintReport> GetEpicSprintForecastAsync(string epicKey, int sprintId)
+    {
+        var jql = Uri.EscapeDataString(
+            $"sprint = {sprintId} AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY status ASC, priority DESC");
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent";
+        var json = await FetchAllPagesAsync(jql, fields);
+        var (report, truncated) = ParseSprintReport(json, "");
+        await FetchMissingWorklogsAsync(report, truncated);
+        return report;
     }
 
     // Loads delivery data using the JQL from a saved Jira filter
@@ -245,7 +259,8 @@ public class JiraService
         const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent";
 
         var json = await FetchAllPagesAsync(encodedJql, fields);
-        var report = ParseSprintReport(json, "");
+        var (report, truncated) = ParseSprintReport(json, "");
+        await FetchMissingWorklogsAsync(report, truncated);
 
         var epicKeys = report.Issues
             .Where(i => !string.IsNullOrEmpty(i.EpicKey))
@@ -287,13 +302,14 @@ public class JiraService
         return map;
     }
 
-    private SprintReport ParseSprintReport(string json, string projectKey)
+    private (SprintReport Report, List<string> TruncatedKeys) ParseSprintReport(string json, string projectKey)
     {
         using var doc = JsonDocument.Parse(json);
         var report = new SprintReport { ProjectKey = projectKey.ToUpper() };
+        var truncatedKeys = new List<string>();
 
         if (!doc.RootElement.TryGetProperty("issues", out var issuesArray))
-            return report;
+            return (report, truncatedKeys);
 
         foreach (var item in issuesArray.EnumerateArray())
         {
@@ -376,6 +392,7 @@ public class JiraService
             if (fields.TryGetProperty("worklog", out var worklog) &&
                 worklog.TryGetProperty("worklogs", out var wls))
             {
+                var worklogTotal = worklog.TryGetProperty("total", out var wt) ? wt.GetInt32() : 0;
                 foreach (var wl in wls.EnumerateArray())
                 {
                     var entry = new WorklogEntry
@@ -392,12 +409,51 @@ public class JiraService
                         entry.Started = dt;
                     issue.Worklogs.Add(entry);
                 }
+                // Jira returns at most 20 worklogs in search responses — flag for re-fetch if truncated
+                if (worklogTotal > issue.Worklogs.Count)
+                    truncatedKeys.Add(issue.Key);
             }
 
             report.Issues.Add(issue);
         }
 
-        return report;
+        return (report, truncatedKeys);
+    }
+
+    // Fetches complete worklogs for issues where the search API returned a truncated list (max 20).
+    private async Task FetchMissingWorklogsAsync(SprintReport report, List<string> truncatedKeys)
+    {
+        foreach (var key in truncatedKeys)
+        {
+            var issue = report.Issues.FirstOrDefault(i => i.Key == key);
+            if (issue == null) continue;
+
+            var response = await _httpClient.GetAsync(
+                $"{_baseUrl}/rest/api/3/issue/{key}/worklog?maxResults=5000");
+            if (!response.IsSuccessStatusCode) continue;
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("worklogs", out var wls)) continue;
+
+            issue.Worklogs.Clear();
+            foreach (var wl in wls.EnumerateArray())
+            {
+                var entry = new WorklogEntry
+                {
+                    Author = wl.TryGetProperty("author", out var author) && author.ValueKind != JsonValueKind.Null
+                        ? author.GetProperty("displayName").GetString() ?? ""
+                        : "",
+                    TimeSpent = wl.TryGetProperty("timeSpent", out var tSpent) ? tSpent.GetString() ?? "" : "",
+                    TimeSpentSeconds = wl.TryGetProperty("timeSpentSeconds", out var tSec) ? tSec.GetInt32() : 0,
+                    Comment = ExtractAdfText(wl)
+                };
+                if (wl.TryGetProperty("started", out var started) &&
+                    DateTime.TryParse(started.GetString(), out var dt))
+                    entry.Started = dt;
+                issue.Worklogs.Add(entry);
+            }
+        }
     }
 
     // Jira API v3 returns comments in Atlassian Document Format (ADF)

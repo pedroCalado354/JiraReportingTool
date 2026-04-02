@@ -93,11 +93,11 @@
         <div class="col-6 col-md-3">
             <div class="card border-0 shadow-sm text-center h-100">
                 <div class="card-body py-3">
-                    <div class="fs-3 fw-bold">@Fmt(FilteredReport.TotalTimeSpentSeconds)<span class="fs-6 text-muted"> / @Fmt(FilteredReport.TotalOriginalEstimateSeconds)</span></div>
+                    <div class="fs-3 fw-bold">@Fmt(FilteredTotalLoggedSeconds)<span class="fs-6 text-muted"> / @Fmt(FilteredReport.TotalOriginalEstimateSeconds)</span></div>
                     <div class="text-muted small">Hours Logged / Planned</div>
                     @if (FilteredReport.TotalOriginalEstimateSeconds > 0)
                     {
-                        var budgetPct = (int)((double)FilteredReport.TotalTimeSpentSeconds / FilteredReport.TotalOriginalEstimateSeconds * 100);
+                        var budgetPct = (int)((double)FilteredTotalLoggedSeconds / FilteredReport.TotalOriginalEstimateSeconds * 100);
                         <div class="progress mt-2" style="height:5px">
                             <div class="progress-bar @(budgetPct > 100 ? "bg-danger" : "bg-primary")" style="width:@Math.Min(budgetPct,100)%"></div>
                         </div>
@@ -157,7 +157,17 @@
                         </select>
                     </div>
                 </div>
-                @if (!string.IsNullOrEmpty(FilterAssignee) || !string.IsNullOrEmpty(FilterEpic))
+                <div class="col-auto">
+                    <label class="form-label small text-muted mb-0 me-1">Worklog date</label>
+                    <div class="d-flex align-items-center gap-1">
+                        <input type="date" class="form-control form-control-sm" style="width:145px"
+                               @bind="FilterDateFrom" @bind:after="OnFilterChanged" />
+                        <span class="text-muted small">–</span>
+                        <input type="date" class="form-control form-control-sm" style="width:145px"
+                               @bind="FilterDateTo" @bind:after="OnFilterChanged" />
+                    </div>
+                </div>
+                @if (!string.IsNullOrEmpty(FilterAssignee) || !string.IsNullOrEmpty(FilterEpic) || FilterDateFrom.HasValue || FilterDateTo.HasValue)
                 {
                     <div class="col-auto">
                         <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFilters">Clear filters</button>
@@ -185,6 +195,20 @@
         <li class="nav-item">
             <button class="nav-link @(ActiveTab=="workload" ? "active" : "")" @onclick='() => SwitchTab("workload")'>
                 Workload
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(ActiveTab=="blockers" ? "active" : "")" @onclick='() => SwitchTab("blockers")'>
+                Blockers &amp; Risk
+                @if (Report != null && RiskIssues.Count > 0)
+                {
+                    <span class="badge bg-danger ms-1">@RiskIssues.Count</span>
+                }
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(ActiveTab=="standup" ? "active" : "")" @onclick='() => SwitchTab("standup")'>
+                Standup View
             </button>
         </li>
     </ul>
@@ -255,8 +279,8 @@
                                         <td class="text-nowrap">@issue.Assignee</td>
                                         <td><span class="badge @StatusBadge(issue.Status, issue.StatusCategoryKey)">@issue.Status</span></td>
                                         <td class="text-nowrap">@(issue.OriginalEstimate == "-" ? "—" : issue.OriginalEstimate)</td>
-                                        <td class="text-nowrap">@(issue.TimeSpent == "-" ? "—" : issue.TimeSpent)</td>
-                                        <td class="text-nowrap @(issue.RemainingEstimateSeconds > Report.DaysRemaining * 8 * 3600 && issue.RemainingEstimateSeconds > 0 ? "text-danger fw-semibold" : "")">
+                                        <td class="text-nowrap">@(FilteredSpentSeconds(issue) > 0 ? FmtH(FilteredSpentSeconds(issue)) : "—")</td>
+                                        <td class="text-nowrap @(issue.RemainingEstimateSeconds > Report.DaysRemaining * 6 * 3600 && issue.RemainingEstimateSeconds > 0 ? "text-danger fw-semibold" : "")">
                                             @(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)
                                         </td>
                                         <td>
@@ -283,8 +307,8 @@
                 <div class="row g-3 mb-4">
                     @foreach (var epic in FilteredEpics)
                     {
-                        var variance = epic.HoursVariancePct;
-                        var isOver = epic.IsOverBudget;
+                        var variance = EpicFilteredVariancePct(epic);
+                        var isOver = EpicFilteredIsOverBudget(epic);
                         var label = isOver ? "Over Budget" : Report.RiskLevel == SprintRisk.Behind ? "At Risk" : "On Track";
                         var labelColor = isOver ? "danger" : Report.RiskLevel == SprintRisk.Behind ? "warning" : "success";
                         <div class="col-md-6 col-lg-4">
@@ -300,7 +324,7 @@
                                             <div class="text-muted">Planned</div>
                                         </div>
                                         <div class="col-4">
-                                            <div class="fw-bold @(isOver ? "text-danger" : "")">@FmtH(epic.TotalSpentSeconds)</div>
+                                            <div class="fw-bold @(isOver ? "text-danger" : "")">@FmtH(EpicFilteredSpent(epic))</div>
                                             <div class="text-muted">Logged</div>
                                         </div>
                                         <div class="col-4">
@@ -312,7 +336,7 @@
                                     </div>
                                     @if (epic.TotalEstimateSeconds > 0)
                                     {
-                                        var spentPct = Math.Min(100, (int)((double)epic.TotalSpentSeconds / epic.TotalEstimateSeconds * 100));
+                                        var spentPct = Math.Min(100, (int)((double)EpicFilteredSpent(epic) / epic.TotalEstimateSeconds * 100));
                                         <div class="progress mt-2" style="height:6px;border-radius:3px">
                                             <div class="progress-bar @(isOver ? "bg-danger" : "bg-primary")" style="width:@spentPct%"></div>
                                         </div>
@@ -351,19 +375,20 @@
                         <tbody>
                             @foreach (var epic in FilteredEpics)
                             {
-                                var v = epic.HoursVariancePct;
-                                <tr class="@(epic.IsOverBudget ? "table-danger" : "")">
+                                var v = EpicFilteredVariancePct(epic);
+                                var epicOver = EpicFilteredIsOverBudget(epic);
+                                <tr class="@(epicOver ? "table-danger" : "")">
                                     <td class="fw-semibold">@epic.DisplayName</td>
                                     <td>@epic.TotalIssues</td>
                                     <td>@epic.DoneCount</td>
                                     <td>@FmtH(epic.TotalEstimateSeconds)</td>
-                                    <td class="@(epic.IsOverBudget ? "text-danger fw-semibold" : "")">@FmtH(epic.TotalSpentSeconds)</td>
+                                    <td class="@(epicOver ? "text-danger fw-semibold" : "")">@FmtH(EpicFilteredSpent(epic))</td>
                                     <td>@FmtH(epic.TotalRemainingSeconds)</td>
                                     <td class="@(v > 0 ? "text-danger" : "text-success")">
                                         @(v > 0 ? "+" : "")@v.ToString("0.0")%
                                     </td>
                                     <td>
-                                        @if (epic.IsOverBudget)
+                                        @if (epicOver)
                                         {
                                             <span class="badge bg-danger">Over Budget</span>
                                         }
@@ -385,7 +410,7 @@
                                 <td>@FilteredIssues.Count</td>
                                 <td>@FilteredIssues.Count(i => i.StatusCategoryKey == "done")</td>
                                 <td>@FmtH(FilteredIssues.Sum(i => i.OriginalEstimateSeconds))</td>
-                                <td>@FmtH(FilteredIssues.Sum(i => i.TimeSpentSeconds))</td>
+                                <td>@FmtH(FilteredTotalLoggedSeconds)</td>
                                 <td>@FmtH(FilteredIssues.Sum(i => i.RemainingEstimateSeconds))</td>
                                 <td colspan="2"></td>
                             </tr>
@@ -403,11 +428,11 @@
                     <canvas id="chart-workload"></canvas>
                 </div>
 
-                <!-- Per-assignee cards -->
-                @foreach (var group in AssigneeGroups)
+                <!-- Per-person cards — includes assignees + anyone who logged work -->
+                @foreach (var person in WorkloadPeople)
                 {
-                    var issues = group.ToList();
-                    var logged = issues.Sum(i => i.TimeSpentSeconds);
+                    var issues = FilteredIssues.Where(i => i.Assignee.Equals(person, StringComparison.OrdinalIgnoreCase)).ToList();
+                    var logged = WorklogSecondsByAuthor.TryGetValue(person, out var authorSecs) ? authorSecs : 0;
                     var remaining = issues.Sum(i => i.RemainingEstimateSeconds);
                     var estimated = issues.Sum(i => i.OriginalEstimateSeconds);
                     var done = issues.Count(i => i.StatusCategoryKey == "done");
@@ -416,15 +441,15 @@
                     var overloaded = estimated > 0 && logged > estimated;
 
                     <div class="card border-0 shadow-sm mb-3">
-                        <div class="card-body" style="cursor:pointer" @onclick="() => ToggleMember(group.Key)">
+                        <div class="card-body" style="cursor:pointer" @onclick="() => ToggleMember(person)">
                             <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                                 <div class="d-flex align-items-center gap-3">
                                     <div class="rounded-circle @(overloaded ? "bg-danger" : "bg-primary") text-white d-flex align-items-center justify-content-center fw-bold flex-shrink-0"
                                          style="width:42px;height:42px;font-size:14px">
-                                        @Initials(group.Key)
+                                        @Initials(person)
                                     </div>
                                     <div>
-                                        <div class="fw-semibold">@group.Key</div>
+                                        <div class="fw-semibold">@person</div>
                                         <div class="small text-muted">
                                             @done done · @inProg in progress · @(issues.Count - done - inProg) to do
                                         </div>
@@ -458,57 +483,325 @@
                                         </div>
                                         <div class="text-muted small text-center">@Pct(done,issues.Count)%</div>
                                     </div>
-                                    <span class="text-muted">@(ExpandedMembers.Contains(group.Key) ? "▲" : "▼")</span>
+                                    <span class="text-muted">@(ExpandedMembers.Contains(person) ? "▲" : "▼")</span>
                                 </div>
                             </div>
                         </div>
 
-                        @if (ExpandedMembers.Contains(group.Key))
+                        @if (ExpandedMembers.Contains(person))
                         {
+                            var personLogs = FilteredIssues
+                                .SelectMany(i => i.Worklogs.Select(w => new { Issue = i, Log = w }))
+                                .Where(x => x.Log.Author.Equals(person, StringComparison.OrdinalIgnoreCase)
+                                         && WorklogInRange(x.Log))
+                                .OrderByDescending(x => x.Log.Started)
+                                .ToList();
+
                             <div class="card-footer bg-light p-0">
-                                <table class="table table-sm align-middle mb-0 small">
-                                    <thead class="table-light">
-                                        <tr>
-                                            <th>Epic</th>
-                                            <th>Key</th>
-                                            <th>Summary</th>
-                                            <th>Status</th>
-                                            <th>Logged</th>
-                                            <th>Remaining</th>
-                                            <th>Progress</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach (var issue in issues)
-                                        {
-                                            var pct = IssueProgress(issue);
-                                            <tr>
-                                                <td class="text-muted text-nowrap">@(string.IsNullOrEmpty(issue.EpicKey) ? "—" : issue.EpicKey)</td>
-                                                <td class="fw-semibold text-nowrap">@issue.Key</td>
-                                                <td>@issue.Summary</td>
-                                                <td><span class="badge @StatusBadge(issue.Status, issue.StatusCategoryKey)">@issue.Status</span>
-                                                    @if (issue.StatusCategoryKey == "indeterminate" && issue.DaysSinceLastWorklog >= 2 && issue.DaysSinceLastWorklog < 999)
-                                                    {
-                                                        <span class="badge bg-warning text-dark ms-1">@issue.DaysSinceLastWorklog d idle</span>
-                                                    }
-                                                </td>
-                                                <td class="text-nowrap">@(issue.TimeSpent == "-" ? "—" : issue.TimeSpent)</td>
-                                                <td class="text-nowrap">@(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)</td>
-                                                <td>
-                                                    <div class="d-flex align-items-center gap-1">
-                                                        <div class="progress flex-grow-1" style="height:5px;border-radius:3px">
-                                                            <div class="progress-bar @(pct > 100 ? "bg-danger" : pct == 100 ? "bg-success" : "bg-primary")"
-                                                                 style="width:@Math.Min(pct,100)%"></div>
-                                                        </div>
-                                                        <span class="text-nowrap @(pct > 100 ? "text-danger fw-semibold" : pct == 100 ? "text-success" : "text-muted")" style="min-width:34px">@pct%</span>
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        }
-                                    </tbody>
-                                </table>
+
+                                <!-- ── Worklog entries ── -->
+                                <div class="px-3 pt-3 pb-2">
+                                    <div class="small fw-semibold text-muted text-uppercase mb-2" style="letter-spacing:.05em">
+                                        Worklogs by @person
+                                        <span class="fw-normal ms-1">(@FmtH(logged) total)</span>
+                                    </div>
+                                    @if (!personLogs.Any())
+                                    {
+                                        <div class="text-muted small fst-italic">No worklogs found in current filter.</div>
+                                    }
+                                    else
+                                    {
+                                        <table class="table table-sm align-middle mb-0 small">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Date</th>
+                                                    <th>Issue</th>
+                                                    <th>Summary</th>
+                                                    <th>Time Logged</th>
+                                                    <th>Comment</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var x in personLogs)
+                                                {
+                                                    <tr>
+                                                        <td class="text-nowrap text-muted">@x.Log.Started.ToString("MMM d, HH:mm")</td>
+                                                        <td class="fw-semibold text-nowrap">@x.Issue.Key</td>
+                                                        <td class="text-truncate" style="max-width:220px" title="@x.Issue.Summary">@x.Issue.Summary</td>
+                                                        <td class="fw-semibold text-nowrap text-primary">@x.Log.TimeSpent</td>
+                                                        <td class="text-muted text-truncate" style="max-width:220px" title="@x.Log.Comment">
+                                                            @(string.IsNullOrEmpty(x.Log.Comment) ? "—" : x.Log.Comment)
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                            <tfoot class="table-light fw-semibold small">
+                                                <tr>
+                                                    <td colspan="3">Total</td>
+                                                    <td class="text-primary">@FmtH(personLogs.Sum(x => x.Log.TimeSpentSeconds))</td>
+                                                    <td></td>
+                                                </tr>
+                                            </tfoot>
+                                        </table>
+                                    }
+                                </div>
+
+                                <!-- ── Assigned issues ── -->
+                                @if (issues.Any())
+                                {
+                                    <div class="border-top px-3 pt-3 pb-2">
+                                        <div class="small fw-semibold text-muted text-uppercase mb-2" style="letter-spacing:.05em">Assigned Issues</div>
+                                        <table class="table table-sm align-middle mb-0 small">
+                                            <thead class="table-light">
+                                                <tr>
+                                                    <th>Epic</th>
+                                                    <th>Key</th>
+                                                    <th>Summary</th>
+                                                    <th>Status</th>
+                                                    <th>My Logged</th>
+                                                    <th>Remaining</th>
+                                                    <th>Progress</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                @foreach (var issue in issues)
+                                                {
+                                                    var pct = IssueProgress(issue);
+                                                    var myLogged = issue.Worklogs
+                                                        .Where(w => w.Author.Equals(person, StringComparison.OrdinalIgnoreCase) && WorklogInRange(w))
+                                                        .Sum(w => w.TimeSpentSeconds);
+                                                    <tr>
+                                                        <td class="text-muted text-nowrap">@(string.IsNullOrEmpty(issue.EpicKey) ? "—" : issue.EpicKey)</td>
+                                                        <td class="fw-semibold text-nowrap">@issue.Key</td>
+                                                        <td>@issue.Summary</td>
+                                                        <td>
+                                                            <span class="badge @StatusBadge(issue.Status, issue.StatusCategoryKey)">@issue.Status</span>
+                                                            @if (issue.StatusCategoryKey == "indeterminate" && issue.DaysSinceLastWorklog >= 2 && issue.DaysSinceLastWorklog < 999)
+                                                            {
+                                                                <span class="badge bg-warning text-dark ms-1">@issue.DaysSinceLastWorklog d idle</span>
+                                                            }
+                                                        </td>
+                                                        <td class="text-nowrap">@(myLogged > 0 ? FmtH(myLogged) : "—")</td>
+                                                        <td class="text-nowrap">@(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)</td>
+                                                        <td>
+                                                            <div class="d-flex align-items-center gap-1">
+                                                                <div class="progress flex-grow-1" style="height:5px;border-radius:3px">
+                                                                    <div class="progress-bar @(pct > 100 ? "bg-danger" : pct == 100 ? "bg-success" : "bg-primary")"
+                                                                         style="width:@Math.Min(pct,100)%"></div>
+                                                                </div>
+                                                                <span class="text-nowrap @(pct > 100 ? "text-danger fw-semibold" : pct == 100 ? "text-success" : "text-muted")" style="min-width:34px">@pct%</span>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                }
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                }
+
                             </div>
                         }
+                    </div>
+                }
+            }
+
+            <!-- ══ TAB 4: BLOCKERS & RISK ════════════════════════════════ -->
+            @if (ActiveTab == "blockers")
+            {
+                <!-- Risk summary cards -->
+                <div class="row g-3 mb-4">
+                    <div class="col-md-4">
+                        <div class="card border-0 border-start border-3 border-danger shadow-sm h-100">
+                            <div class="card-body text-center py-3">
+                                <div class="fs-2 fw-bold text-danger">@StaleCount</div>
+                                <div class="text-muted small">Stale — in progress, idle 2+ days</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card border-0 border-start border-3 border-warning shadow-sm h-100">
+                            <div class="card-body text-center py-3">
+                                <div class="fs-2 fw-bold text-warning">@NotStartedLateCount</div>
+                                <div class="text-muted small">Not started — sprint &gt;50% elapsed</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card border-0 border-start border-3 border-warning shadow-sm h-100">
+                            <div class="card-body text-center py-3">
+                                <div class="fs-2 fw-bold text-warning">@OverCapacityCount</div>
+                                <div class="text-muted small">Over capacity — remaining &gt; days left</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                @if (RiskIssues.Count == 0)
+                {
+                    <div class="alert alert-success mb-0">
+                        <strong>All clear!</strong> No blockers or at-risk items detected.
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle small">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Key</th>
+                                    <th>Summary</th>
+                                    <th>Assignee</th>
+                                    <th>Status</th>
+                                    <th>Risk Reason</th>
+                                    <th>Idle (days)</th>
+                                    <th>Remaining</th>
+                                    <th>Days left</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var ri in RiskIssues)
+                                {
+                                    <tr class="@(ri.Reasons.Contains("Stale") ? "table-danger" : "table-warning")">
+                                        <td class="fw-semibold text-nowrap">@ri.Issue.Key</td>
+                                        <td>@ri.Issue.Summary</td>
+                                        <td class="text-nowrap">@ri.Issue.Assignee</td>
+                                        <td><span class="badge @StatusBadge(ri.Issue.Status, ri.Issue.StatusCategoryKey)">@ri.Issue.Status</span></td>
+                                        <td>
+                                            @foreach (var reason in ri.Reasons)
+                                            {
+                                                <span class="badge @RiskBadgeColor(reason) me-1">@reason</span>
+                                            }
+                                        </td>
+                                        <td class="text-center">@(ri.Issue.DaysSinceLastWorklog < 999 ? ri.Issue.DaysSinceLastWorklog.ToString() : "—")</td>
+                                        <td class="text-nowrap">@(ri.Issue.RemainingEstimate == "-" ? "—" : ri.Issue.RemainingEstimate)</td>
+                                        <td class="text-center">@FilteredReport.DaysRemaining</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            }
+
+            <!-- ══ TAB 5: STANDUP VIEW ════════════════════════════════════ -->
+            @if (ActiveTab == "standup")
+            {
+                <div class="d-flex align-items-center gap-2 mb-4">
+                    <h6 class="text-muted text-uppercase small fw-semibold mb-0">Daily Standup</h6>
+                    <span class="badge bg-secondary">@DateTime.Today.ToString("ddd, MMM d")</span>
+                    <span class="text-muted small ms-2">Sprint: @(FilteredReport.DaysRemaining) days remaining</span>
+                </div>
+
+                @foreach (var group in StandupGroups)
+                {
+                    var recentLogs = group.Issues
+                        .SelectMany(i => i.Worklogs.Select(w => new { Issue = i, Log = w }))
+                        .Where(x => x.Log.Author.Equals(group.Assignee, StringComparison.OrdinalIgnoreCase)
+                                 && x.Log.Started.Date >= DateTime.Today.AddDays(-2))
+                        .OrderByDescending(x => x.Log.Started)
+                        .ToList();
+                    var inProgress = group.Issues.Where(i => i.StatusCategoryKey == "indeterminate").ToList();
+                    var toDo = group.Issues.Where(i => i.StatusCategoryKey == "new").ToList();
+                    var hasActivity = recentLogs.Any();
+                    var isIdle = !hasActivity && group.Issues.Any(i => i.StatusCategoryKey == "indeterminate");
+
+                    <div class="card border-0 shadow-sm mb-3 @(isIdle ? "border-start border-3 border-warning" : "")">
+                        <div class="card-body">
+                            <div class="d-flex align-items-center gap-2 mb-3">
+                                <div class="rounded-circle @(isIdle ? "bg-warning" : "bg-primary") text-white d-flex align-items-center justify-content-center fw-bold flex-shrink-0"
+                                     style="width:38px;height:38px;font-size:13px">
+                                    @Initials(group.Assignee)
+                                </div>
+                                <div>
+                                    <div class="fw-semibold">@group.Assignee</div>
+                                    <div class="text-muted small">
+                                        @group.Issues.Count(i => i.StatusCategoryKey == "done") done ·
+                                        @inProgress.Count in progress ·
+                                        @toDo.Count to do
+                                    </div>
+                                </div>
+                                @if (isIdle)
+                                {
+                                    <span class="badge bg-warning text-dark ms-2">No recent activity</span>
+                                }
+                            </div>
+
+                            <div class="row g-3">
+                                <!-- Recent worklogs -->
+                                <div class="col-md-4">
+                                    <div class="small text-uppercase text-muted fw-semibold mb-2" style="letter-spacing:.05em">Recent activity</div>
+                                    @if (!recentLogs.Any())
+                                    {
+                                        <div class="text-muted small">No worklogs in last 2 days</div>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var x in recentLogs)
+                                        {
+                                            <div class="mb-2 small">
+                                                <div class="d-flex align-items-center gap-1">
+                                                    <span class="text-muted">@x.Log.Started.ToString("MMM d")</span>
+                                                    <span class="fw-semibold text-nowrap">@x.Log.TimeSpent</span>
+                                                    <span class="text-muted text-nowrap">on @x.Issue.Key</span>
+                                                </div>
+                                                @if (!string.IsNullOrEmpty(x.Log.Comment))
+                                                {
+                                                    <div class="text-muted text-truncate" style="max-width:220px" title="@x.Log.Comment">@x.Log.Comment</div>
+                                                }
+                                            </div>
+                                        }
+                                    }
+                                </div>
+
+                                <!-- In Progress -->
+                                <div class="col-md-4">
+                                    <div class="small text-uppercase text-muted fw-semibold mb-2" style="letter-spacing:.05em">In progress (@inProgress.Count)</div>
+                                    @if (!inProgress.Any())
+                                    {
+                                        <div class="text-muted small">—</div>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var issue in inProgress)
+                                        {
+                                            <div class="mb-2 small">
+                                                <div class="fw-semibold text-nowrap">@issue.Key</div>
+                                                <div class="text-muted text-truncate" style="max-width:200px" title="@issue.Summary">@issue.Summary</div>
+                                                @if (issue.DaysSinceLastWorklog >= 2 && issue.DaysSinceLastWorklog < 999)
+                                                {
+                                                    <span class="badge bg-danger" style="font-size:10px">Idle @issue.DaysSinceLastWorklog d</span>
+                                                }
+                                            </div>
+                                        }
+                                    }
+                                </div>
+
+                                <!-- To Do / Up Next -->
+                                <div class="col-md-4">
+                                    <div class="small text-uppercase text-muted fw-semibold mb-2" style="letter-spacing:.05em">Up next (@toDo.Count)</div>
+                                    @if (!toDo.Any())
+                                    {
+                                        <div class="text-muted small">—</div>
+                                    }
+                                    else
+                                    {
+                                        @foreach (var issue in toDo)
+                                        {
+                                            <div class="mb-2 small">
+                                                <div class="fw-semibold text-nowrap">
+                                                    @issue.Key
+                                                    @if (!string.IsNullOrEmpty(issue.Priority) && issue.Priority == "Highest")
+                                                    {
+                                                        <span class="badge bg-danger ms-1" style="font-size:10px">P1</span>
+                                                    }
+                                                </div>
+                                                <div class="text-muted text-truncate" style="max-width:200px" title="@issue.Summary">@issue.Summary</div>
+                                            </div>
+                                        }
+                                    }
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 }
             }
@@ -537,6 +830,8 @@
     private string FilterEpic = "";
     private string AssigneeSearch = "";
     private string EpicSearch = "";
+    private DateTime? FilterDateFrom;
+    private DateTime? FilterDateTo;
 
     private IEnumerable<string> AssigneeOptions => Report?.Issues
         .Select(i => i.Assignee).Distinct().Order()
@@ -552,7 +847,11 @@
     private List<SprintIssue> FilteredIssues => Report?.Issues
         .Where(i =>
             (string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee) &&
-            (string.IsNullOrEmpty(FilterEpic) || i.EpicKey == FilterEpic))
+            (string.IsNullOrEmpty(FilterEpic) || i.EpicKey == FilterEpic) &&
+            (!FilterDateFrom.HasValue && !FilterDateTo.HasValue ||
+             i.Worklogs.Any(w =>
+                 (!FilterDateFrom.HasValue || w.Started.Date >= FilterDateFrom.Value.Date) &&
+                 (!FilterDateTo.HasValue   || w.Started.Date <= FilterDateTo.Value.Date))))
         .ToList() ?? [];
 
     private List<EpicSummary> FilteredEpics => FilteredIssues
@@ -578,6 +877,71 @@
     private IEnumerable<IGrouping<string, SprintIssue>> AssigneeGroups =>
         FilteredIssues.GroupBy(i => i.Assignee).OrderBy(g => g.Key);
 
+    // Returns true if the worklog falls within the active date filter (or no date filter is set).
+    private bool WorklogInRange(WorklogEntry w) =>
+        (!FilterDateFrom.HasValue || w.Started.Date >= FilterDateFrom.Value.Date) &&
+        (!FilterDateTo.HasValue   || w.Started.Date <= FilterDateTo.Value.Date);
+
+    // Hours logged keyed by worklog author — only entries within the active date range.
+    private Dictionary<string, int> WorklogSecondsByAuthor => FilteredIssues
+        .SelectMany(i => i.Worklogs)
+        .Where(WorklogInRange)
+        .GroupBy(w => w.Author, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.Sum(w => w.TimeSpentSeconds), StringComparer.OrdinalIgnoreCase);
+
+    // Union of assignees + authors who have logged within the active date range.
+    private IEnumerable<string> WorkloadPeople => FilteredIssues
+        .Select(i => i.Assignee)
+        .Concat(FilteredIssues.SelectMany(i => i.Worklogs).Where(WorklogInRange).Select(w => w.Author))
+        .Where(n => !string.IsNullOrEmpty(n))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Order();
+
+    // ── Blockers & Risk ───────────────────────────────────────────────────────
+    private record RiskIssueRecord(SprintIssue Issue, List<string> Reasons);
+
+    private List<RiskIssueRecord> RiskIssues
+    {
+        get
+        {
+            var result = new List<RiskIssueRecord>();
+            var sprintPct = FilteredReport.SprintProgressPct;
+            var daysLeft = FilteredReport.DaysRemaining;
+            foreach (var issue in FilteredIssues.Where(i => i.StatusCategoryKey != "done" && i.Status != "In Review"))
+            {
+                var reasons = new List<string>();
+                if (issue.StatusCategoryKey == "indeterminate" && issue.DaysSinceLastWorklog >= 2 && issue.DaysSinceLastWorklog < 999)
+                    reasons.Add("Stale");
+                if (sprintPct > 50 && issue.StatusCategoryKey == "new")
+                    reasons.Add("Not Started");
+                if (daysLeft > 0 && issue.RemainingEstimateSeconds > 0 && issue.RemainingEstimateSeconds > daysLeft * 6 * 3600)
+                    reasons.Add("Over Capacity");
+                if (reasons.Any())
+                    result.Add(new(issue, reasons));
+            }
+            return result.OrderByDescending(r => r.Reasons.Count).ThenBy(r => r.Issue.Assignee).ToList();
+        }
+    }
+
+    private int StaleCount => RiskIssues.Count(r => r.Reasons.Contains("Stale"));
+    private int NotStartedLateCount => RiskIssues.Count(r => r.Reasons.Contains("Not Started"));
+    private int OverCapacityCount => RiskIssues.Count(r => r.Reasons.Contains("Over Capacity"));
+
+    private static string RiskBadgeColor(string reason) => reason switch
+    {
+        "Stale" => "bg-danger",
+        _ => "bg-warning text-dark"
+    };
+
+    // ── Standup View ─────────────────────────────────────────────────────────
+    private record StandupGroup(string Assignee, List<SprintIssue> Issues);
+
+    private List<StandupGroup> StandupGroups => FilteredIssues
+        .GroupBy(i => i.Assignee)
+        .OrderBy(g => g.Key)
+        .Select(g => new StandupGroup(g.Key, g.ToList()))
+        .ToList();
+
     // ── Lifecycle ─────────────────────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
     {
@@ -600,6 +964,8 @@
         FilterEpic = "";
         AssigneeSearch = "";
         EpicSearch = "";
+        FilterDateFrom = null;
+        FilterDateTo = null;
         ExpandedMembers.Clear();
 
         try
@@ -636,6 +1002,8 @@
         FilterEpic = "";
         AssigneeSearch = "";
         EpicSearch = "";
+        FilterDateFrom = null;
+        FilterDateTo = null;
         _renderCharts = true;
     }
 
@@ -667,7 +1035,7 @@
         var epics = FilteredEpics;
         var labels = epics.Select(e => e.DisplayName.Length > 20 ? e.DisplayName[..20] + "…" : e.DisplayName).ToArray();
         var estimated = epics.Select(e => Math.Round(e.TotalEstimateSeconds / 3600.0, 1)).ToArray();
-        var logged = epics.Select(e => Math.Round(e.TotalSpentSeconds / 3600.0, 1)).ToArray();
+        var logged = epics.Select(e => Math.Round(EpicFilteredSpent(e) / 3600.0, 1)).ToArray();
         var remaining = epics.Select(e => Math.Round(e.TotalRemainingSeconds / 3600.0, 1)).ToArray();
 
         await JS.InvokeVoidAsync("renderChart", "chart-forecast", new
@@ -695,11 +1063,11 @@
 
     private async Task RenderWorkloadChart()
     {
-        var groups = AssigneeGroups.ToList();
-        var labels = groups.Select(g => g.Key).ToArray();
-        var logged    = groups.Select(g => Math.Round(g.Sum(i => i.TimeSpentSeconds) / 3600.0, 1)).ToArray();
-        var remaining = groups.Select(g => Math.Round(g.Sum(i => i.RemainingEstimateSeconds) / 3600.0, 1)).ToArray();
-        var estimated = groups.Select(g => Math.Round(g.Sum(i => i.OriginalEstimateSeconds) / 3600.0, 1)).ToArray();
+        var people = WorkloadPeople.ToList();
+        var labels    = people.ToArray();
+        var logged    = people.Select(p => Math.Round((WorklogSecondsByAuthor.TryGetValue(p, out var s) ? s : 0) / 3600.0, 1)).ToArray();
+        var remaining = people.Select(p => Math.Round(FilteredIssues.Where(i => i.Assignee.Equals(p, StringComparison.OrdinalIgnoreCase)).Sum(i => i.RemainingEstimateSeconds) / 3600.0, 1)).ToArray();
+        var estimated = people.Select(p => Math.Round(FilteredIssues.Where(i => i.Assignee.Equals(p, StringComparison.OrdinalIgnoreCase)).Sum(i => i.OriginalEstimateSeconds) / 3600.0, 1)).ToArray();
 
         await JS.InvokeVoidAsync("renderChart", "chart-workload", new
         {
@@ -729,11 +1097,33 @@
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
-    private static int IssueProgress(SprintIssue issue)
+
+    // Returns spent seconds filtered by the active date range (or lifetime total when no filter).
+    private int FilteredSpentSeconds(SprintIssue issue) =>
+        (FilterDateFrom.HasValue || FilterDateTo.HasValue)
+            ? issue.Worklogs.Where(WorklogInRange).Sum(w => w.TimeSpentSeconds)
+            : issue.TimeSpentSeconds;
+
+    // Total logged seconds across all filtered issues, respecting the date range.
+    private int FilteredTotalLoggedSeconds => FilteredIssues.Sum(FilteredSpentSeconds);
+
+    // Epic-level filtered helpers.
+    private int EpicFilteredSpent(EpicSummary epic) => epic.Issues.Sum(FilteredSpentSeconds);
+
+    private double EpicFilteredVariancePct(EpicSummary epic)
+    {
+        if (epic.TotalEstimateSeconds <= 0) return 0;
+        return (EpicFilteredSpent(epic) - epic.TotalEstimateSeconds) / (double)epic.TotalEstimateSeconds * 100;
+    }
+
+    private bool EpicFilteredIsOverBudget(EpicSummary epic) =>
+        epic.TotalEstimateSeconds > 0 && EpicFilteredSpent(epic) > epic.TotalEstimateSeconds;
+
+    private int IssueProgress(SprintIssue issue)
     {
         if (issue.StatusCategoryKey == "done") return 100;
         if (issue.OriginalEstimateSeconds <= 0) return 0;
-        return Math.Max(0, (int)Math.Round((double)issue.TimeSpentSeconds / issue.OriginalEstimateSeconds * 100));
+        return Math.Max(0, (int)Math.Round((double)FilteredSpentSeconds(issue) / issue.OriginalEstimateSeconds * 100));
     }
 
     private static string StatusBadge(string statusName, string categoryKey) => statusName switch

@@ -151,8 +151,32 @@
                 @if (Report.TotalOriginalEstimateSeconds > 0)
                 {
                     <span class="ms-auto text-muted">
-                        <strong>@Fmt(Report.TotalTimeSpentSeconds)</strong> logged / @Fmt(Report.TotalOriginalEstimateSeconds) estimated
+                        <strong>@Fmt(TotalFilteredSpentSeconds)</strong> logged / @Fmt(Report.TotalOriginalEstimateSeconds) estimated
                     </span>
+                }
+            </div>
+        </div>
+    </div>
+
+    <!-- Worklog date filter -->
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex align-items-center gap-3 flex-wrap">
+                <label class="form-label small text-muted mb-0">Worklog date</label>
+                <div class="d-flex align-items-center gap-1">
+                    <input type="date" class="form-control form-control-sm" style="width:145px"
+                           @bind="FilterDateFrom" @bind:after="StateHasChanged" />
+                    <span class="text-muted small">–</span>
+                    <input type="date" class="form-control form-control-sm" style="width:145px"
+                           @bind="FilterDateTo" @bind:after="StateHasChanged" />
+                </div>
+                @if (FilterDateFrom.HasValue || FilterDateTo.HasValue)
+                {
+                    <button class="btn btn-sm btn-outline-secondary"
+                            @onclick='() => { FilterDateFrom = null; FilterDateTo = null; }'>
+                        Clear dates
+                    </button>
+                    <span class="text-muted small">Showing logged hours within selected range</span>
                 }
             </div>
         </div>
@@ -352,9 +376,9 @@
                                     {
                                         <td class="text-center">@(issue.StoryPoints.HasValue ? issue.StoryPoints.ToString() : "—")</td>
                                     }
-                                    <td class="text-nowrap">@(issue.TimeSpent == "-" ? "—" : issue.TimeSpent)</td>
+                                    <td class="text-nowrap">@(FilteredSpentSeconds(issue) > 0 ? Fmt(FilteredSpentSeconds(issue)) : "—")</td>
                                     <td class="text-nowrap">@(issue.OriginalEstimate == "-" ? "—" : issue.OriginalEstimate)</td>
-                                    <td class="text-nowrap @(issue.RemainingEstimateSeconds > Report.DaysRemaining * 8 * 3600 && issue.RemainingEstimateSeconds > 0 ? "text-danger fw-semibold" : "")">
+                                    <td class="text-nowrap @(issue.RemainingEstimateSeconds > Report.DaysRemaining * 6 * 3600 && issue.RemainingEstimateSeconds > 0 ? "text-danger fw-semibold" : "")">
                                         @(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)
                                     </td>
                                     <td>
@@ -429,7 +453,7 @@
                     var done = memberIssues.Count(i => i.StatusCategoryKey == "done");
                     var inProg = memberIssues.Count(i => i.StatusCategoryKey == "indeterminate");
                     var todo = memberIssues.Count(i => i.StatusCategoryKey == "new");
-                    var logged = memberIssues.Sum(i => i.TimeSpentSeconds);
+                    var logged = memberIssues.Sum(i => FilteredSpentSeconds(i));
                     var staleCount = memberIssues.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);
                     var memberId = group.Key.Replace(" ", "_");
 
@@ -508,7 +532,7 @@
                                                         <span class="badge bg-warning text-dark ms-1" title="No worklog in @issue.DaysSinceLastWorklog days">@issue.DaysSinceLastWorklog d idle</span>
                                                     }
                                                 </td>
-                                                <td class="text-nowrap">@(issue.TimeSpent == "-" ? "—" : issue.TimeSpent)</td>
+                                                <td class="text-nowrap">@(FilteredSpentSeconds(issue) > 0 ? Fmt(FilteredSpentSeconds(issue)) : "—")</td>
                                                 <td class="text-nowrap">@(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)</td>
                                                 @if (Report.HasStoryPoints)
                                                 {
@@ -542,12 +566,28 @@
     private string FilterStatus = "";
     private string FilterAssignee = "";
     private string FilterType = "";
+    private DateTime? FilterDateFrom;
+    private DateTime? FilterDateTo;
 
     private bool IsFiltered =>
         !string.IsNullOrEmpty(FilterText) ||
         !string.IsNullOrEmpty(FilterStatus) ||
         !string.IsNullOrEmpty(FilterAssignee) ||
-        !string.IsNullOrEmpty(FilterType);
+        !string.IsNullOrEmpty(FilterType) ||
+        FilterDateFrom.HasValue ||
+        FilterDateTo.HasValue;
+
+    private bool WorklogInRange(WorklogEntry w) =>
+        (!FilterDateFrom.HasValue || w.Started.Date >= FilterDateFrom.Value.Date) &&
+        (!FilterDateTo.HasValue   || w.Started.Date <= FilterDateTo.Value.Date);
+
+    private int FilteredSpentSeconds(SprintIssue issue) =>
+        (FilterDateFrom.HasValue || FilterDateTo.HasValue)
+            ? issue.Worklogs.Where(WorklogInRange).Sum(w => w.TimeSpentSeconds)
+            : issue.TimeSpentSeconds;
+
+    private int TotalFilteredSpentSeconds =>
+        Report?.Issues.Sum(FilteredSpentSeconds) ?? 0;
 
     private List<SprintIssue> FilteredIssues => Report?.Issues
         .Where(i =>
@@ -556,7 +596,11 @@
                 i.Summary.Contains(FilterText, StringComparison.OrdinalIgnoreCase)) &&
             (string.IsNullOrEmpty(FilterStatus) || i.Status == FilterStatus) &&
             (string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee) &&
-            (string.IsNullOrEmpty(FilterType) || i.IssueType == FilterType))
+            (string.IsNullOrEmpty(FilterType) || i.IssueType == FilterType) &&
+            (!FilterDateFrom.HasValue && !FilterDateTo.HasValue ||
+             i.Worklogs.Any(w =>
+                 (!FilterDateFrom.HasValue || w.Started.Date >= FilterDateFrom.Value.Date) &&
+                 (!FilterDateTo.HasValue   || w.Started.Date <= FilterDateTo.Value.Date))))
         .ToList() ?? [];
 
     private List<SprintIssue> InProgressIssues =>
@@ -609,6 +653,8 @@
         FilterStatus = "";
         FilterAssignee = "";
         FilterType = "";
+        FilterDateFrom = null;
+        FilterDateTo = null;
     }
 
     private void ToggleMember(string name)
@@ -660,11 +706,11 @@
             : name.Length >= 2 ? name[..2].ToUpper() : name.ToUpper();
     }
 
-    private static int IssueProgress(SprintIssue issue)
+    private int IssueProgress(SprintIssue issue)
     {
         if (issue.StatusCategoryKey == "done") return 100;
         if (issue.OriginalEstimateSeconds <= 0) return 0;
-        return Math.Max(0, (int)Math.Round((double)issue.TimeSpentSeconds / issue.OriginalEstimateSeconds * 100));
+        return Math.Max(0, (int)Math.Round((double)FilteredSpentSeconds(issue) / issue.OriginalEstimateSeconds * 100));
     }
 
     private static int Pct(int count, int total) =>

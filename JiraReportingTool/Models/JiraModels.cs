@@ -71,16 +71,30 @@ public class SprintReport
     public int TotalRemainingEstimateSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
 
     public int TotalSprintDays => (StartDate.HasValue && EndDate.HasValue)
-        ? Math.Max(1, (int)(EndDate.Value.Date - StartDate.Value.Date).TotalDays)
-        : 14;
+        ? Math.Max(1, CountWeekdays(StartDate.Value.Date, EndDate.Value.Date))
+        : 10; // 2-week sprint = 10 weekdays
 
     public int ElapsedDays => StartDate.HasValue
-        ? Math.Clamp((int)(DateTime.Today - StartDate.Value.Date).TotalDays, 0, TotalSprintDays)
+        ? Math.Clamp(CountWeekdays(StartDate.Value.Date, DateTime.Today.AddDays(-1)), 0, TotalSprintDays)
         : 0;
 
     public int DaysRemaining => EndDate.HasValue
-        ? Math.Max(0, (int)(EndDate.Value.Date - DateTime.Today).TotalDays)
+        ? Math.Max(0, CountWeekdays(DateTime.Today, EndDate.Value.Date))
         : 0;
+
+    // Counts weekdays (Mon–Fri) between two dates, inclusive of both endpoints.
+    private static int CountWeekdays(DateTime from, DateTime to)
+    {
+        int count = 0;
+        var d = from.Date;
+        while (d <= to.Date)
+        {
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday)
+                count++;
+            d = d.AddDays(1);
+        }
+        return count;
+    }
 
     public double SprintProgressPct => (double)ElapsedDays / TotalSprintDays * 100;
     public double CompletionPct => TotalIssues == 0 ? 0 : (double)DoneCount / TotalIssues * 100;
@@ -123,7 +137,7 @@ public class SprintReport
         if (issue.StatusCategoryKey == "indeterminate" && issue.DaysSinceLastWorklog >= 2)
             return true;
         if (DaysRemaining > 0 && issue.RemainingEstimateSeconds > 0 &&
-            issue.RemainingEstimateSeconds > DaysRemaining * 8 * 3600)
+            issue.RemainingEstimateSeconds > DaysRemaining * 6 * 3600)
             return true;
         return false;
     }

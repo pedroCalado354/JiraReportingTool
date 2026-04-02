@@ -1,0 +1,451 @@
+@page "/sprint-capacity"
+@rendermode InteractiveServer
+@inject JiraService JiraService
+@using JiraReportingTool.Models
+
+<PageTitle>Sprint Capacity Planner</PageTitle>
+
+<h1 class="mb-3">Sprint Capacity Planner</h1>
+
+<!-- ── Load form ─────────────────────────────────────────────────────────── -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end flex-wrap">
+
+            <div class="col-auto">
+                <label class="form-label small text-muted mb-1">Sprint ID</label>
+                <input class="form-control" style="width:140px"
+                       @bind="SprintId" @onkeyup="HandleKeyUp"
+                       placeholder="e.g. 6690" />
+            </div>
+
+            <div class="col-md-auto">
+                <label class="form-label small text-muted mb-1">
+                    Productive hours / day &nbsp;<span class="badge bg-primary">@HoursPerDay h</span>
+                </label>
+                <div class="d-flex align-items-center gap-2">
+                    <span class="small text-muted">1h</span>
+                    <input type="range" class="form-range" min="1" max="12" step="0.5"
+                           style="width:160px"
+                           @bind="HoursPerDay" @bind:event="oninput" />
+                    <span class="small text-muted">12h</span>
+                </div>
+            </div>
+
+            <div class="col-auto">
+                <button class="btn btn-primary" @onclick="LoadData"
+                        disabled="@(IsLoading || string.IsNullOrWhiteSpace(SprintId))">
+                    @if (IsLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    }
+                    Load
+                </button>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+@if (ErrorMessage != null)
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+@if (Report != null)
+{
+    <!-- ── Sprint info bar ───────────────────────────────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex flex-wrap gap-4 align-items-center small">
+                <div><span class="text-muted">Sprint</span>&nbsp;<strong>@(string.IsNullOrEmpty(Report.SprintName) ? "—" : Report.SprintName)</strong></div>
+                <div><span class="text-muted">Start</span>&nbsp;<strong>@(Report.StartDate?.ToString("MMM d, yyyy") ?? "—")</strong></div>
+                <div><span class="text-muted">End</span>&nbsp;<strong>@(Report.EndDate?.ToString("MMM d, yyyy") ?? "—")</strong></div>
+                <div><span class="text-muted">Days remaining</span>&nbsp;<strong>@Report.DaysRemaining weekdays</strong></div>
+                <div class="ms-auto">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="progress" style="height:8px;width:140px;border-radius:4px">
+                            <div class="progress-bar bg-primary" style="width:@((int)Report.SprintProgressPct)%"></div>
+                        </div>
+                        <span class="text-muted">@((int)Report.SprintProgressPct)% elapsed</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── KPI summary ──────────────────────────────────────────────────────── -->
+    <div class="row g-3 mb-3">
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold">@MemberSummaries.Count</div>
+                    <div class="text-muted small">Team Members</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100 @(OverCapacityCount > 0 ? "border-start border-3 border-danger" : "")">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold @(OverCapacityCount > 0 ? "text-danger" : "text-success")">@OverCapacityCount</div>
+                    <div class="text-muted small">Over Capacity</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold">@FmtH(TotalTeamRemainingSeconds)</div>
+                    <div class="text-muted small">Total Remaining Work</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-3 fw-bold">@FmtH(TotalTeamCapacitySeconds)</div>
+                    <div class="text-muted small">Total Team Capacity</div>
+                    <div class="text-muted" style="font-size:11px">@MemberSummaries.Count × @FmtH(PersonCapacitySeconds) per person</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Assignee filter ──────────────────────────────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex align-items-center gap-3 flex-wrap">
+                <label class="form-label small text-muted mb-0">Assignee</label>
+                <div style="width:210px">
+                    <input class="form-control form-control-sm mb-1" placeholder="Search member…"
+                           @bind="AssigneeSearch" @bind:event="oninput" />
+                    <select class="form-select form-select-sm" multiple style="min-height:100px"
+                            @onchange="OnAssigneeChanged">
+                        @foreach (var a in AssigneeOptions)
+                        {
+                            <option value="@a" selected="@FilterAssignees.Contains(a)">@a</option>
+                        }
+                    </select>
+                    <div class="text-muted small mt-1">
+                        @if (FilterAssignees.Any())
+                        {
+                            <span>@FilterAssignees.Count selected</span>
+                        }
+                        else
+                        {
+                            <span>All @MemberSummaries.Count members shown (Ctrl+click to select)</span>
+                        }
+                    </div>
+                </div>
+                @if (FilterAssignees.Any())
+                {
+                    <button class="btn btn-sm btn-outline-secondary"
+                            @onclick='() => { FilterAssignees.Clear(); AssigneeSearch = ""; }'>
+                        Clear
+                    </button>
+                }
+                <!-- Legend -->
+                <div class="ms-auto d-flex gap-3 small text-muted">
+                    <span><span class="badge bg-success me-1">On Track</span>≤ 85% capacity</span>
+                    <span><span class="badge bg-warning text-dark me-1">At Risk</span>85–100%</span>
+                    <span><span class="badge bg-danger me-1">Over Capacity</span>&gt; 100%</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Per-member capacity list ─────────────────────────────────────────── -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-body p-0">
+
+            @if (!FilteredSummaries.Any())
+            {
+                <div class="p-4 text-muted text-center">No members found.</div>
+            }
+
+            @foreach (var ms in FilteredSummaries)
+            {
+                var statusColor = !ms.IsFeasible ? "danger" : ms.UtilizationPct >= 85 ? "warning" : "success";
+                var statusLabel = !ms.IsFeasible ? "Over Capacity" : ms.UtilizationPct >= 85 ? "At Risk" : "On Track";
+                var fillPct = Math.Min(ms.UtilizationPct, 100);
+                var isExpanded = ExpandedMembers.Contains(ms.Assignee);
+
+                <div class="border-bottom">
+                    <!-- Member row header -->
+                    <div class="px-4 py-3" style="cursor:pointer" @onclick="() => ToggleMember(ms.Assignee)">
+                        <div class="d-flex align-items-center gap-3 flex-wrap">
+
+                            <!-- Avatar -->
+                            <div class="rounded-circle @(!ms.IsFeasible ? "bg-danger" : "bg-primary") text-white d-flex align-items-center justify-content-center fw-bold flex-shrink-0"
+                                 style="width:42px;height:42px;font-size:14px">
+                                @Initials(ms.Assignee)
+                            </div>
+
+                            <!-- Name + issue counts -->
+                            <div style="min-width:180px">
+                                <div class="fw-semibold">@ms.Assignee</div>
+                                <div class="small text-muted">
+                                    @ms.Issues.Count tasks &nbsp;·&nbsp;
+                                    <span class="text-success">@ms.Done done</span> ·
+                                    <span class="text-primary">@ms.InProgress in progress</span> ·
+                                    @ms.ToDo to do
+                                </div>
+                            </div>
+
+                            <!-- Capacity bar -->
+                            <div class="flex-grow-1" style="min-width:200px;max-width:320px">
+                                <div class="d-flex justify-content-between small mb-1">
+                                    <span class="text-muted">Remaining vs Capacity</span>
+                                    <span class="fw-semibold @(!ms.IsFeasible ? "text-danger" : "")">
+                                        @FmtH(ms.RemainingSeconds) / @FmtH(PersonCapacitySeconds)
+                                    </span>
+                                </div>
+                                <div class="progress" style="height:12px;border-radius:6px">
+                                    <div class="progress-bar bg-@statusColor" style="width:@fillPct%;transition:width .3s"></div>
+                                </div>
+                                <div class="text-muted small mt-1">@ms.UtilizationPct% utilization</div>
+                            </div>
+
+                            <!-- Status badge + overflow -->
+                            <div class="d-flex align-items-center gap-2 ms-auto flex-shrink-0">
+                                @if (!ms.IsFeasible)
+                                {
+                                    <span class="small text-danger fw-semibold">+@FmtH(ms.RemainingSeconds - PersonCapacitySeconds) over</span>
+                                }
+                                <span class="badge bg-@statusColor px-2 py-1">@statusLabel</span>
+                                <span class="text-muted small">@(isExpanded ? "▲" : "▼")</span>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- Expanded: task detail table -->
+                    @if (isExpanded)
+                    {
+                        <div class="px-4 pb-3 bg-light">
+                            <table class="table table-sm align-middle small mb-0">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th style="width:90px">Key</th>
+                                        <th style="width:160px">Epic</th>
+                                        <th>Summary</th>
+                                        <th style="width:120px">Status</th>
+                                        <th style="width:75px">Estimate</th>
+                                        <th style="width:75px">Logged</th>
+                                        <th style="width:85px">Remaining</th>
+                                        <th style="width:70px" class="text-center">Fits?</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var issue in ms.Issues.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }))
+                                    {
+                                        var issueFits = issue.StatusCategoryKey == "done"
+                                            || issue.RemainingEstimateSeconds == 0
+                                            || issue.RemainingEstimateSeconds <= PersonCapacitySeconds;
+                                        var noEstimate = issue.StatusCategoryKey != "done"
+                                            && issue.RemainingEstimateSeconds == 0
+                                            && issue.OriginalEstimateSeconds == 0;
+                                        <tr class="@(issue.StatusCategoryKey == "done" ? "opacity-50" : !issueFits ? "table-danger" : "")">
+                                            <td class="fw-semibold text-nowrap">@issue.Key</td>
+                                            <td class="text-muted text-truncate" style="max-width:160px"
+                                                title="@issue.EpicName (@issue.EpicKey)">
+                                                @(string.IsNullOrEmpty(issue.EpicKey) ? "—" : $"{issue.EpicKey} – {issue.EpicName}")
+                                            </td>
+                                            <td class="text-truncate" style="max-width:260px" title="@issue.Summary">@issue.Summary</td>
+                                            <td>
+                                                <span class="badge @StatusBadge(issue.Status, issue.StatusCategoryKey)">@issue.Status</span>
+                                                @if (issue.Priority == "Highest")
+                                                {
+                                                    <span class="badge bg-danger ms-1" style="font-size:10px">P1</span>
+                                                }
+                                            </td>
+                                            <td class="text-nowrap">@(issue.OriginalEstimate == "-" ? "—" : issue.OriginalEstimate)</td>
+                                            <td class="text-nowrap">@(issue.TimeSpent == "-" ? "—" : issue.TimeSpent)</td>
+                                            <td class="text-nowrap @(!issueFits && issue.StatusCategoryKey != "done" && !noEstimate ? "text-danger fw-semibold" : "")">
+                                                @if (issue.StatusCategoryKey == "done")
+                                                {
+                                                    <span class="text-muted">—</span>
+                                                }
+                                                else if (noEstimate)
+                                                {
+                                                    <span class="text-warning">No estimate</span>
+                                                }
+                                                else
+                                                {
+                                                    @(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)
+                                                }
+                                            </td>
+                                            <td class="text-center fw-bold">
+                                                @if (issue.StatusCategoryKey == "done")
+                                                {
+                                                    <span class="text-success">✓</span>
+                                                }
+                                                else if (noEstimate)
+                                                {
+                                                    <span class="text-warning" title="No estimate — cannot determine">?</span>
+                                                }
+                                                else if (!issueFits)
+                                                {
+                                                    <span class="text-danger">✗</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-success">✓</span>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                                <tfoot class="table-light fw-semibold small">
+                                    <tr>
+                                        <td colspan="4">Total</td>
+                                        <td class="text-nowrap">@FmtH(ms.Issues.Sum(i => i.OriginalEstimateSeconds))</td>
+                                        <td class="text-nowrap">@FmtH(ms.Issues.Sum(i => i.TimeSpentSeconds))</td>
+                                        <td class="text-nowrap @(!ms.IsFeasible ? "text-danger" : "")">@FmtH(ms.RemainingSeconds)</td>
+                                        <td></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private string SprintId = "";
+    private double HoursPerDay = 6;
+    private bool IsLoading = false;
+    private string? ErrorMessage;
+    private SprintReport? Report;
+    private HashSet<string> ExpandedMembers = new();
+
+    // ── Filters ──────────────────────────────────────────────────────────────
+    private HashSet<string> FilterAssignees = new(StringComparer.OrdinalIgnoreCase);
+    private string AssigneeSearch = "";
+
+    private void OnAssigneeChanged(ChangeEventArgs e)
+    {
+        FilterAssignees.Clear();
+        if (e.Value is string[] values)
+            foreach (var v in values)
+                FilterAssignees.Add(v);
+    }
+
+    // ── Capacity per person ───────────────────────────────────────────────────
+    private int PersonCapacitySeconds => (int)((Report?.DaysRemaining ?? 0) * HoursPerDay * 3600);
+
+    // ── Per-member summaries ─────────────────────────────────────────────────
+    private record MemberSummary(
+        string Assignee,
+        List<SprintIssue> Issues,
+        int RemainingSeconds,
+        int Done,
+        int InProgress,
+        int ToDo,
+        bool IsFeasible,
+        int UtilizationPct
+    );
+
+    private List<MemberSummary> MemberSummaries
+    {
+        get
+        {
+            if (Report == null) return [];
+            var cap = PersonCapacitySeconds;
+            return Report.Issues
+                .Where(i => !string.IsNullOrEmpty(i.Assignee))
+                .GroupBy(i => i.Assignee, StringComparer.OrdinalIgnoreCase)
+                .Select(g =>
+                {
+                    var issues = g.ToList();
+                    var remaining = issues
+                        .Where(i => i.StatusCategoryKey != "done")
+                        .Sum(i => i.RemainingEstimateSeconds);
+                    var utilPct = cap > 0 ? (int)(remaining / (double)cap * 100) : 0;
+                    return new MemberSummary(
+                        Assignee:       g.Key,
+                        Issues:         issues,
+                        RemainingSeconds: remaining,
+                        Done:           issues.Count(i => i.StatusCategoryKey == "done"),
+                        InProgress:     issues.Count(i => i.StatusCategoryKey == "indeterminate"),
+                        ToDo:           issues.Count(i => i.StatusCategoryKey == "new"),
+                        IsFeasible:     remaining <= cap,
+                        UtilizationPct: utilPct
+                    );
+                })
+                .OrderByDescending(ms => ms.RemainingSeconds)
+                .ToList();
+        }
+    }
+
+    private IEnumerable<string> AssigneeOptions => Report?.Issues
+        .Select(i => i.Assignee).Distinct().Order()
+        .Where(a => string.IsNullOrEmpty(AssigneeSearch) || a.Contains(AssigneeSearch, StringComparison.OrdinalIgnoreCase))
+        ?? Enumerable.Empty<string>();
+
+    private List<MemberSummary> FilteredSummaries => !FilterAssignees.Any()
+        ? MemberSummaries
+        : MemberSummaries.Where(ms => FilterAssignees.Contains(ms.Assignee)).ToList();
+
+    private int OverCapacityCount     => MemberSummaries.Count(ms => !ms.IsFeasible);
+    private int TotalTeamRemainingSeconds => MemberSummaries.Sum(ms => ms.RemainingSeconds);
+    private int TotalTeamCapacitySeconds  => MemberSummaries.Count * PersonCapacitySeconds;
+
+    // ── Load ─────────────────────────────────────────────────────────────────
+    private async Task LoadData()
+    {
+        if (!int.TryParse(SprintId.Trim(), out _)) return;
+
+        IsLoading = true;
+        ErrorMessage = null;
+        Report = null;
+        FilterAssignees.Clear();
+        AssigneeSearch = "";
+        ExpandedMembers.Clear();
+
+        try
+        {
+            Report = await JiraService.GetDeliveryDataAsync(int.Parse(SprintId.Trim()));
+        }
+        catch (HttpRequestException ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
+        catch (Exception ex)            { ErrorMessage = $"Unexpected error: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadData();
+    }
+
+    private void ToggleMember(string name)
+    {
+        if (!ExpandedMembers.Remove(name)) ExpandedMembers.Add(name);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    private static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+             : name.Length >= 2  ? name[..2].ToUpper()
+             : name.ToUpper();
+    }
+
+    private static string FmtH(int seconds) =>
+        seconds <= 0 ? "0h" : $"{seconds / 3600.0:0.#}h";
+
+    private static string StatusBadge(string status, string categoryKey) => status switch
+    {
+        "Dev Ready" => "bg-info text-dark",
+        "In Review" => "bg-warning text-dark",
+        _ => categoryKey switch
+        {
+            "done"          => "bg-success",
+            "indeterminate" => "bg-primary",
+            _               => "bg-secondary"
+        }
+    };
+}
