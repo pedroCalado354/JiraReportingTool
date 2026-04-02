@@ -12,43 +12,68 @@
     <div class="card-body">
         <div class="row g-3 align-items-end flex-wrap">
 
-            <div class="col-auto">
-                <label class="form-label small text-muted mb-1">Epic Key</label>
-                <input class="form-control" style="width:160px"
-                       @bind="EpicKey" @onkeyup="HandleKeyUp"
-                       placeholder="e.g. PROJ-123" />
-            </div>
-
+            <!-- Step 1: Sprint ID -->
             <div class="col-auto">
                 <label class="form-label small text-muted mb-1">Sprint ID</label>
-                <input class="form-control" style="width:140px"
-                       @bind="SprintId" @onkeyup="HandleKeyUp"
-                       placeholder="e.g. 6690" />
-            </div>
-
-            <div class="col-md-auto">
-                <label class="form-label small text-muted mb-1">
-                    Productive hours / day &nbsp;<span class="badge bg-primary">@HoursPerDay h</span>
-                </label>
-                <div class="d-flex align-items-center gap-2">
-                    <span class="small text-muted">1h</span>
-                    <input type="range" class="form-range" min="1" max="12" step="0.5"
-                           style="width:160px"
-                           @bind="HoursPerDay" @bind:event="oninput" />
-                    <span class="small text-muted">12h</span>
+                <div class="d-flex gap-2">
+                    <input class="form-control" style="width:140px"
+                           @bind="SprintId" @onkeyup="HandleSprintKeyUp"
+                           placeholder="e.g. 6690" />
+                    <button class="btn btn-outline-secondary" @onclick="LoadSprintEpics"
+                            disabled="@(IsLoadingEpics || string.IsNullOrWhiteSpace(SprintId))">
+                        @if (IsLoadingEpics)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        Load
+                    </button>
                 </div>
             </div>
 
-            <div class="col-auto">
-                <button class="btn btn-primary" @onclick="LoadData"
-                        disabled="@(IsLoading || string.IsNullOrWhiteSpace(EpicKey) || string.IsNullOrWhiteSpace(SprintId))">
-                    @if (IsLoading)
-                    {
-                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                    }
-                    Forecast
-                </button>
-            </div>
+            <!-- Step 2: Epic dropdown (shown after sprint is loaded) -->
+            @if (SprintEpics.Count > 0)
+            {
+                <div class="col-auto">
+                    <label class="form-label small text-muted mb-1">Epic</label>
+                    <select class="form-select" style="width:280px" @bind="EpicKey">
+                        <option value="">— select an epic —</option>
+                        @foreach (var epic in SprintEpics)
+                        {
+                            <option value="@epic.Key">@epic.Key — @epic.Name</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="col-md-auto">
+                    <label class="form-label small text-muted mb-1">
+                        Productive hours / day &nbsp;<span class="badge bg-primary">@HoursPerDay h</span>
+                    </label>
+                    <div class="d-flex align-items-center gap-2">
+                        <span class="small text-muted">1h</span>
+                        <input type="range" class="form-range" min="1" max="12" step="0.5"
+                               style="width:160px"
+                               @bind="HoursPerDay" @bind:event="oninput" />
+                        <span class="small text-muted">12h</span>
+                    </div>
+                </div>
+
+                <div class="col-auto">
+                    <button class="btn btn-primary" @onclick="LoadData"
+                            disabled="@(IsLoading || string.IsNullOrWhiteSpace(EpicKey))">
+                        @if (IsLoading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        Forecast
+                    </button>
+                </div>
+            }
+            else if (NoEpicsFound)
+            {
+                <div class="col-auto align-self-center">
+                    <span class="text-warning small">No epics found in this sprint.</span>
+                </div>
+            }
 
         </div>
     </div>
@@ -74,7 +99,11 @@
                         <div class="progress" style="height:8px;width:140px;border-radius:4px">
                             <div class="progress-bar bg-primary" style="width:@((int)Report.SprintProgressPct)%"></div>
                         </div>
-                        <span class="text-muted">@((int)Report.SprintProgressPct)% elapsed · <strong class="text-dark">@Report.DaysRemaining</strong> weekdays left</span>
+                        <span class="text-muted">@((int)Report.SprintProgressPct)% elapsed ·
+                            <input type="number" class="form-control form-control-sm d-inline-block text-center fw-bold"
+                                   min="0" max="999" style="width:56px;padding:1px 4px"
+                                   @bind="EffectiveDaysRemaining" @bind:event="oninput" />
+                            weekdays left</span>
                     </div>
                 </div>
             </div>
@@ -363,9 +392,13 @@
     private string SprintId = "";
     private double HoursPerDay = 6;
     private bool IsLoading = false;
+    private bool IsLoadingEpics = false;
+    private bool NoEpicsFound = false;
     private string? ErrorMessage;
     private SprintReport? Report;
     private string LoadedEpicKey = "";
+    private List<EpicSummary> SprintEpics = [];
+    private int EffectiveDaysRemaining = 0;
 
     // ── Member filter ─────────────────────────────────────────────────────────
     private string FilterMember = "";
@@ -394,7 +427,7 @@
     private int NoEstimateCount => FilteredIssues
         .Count(i => i.StatusCategoryKey != "done" && i.RemainingEstimateSeconds == 0 && i.OriginalEstimateSeconds == 0);
 
-    private double CapacityHours => (Report?.DaysRemaining ?? 0) * HoursPerDay;
+    private double CapacityHours => EffectiveDaysRemaining * HoursPerDay;
 
     private double BufferHours => CapacityHours - TotalRemainingHours;
 
@@ -451,6 +484,27 @@ FilteredIssues
     })
     .ThenByDescending(i => i.RemainingEstimateSeconds);
     // ── Load ─────────────────────────────────────────────────────────────────
+    private async Task LoadSprintEpics()
+    {
+        if (!int.TryParse(SprintId.Trim(), out var sprintId)) return;
+
+        IsLoadingEpics = true;
+        NoEpicsFound = false;
+        SprintEpics = [];
+        EpicKey = "";
+        Report = null;
+        ErrorMessage = null;
+
+        try
+        {
+            SprintEpics = await JiraService.GetEpicsInSprintAsync(sprintId);
+            NoEpicsFound = SprintEpics.Count == 0;
+        }
+        catch (HttpRequestException ex) { ErrorMessage = $"Failed to load sprint: {ex.Message}"; }
+        catch (Exception ex)            { ErrorMessage = $"Unexpected error: {ex.Message}"; }
+        finally { IsLoadingEpics = false; }
+    }
+
     private async Task LoadData()
     {
         if (string.IsNullOrWhiteSpace(EpicKey) || !int.TryParse(SprintId.Trim(), out var sprintId)) return;
@@ -465,6 +519,7 @@ FilteredIssues
         {
             LoadedEpicKey = EpicKey.Trim().ToUpper();
             Report = await JiraService.GetEpicSprintForecastAsync(LoadedEpicKey, sprintId);
+            EffectiveDaysRemaining = Report.DaysRemaining;
             if (Report.TotalIssues == 0)
                 ErrorMessage = $"No issues found for epic {LoadedEpicKey} in sprint {sprintId}. Check the epic key and sprint ID.";
         }
@@ -473,9 +528,9 @@ FilteredIssues
         finally { IsLoading = false; }
     }
 
-    private async Task HandleKeyUp(KeyboardEventArgs e)
+    private async Task HandleSprintKeyUp(KeyboardEventArgs e)
     {
-        if (e.Key == "Enter") await LoadData();
+        if (e.Key == "Enter") await LoadSprintEpics();
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

@@ -211,6 +211,59 @@ public class JiraService
         return FetchDeliveryReportAsync(jql);
     }
 
+    // Returns the distinct epics that have issues in a given sprint
+    public async Task<List<EpicSummary>> GetEpicsInSprintAsync(int sprintId)
+    {
+        var jql = Uri.EscapeDataString($"sprint = {sprintId} AND issueType != Epic");
+        const string fields = "customfield_10014,parent,issuetype";
+
+        var json = await FetchAllPagesAsync(jql, fields);
+
+        using var doc = JsonDocument.Parse(json);
+        var epicKeys = new HashSet<string>();
+
+        if (doc.RootElement.TryGetProperty("issues", out var issuesEl))
+        {
+            foreach (var item in issuesEl.EnumerateArray())
+            {
+                var f = item.GetProperty("fields");
+
+                // Classic epic link (customfield_10014)
+                if (f.TryGetProperty("customfield_10014", out var el) && el.ValueKind == JsonValueKind.String)
+                {
+                    var k = el.GetString();
+                    if (!string.IsNullOrEmpty(k)) { epicKeys.Add(k); continue; }
+                }
+
+                // Next-gen: direct parent is an Epic
+                if (f.TryGetProperty("parent", out var parent) && parent.ValueKind != JsonValueKind.Null)
+                {
+                    var parentType = parent.TryGetProperty("fields", out var pf) &&
+                                     pf.TryGetProperty("issuetype", out var pit)
+                        ? pit.GetProperty("name").GetString() ?? "" : "";
+                    if (parentType == "Epic")
+                    {
+                        var k = parent.GetProperty("key").GetString();
+                        if (!string.IsNullOrEmpty(k)) epicKeys.Add(k);
+                    }
+                }
+            }
+        }
+
+        if (epicKeys.Count == 0) return [];
+
+        var epicNames = await FetchEpicNamesAsync(epicKeys.ToList());
+
+        return epicKeys
+            .Select(k => new EpicSummary
+            {
+                Key = k,
+                Name = epicNames.TryGetValue(k, out var name) ? name : k
+            })
+            .OrderBy(e => e.Key)
+            .ToList();
+    }
+
     // Fetches all issues for a given epic inside a specific sprint — used by Epic Delivery Forecast
     public async Task<SprintReport> GetEpicSprintForecastAsync(string epicKey, int sprintId)
     {

@@ -19,6 +19,13 @@
                        placeholder="e.g. 6690" />
             </div>
 
+            <div class="col-auto">
+                <label class="form-label small text-muted mb-1">Working days</label>
+                <input type="number" class="form-control" style="width:110px"
+                       min="1" max="60" step="1"
+                       @bind="WorkingDays" @bind:event="oninput" />
+            </div>
+
             <div class="col-md-auto">
                 <label class="form-label small text-muted mb-1">
                     Productive hours / day &nbsp;<span class="badge bg-primary">@HoursPerDay h</span>
@@ -317,6 +324,7 @@
 @code {
     private string SprintId = "";
     private double HoursPerDay = 6;
+    private int WorkingDays = 10;
     private bool IsLoading = false;
     private string? ErrorMessage;
     private SprintReport? Report;
@@ -335,7 +343,7 @@
     }
 
     // ── Capacity per person ───────────────────────────────────────────────────
-    private int PersonCapacitySeconds => (int)((Report?.DaysRemaining ?? 0) * HoursPerDay * 3600);
+    private int PersonCapacitySeconds => (int)(WorkingDays * HoursPerDay * 3600);
 
     // ── Per-member summaries ─────────────────────────────────────────────────
     private record MemberSummary(
@@ -409,6 +417,7 @@
         try
         {
             Report = await JiraService.GetDeliveryDataAsync(int.Parse(SprintId.Trim()));
+            WorkingDays = Report.DaysRemaining > 0 ? Report.DaysRemaining : WorkingDays;
         }
         catch (HttpRequestException ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
         catch (Exception ex)            { ErrorMessage = $"Unexpected error: {ex.Message}"; }
