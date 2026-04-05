@@ -269,7 +269,7 @@ public class JiraService
     {
         var jql = Uri.EscapeDataString(
             $"sprint = {sprintId} AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY status ASC, priority DESC");
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent";
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent,created,resolutiondate";
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, truncated) = ParseSprintReport(json, "");
         await FetchMissingWorklogsAsync(report, truncated);
@@ -309,7 +309,7 @@ public class JiraService
     // Shared delivery fetch: paginate → parse → enrich epic names
     private async Task<SprintReport> FetchDeliveryReportAsync(string encodedJql)
     {
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent";
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent,created,resolutiondate";
 
         var json = await FetchAllPagesAsync(encodedJql, fields);
         var (report, truncated) = ParseSprintReport(json, "");
@@ -425,6 +425,16 @@ public class JiraService
                     issue.EpicKey = parent.GetProperty("key").GetString() ?? "";
             }
 
+            // Created date
+            if (fields.TryGetProperty("created", out var createdProp) && createdProp.ValueKind != JsonValueKind.Null &&
+                DateTime.TryParse(createdProp.GetString(), out var createdDt))
+                issue.Created = createdDt;
+
+            // Resolution date
+            if (fields.TryGetProperty("resolutiondate", out var resProp) && resProp.ValueKind != JsonValueKind.Null &&
+                DateTime.TryParse(resProp.GetString(), out var resolvedDt))
+                issue.ResolutionDate = resolvedDt;
+
             // Sprint metadata from first active sprint in customfield_10020
             if (report.SprintName == "" &&
                 fields.TryGetProperty("customfield_10020", out var sprints) &&
@@ -507,6 +517,24 @@ public class JiraService
                 issue.Worklogs.Add(entry);
             }
         }
+    }
+
+    // Fetches ALL issues for an epic regardless of sprint — used by Quality Metrics drill-down
+    public async Task<SprintReport> GetAllEpicIssuesAsync(string epicKey)
+    {
+        var jql = Uri.EscapeDataString(
+            $"issueType not in subTaskIssueTypes() AND issueType != Epic AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate";
+        var json = await FetchAllPagesAsync(jql, fields);
+        var (report, truncated) = ParseSprintReport(json, "");
+        await FetchMissingWorklogsAsync(report, truncated);
+
+        var epicNames = await FetchEpicNamesAsync([epicKey]);
+        if (epicNames.TryGetValue(epicKey, out var name))
+            foreach (var issue in report.Issues)
+                issue.EpicName = name;
+
+        return report;
     }
 
     // Jira API v3 returns comments in Atlassian Document Format (ADF)

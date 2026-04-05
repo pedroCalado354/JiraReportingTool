@@ -53,6 +53,21 @@
                        disabled="@(!string.IsNullOrEmpty(SelectedFilterId))" />
             </div>
 
+            <!-- Days Left override -->
+            <div class="col-auto">
+                <label class="form-label small text-muted mb-1">
+                    Days Left in Sprint
+                    @if (Report != null && string.IsNullOrEmpty(OverrideDaysLeftInput))
+                    {
+                        <span class="fw-normal text-muted"> (auto: @Report.DaysRemaining)</span>
+                    }
+                </label>
+                <input type="number" class="form-control" style="width:100px"
+                       @bind="OverrideDaysLeftInput"
+                       placeholder="@(Report != null ? Report.DaysRemaining.ToString() : "auto")"
+                       min="0" max="99" />
+            </div>
+
             <div class="col-auto">
                 <button class="btn btn-primary" @onclick="LoadData"
                         disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId)))">
@@ -106,11 +121,41 @@
             </div>
         </div>
         <div class="col-6 col-md-3">
-            <div class="card border-0 shadow-sm text-center h-100">
+            @{
+                var sprintCapacitySecs = EffectiveDaysRemaining * 6 * 3600;
+                var remainingSecs      = FilteredReport.TotalRemainingEstimateSeconds;
+                var overCapacity       = sprintCapacitySecs > 0 && remainingSecs > sprintCapacitySecs;
+                var capacityPct        = sprintCapacitySecs > 0
+                    ? Math.Min((int)((double)remainingSecs / sprintCapacitySecs * 100), 100)
+                    : 0;
+            }
+            <div class="card border-0 shadow-sm text-center h-100 @(overCapacity ? "border-danger border-start border-3" : "")">
                 <div class="card-body py-3">
-                    <div class="fs-3 fw-bold">@Fmt(FilteredReport.TotalRemainingEstimateSeconds)</div>
-                    <div class="text-muted small">Hours Remaining</div>
-                    <div class="text-muted small mt-1">@Report.DaysRemaining days left in sprint</div>
+                    <div class="fs-3 fw-bold @(overCapacity ? "text-danger" : "")">@Fmt(remainingSecs)</div>
+                    <div class="text-muted small">Work Remaining</div>
+                    <hr class="my-2" />
+                    <div class="fw-semibold @(overCapacity ? "text-danger" : "text-success")">
+                        @Fmt(sprintCapacitySecs)
+                    </div>
+                    <div class="text-muted small">Sprint Capacity</div>
+                    <div class="text-muted small mt-1">@EffectiveDaysRemaining days × 6h</div>
+                    @if (sprintCapacitySecs > 0)
+                    {
+                        <div class="progress mt-2" style="height:5px">
+                            <div class="progress-bar @(overCapacity ? "bg-danger" : "bg-success")"
+                                 style="width:@capacityPct%"></div>
+                        </div>
+                        <div class="text-muted small mt-1">
+                            @if (overCapacity)
+                            {
+                                <span class="text-danger">@Fmt(remainingSecs - sprintCapacitySecs) over capacity</span>
+                            }
+                            else
+                            {
+                                <span class="text-success">@Fmt(sprintCapacitySecs - remainingSecs) buffer</span>
+                            }
+                        </div>
+                    }
                 </div>
             </div>
         </div>
@@ -280,7 +325,7 @@
                                         <td><span class="badge @StatusBadge(issue.Status, issue.StatusCategoryKey)">@issue.Status</span></td>
                                         <td class="text-nowrap">@(issue.OriginalEstimate == "-" ? "—" : issue.OriginalEstimate)</td>
                                         <td class="text-nowrap">@(FilteredSpentSeconds(issue) > 0 ? FmtH(FilteredSpentSeconds(issue)) : "—")</td>
-                                        <td class="text-nowrap @(issue.RemainingEstimateSeconds > Report.DaysRemaining * 6 * 3600 && issue.RemainingEstimateSeconds > 0 ? "text-danger fw-semibold" : "")">
+                                        <td class="text-nowrap @(issue.RemainingEstimateSeconds > EffectiveDaysRemaining * 6 * 3600 && issue.RemainingEstimateSeconds > 0 ? "text-danger fw-semibold" : "")">
                                             @(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)
                                         </td>
                                         <td>
@@ -674,7 +719,7 @@
                                         </td>
                                         <td class="text-center">@(ri.Issue.DaysSinceLastWorklog < 999 ? ri.Issue.DaysSinceLastWorklog.ToString() : "—")</td>
                                         <td class="text-nowrap">@(ri.Issue.RemainingEstimate == "-" ? "—" : ri.Issue.RemainingEstimate)</td>
-                                        <td class="text-center">@FilteredReport.DaysRemaining</td>
+                                        <td class="text-center">@EffectiveDaysRemaining</td>
                                     </tr>
                                 }
                             </tbody>
@@ -689,7 +734,7 @@
                 <div class="d-flex align-items-center gap-2 mb-4">
                     <h6 class="text-muted text-uppercase small fw-semibold mb-0">Daily Standup</h6>
                     <span class="badge bg-secondary">@DateTime.Today.ToString("ddd, MMM d")</span>
-                    <span class="text-muted small ms-2">Sprint: @(FilteredReport.DaysRemaining) days remaining</span>
+                    <span class="text-muted small ms-2">Sprint: @EffectiveDaysRemaining days remaining</span>
                 </div>
 
                 @foreach (var group in StandupGroups)
@@ -816,6 +861,11 @@
     private string? ErrorMessage;
     private SprintReport? Report;
 
+    // ── Days left override ────────────────────────────────────────────────────
+    private string OverrideDaysLeftInput = "";
+    private int EffectiveDaysRemaining =>
+        int.TryParse(OverrideDaysLeftInput, out var n) && n >= 0 ? n : Report?.DaysRemaining ?? 0;
+
     // ── Saved filters ─────────────────────────────────────────────────────────
     private List<JiraFilter> MyFilters = [];
     private bool FiltersLoading = false;
@@ -906,7 +956,7 @@
         {
             var result = new List<RiskIssueRecord>();
             var sprintPct = FilteredReport.SprintProgressPct;
-            var daysLeft = FilteredReport.DaysRemaining;
+            var daysLeft = EffectiveDaysRemaining;
             foreach (var issue in FilteredIssues.Where(i => i.StatusCategoryKey != "done" && i.Status != "In Review"))
             {
                 var reasons = new List<string>();

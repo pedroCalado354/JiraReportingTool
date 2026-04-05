@@ -163,6 +163,8 @@ public class SprintIssue
     public string EpicName { get; set; } = "No Epic";
     public List<WorklogEntry> Worklogs { get; set; } = new();
     public bool IsExpanded { get; set; }
+    public DateTime? Created { get; set; }
+    public DateTime? ResolutionDate { get; set; }
 
     public int DaysSinceLastWorklog => Worklogs.Any()
         ? Math.Max(0, (int)(DateTime.Today - Worklogs.Max(w => w.Started).Date).TotalDays)

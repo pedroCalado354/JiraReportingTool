@@ -1,0 +1,717 @@
+@page "/quality-metrics"
+@rendermode InteractiveServer
+@inject JiraService JiraService
+@using JiraReportingTool.Models
+
+<PageTitle>Quality Metrics</PageTitle>
+
+<h1 class="mb-3">Quality Metrics</h1>
+
+<!-- ── Load form ─────────────────────────────────────────────────────────── -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+
+            <!-- Saved filter -->
+            <div class="col-md-auto">
+                <label class="form-label small text-muted mb-1">Jira Saved Filter</label>
+                <div class="d-flex gap-2">
+                    <select class="form-select" style="width:280px"
+                            @bind="SelectedFilterId"
+                            disabled="@(FiltersLoading || !string.IsNullOrEmpty(SprintId))">
+                        <option value="">— select a filter —</option>
+                        @foreach (var f in MyFilters)
+                        {
+                            <option value="@f.Id" title="@f.Jql">@f.Name</option>
+                        }
+                    </select>
+                    @if (FiltersLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm align-self-center text-muted"></span>
+                    }
+                </div>
+                @if (!string.IsNullOrEmpty(SelectedFilterJql))
+                {
+                    <div class="text-muted small mt-1 text-truncate" style="max-width:280px" title="@SelectedFilterJql">
+                        JQL: @SelectedFilterJql
+                    </div>
+                }
+            </div>
+
+            <!-- OR divider -->
+            <div class="col-auto d-flex align-items-center pb-1">
+                <span class="text-muted fw-semibold">or</span>
+            </div>
+
+            <!-- Sprint ID -->
+            <div class="col-auto">
+                <label class="form-label small text-muted mb-1">Sprint ID</label>
+                <input class="form-control" style="width:140px"
+                       @bind="SprintId" @onkeyup="HandleKeyUp"
+                       placeholder="e.g. 6690"
+                       disabled="@(!string.IsNullOrEmpty(SelectedFilterId))" />
+            </div>
+
+            <div class="col-auto">
+                <button class="btn btn-primary" @onclick="LoadData"
+                        disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId)))">
+                    @if (IsLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    }
+                    Load
+                </button>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+@if (ErrorMessage != null)
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+<!-- ── Epic loading overlay ───────────────────────────────────────────────── -->
+@if (EpicLoading)
+{
+    <div class="d-flex align-items-center gap-2 text-muted py-3">
+        <span class="spinner-border spinner-border-sm"></span>
+        Loading all issues for <strong>@DrillEpicKey</strong> across all sprints…
+    </div>
+}
+
+@if (SprintData != null)
+{
+    <!-- ── Scope breadcrumb ─────────────────────────────────────────────────── -->
+    @if (DrillEpicKey != null)
+    {
+        <div class="d-flex align-items-center flex-wrap gap-2 mb-3">
+            <button class="btn btn-sm btn-outline-secondary" @onclick="BackToSprint">← Back to Sprint</button>
+            <span class="text-muted">/</span>
+            <span class="fw-semibold">@(string.IsNullOrEmpty(DrillEpicName) ? DrillEpicKey : DrillEpicName)</span>
+            <span class="badge bg-secondary">All issues · all sprints</span>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(SprintData.SprintName))
+    {
+        <div class="text-muted small mb-3">Sprint: <strong>@SprintData.SprintName</strong></div>
+    }
+
+    <!-- ── Epic cards (sprint mode only — click to drill in) ─────────────────── -->
+    @if (DrillEpicKey == null && SprintEpics.Any())
+    {
+        <h6 class="text-muted text-uppercase small fw-semibold mb-2">Epics in Sprint — click to explore all epic issues</h6>
+        <div class="row g-3 mb-4">
+            @foreach (var epic in SprintEpics)
+            {
+                var bugRate = EpicBugRate(epic);
+                var bugCount = EpicBugCount(epic);
+                <div class="col-md-6 col-lg-4 col-xl-3">
+                    <div class="card border-0 shadow-sm h-100 @(bugRate > 50 ? "border-danger border-start border-3" : bugRate > 25 ? "border-warning border-start border-3" : "border-success border-start border-3")"
+                         style="cursor:pointer" @onclick="() => DrillIntoEpic(epic)">
+                        <div class="card-body py-3">
+                            <div class="d-flex justify-content-between align-items-start mb-1">
+                                <div class="fw-semibold text-truncate me-2" style="max-width:160px" title="@epic.DisplayName">@epic.DisplayName</div>
+                                <span class="badge @BugRateBadge(bugRate) text-nowrap">@bugRate.ToString("0")% bugs</span>
+                            </div>
+                            <div class="text-muted small">@epic.Key</div>
+                            <div class="d-flex gap-3 small mt-2">
+                                <span class="text-muted">@epic.TotalIssues tasks</span>
+                                @if (bugCount > 0)
+                                {
+                                    <span class="text-danger fw-semibold">@bugCount bug@(bugCount != 1 ? "s" : "")</span>
+                                }
+                                else
+                                {
+                                    <span class="text-success">0 bugs</span>
+                                }
+                            </div>
+                            <div class="mt-2 small text-primary">View all epic issues →</div>
+                        </div>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    <!-- Only show the rest once epic data is ready (or in sprint mode) -->
+    @if (DrillEpicKey == null || (!EpicLoading && EpicAllIssues != null))
+    {
+        <!-- ── Assignee filter ──────────────────────────────────────────────────── -->
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-body py-2">
+                <div class="row g-2 align-items-center">
+                    <div class="col-auto">
+                        <label class="form-label small text-muted mb-0">Assignee</label>
+                        <div style="width:180px">
+                            <input class="form-control form-control-sm mb-1" placeholder="Search member…"
+                                   @bind="AssigneeSearch" @bind:event="oninput" />
+                            <select class="form-select form-select-sm" @bind="FilterAssignee" @bind:after="StateHasChanged">
+                                <option value="">All members</option>
+                                @foreach (var a in AssigneeOptions)
+                                {
+                                    <option value="@a">@a</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(FilterAssignee))
+                    {
+                        <div class="col-auto">
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="ClearFilters">Clear filters</button>
+                        </div>
+                    }
+                    <div class="col-auto ms-auto">
+                        <span class="text-muted small">@ActiveFilteredIssues.Count of @(ActiveReport?.TotalIssues ?? 0) issues</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── KPI Cards ───────────────────────────────────────────────────────── -->
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm text-center h-100">
+                    <div class="card-body py-3">
+                        <div class="fs-2 fw-bold">@ActiveFilteredIssues.Count</div>
+                        <div class="text-muted small">Total Issues</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm text-center h-100">
+                    <div class="card-body py-3">
+                        <div class="fs-2 fw-bold text-danger">@ActiveBugCount</div>
+                        <div class="text-muted small">Total Bugs</div>
+                        @if (HighBugRateCount > 0)
+                        {
+                            <div class="text-danger small mt-1">@HighBugRateCount assignee@(HighBugRateCount != 1 ? "s" : "") &gt;50%</div>
+                        }
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm text-center h-100">
+                    <div class="card-body py-3">
+                        <div class="fs-2 fw-bold @BugRateColor(OverallBugRate)">@OverallBugRate.ToString("0.0")%</div>
+                        <div class="text-muted small">Bug Rate</div>
+                        <div class="progress mt-2" style="height:5px">
+                            <div class="progress-bar @(OverallBugRate > 50 ? "bg-danger" : OverallBugRate > 25 ? "bg-warning" : "bg-success")"
+                                 style="width:@Math.Min((int)OverallBugRate, 100)%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm text-center h-100">
+                    <div class="card-body py-3">
+                        <div class="fs-2 fw-bold @(AvgFixTimeHours < 0 ? "text-muted" : AvgFixTimeHours > 30 ? "text-danger" : AvgFixTimeHours > 12 ? "text-warning" : "text-success")">
+                            @(AvgFixTimeHours < 0 ? "N/A" : FormatFixTime(AvgFixTimeHours))
+                        </div>
+                        <div class="text-muted small">Avg Bug Fix Time</div>
+                        @if (ResolvedBugsWithTime.Count > 0)
+                        {
+                            <div class="text-muted small mt-1">from @ResolvedBugsWithTime.Count resolved</div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Effort KPI Cards ────────────────────────────────────────────────── -->
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm text-center h-100 border-danger border-start border-3">
+                    <div class="card-body py-3">
+                        <div class="fs-2 fw-bold text-danger">@FormatHours(BugFixHours)</div>
+                        <div class="text-muted small">Time Spent on Bugs</div>
+                        <div class="text-muted small mt-1">@ActiveFilteredIssues.Count(IsBug) bug issue@(ActiveFilteredIssues.Count(IsBug) != 1 ? "s" : "")</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm text-center h-100 border-primary border-start border-3">
+                    <div class="card-body py-3">
+                        <div class="fs-2 fw-bold text-primary">@FormatHours(FeatureDevHours)</div>
+                        <div class="text-muted small">Time Spent on Features</div>
+                        <div class="text-muted small mt-1">@ActiveFilteredIssues.Count(IsFeatureWork) feature issue@(ActiveFilteredIssues.Count(IsFeatureWork) != 1 ? "s" : "")</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm text-center h-100">
+                    <div class="card-body py-3">
+                        <div class="fs-2 fw-bold @(BugFixEffortRatio < 0 ? "text-muted" : BugFixEffortRatio > 40 ? "text-danger" : BugFixEffortRatio > 20 ? "text-warning" : "text-success")">
+                            @(BugFixEffortRatio < 0 ? "N/A" : BugFixEffortRatio.ToString("0.0") + "%")
+                        </div>
+                        <div class="text-muted small">Bug Fix Effort Ratio</div>
+                        <div class="progress mt-2" style="height:5px">
+                            <div class="progress-bar @(BugFixEffortRatio > 40 ? "bg-danger" : BugFixEffortRatio > 20 ? "bg-warning" : "bg-success")"
+                                 style="width:@(BugFixEffortRatio < 0 ? 0 : Math.Min((int)BugFixEffortRatio, 100))%"></div>
+                        </div>
+                        <div class="small text-muted mt-1">Bug / (Bug + Feature) hrs</div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="card border-0 shadow-sm text-center h-100">
+                    <div class="card-body py-3">
+                        <div class="fs-2 fw-bold @(BugOverheadPct < 0 ? "text-muted" : BugOverheadPct > 50 ? "text-danger" : BugOverheadPct > 25 ? "text-warning" : "text-success")">
+                            @(BugOverheadPct < 0 ? "N/A" : BugOverheadPct.ToString("0.0") + "%")
+                        </div>
+                        <div class="text-muted small">Bug Overhead</div>
+                        <div class="progress mt-2" style="height:5px">
+                            <div class="progress-bar @(BugOverheadPct > 50 ? "bg-danger" : BugOverheadPct > 25 ? "bg-warning" : "bg-success")"
+                                 style="width:@(BugOverheadPct < 0 ? 0 : Math.Min((int)BugOverheadPct, 100))%"></div>
+                        </div>
+                        <div class="small text-muted mt-1">Bug hrs / Feature hrs</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Bug Rate by Assignee ────────────────────────────────────────────── -->
+        <div class="card border-0 shadow-sm mb-4">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small fw-semibold mb-3">Bug Rate by Assignee</h6>
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle mb-0 small">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Assignee</th>
+                                <th style="width:90px" class="text-center">Total Tasks</th>
+                                <th style="width:70px" class="text-center">Bugs</th>
+                                <th style="width:90px" class="text-center">Bug Rate</th>
+                                <th style="width:100px" class="text-center">Avg Fix Time (h)</th>
+                                <th style="width:180px">Rate Bar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var m in AssigneeBugRates)
+                            {
+                                <tr>
+                                    <td class="fw-semibold">@m.Assignee</td>
+                                    <td class="text-center">@m.TotalTasks</td>
+                                    <td class="text-center @(m.BugCount > 0 ? "text-danger fw-semibold" : "text-muted")">@m.BugCount</td>
+                                    <td class="text-center">
+                                        <span class="badge @BugRateBadge(m.BugRate)">@m.BugRate.ToString("0.0")%</span>
+                                    </td>
+                                    <td class="text-center text-muted">
+                                        @(m.AvgFixHours < 0 ? "—" : FormatFixTime(m.AvgFixHours))
+                                    </td>
+                                    <td>
+                                        <div class="progress" style="height:8px;border-radius:4px">
+                                            <div class="progress-bar @(m.BugRate > 50 ? "bg-danger" : m.BugRate > 25 ? "bg-warning" : "bg-success")"
+                                                 style="width:@Math.Min((int)m.BugRate, 100)%"></div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                            @if (!AssigneeBugRates.Any())
+                            {
+                                <tr><td colspan="6" class="text-center text-muted py-3">No issues match current filters.</td></tr>
+                            }
+                        </tbody>
+                        @if (AssigneeBugRates.Count > 1)
+                        {
+                            <tfoot class="table-light">
+                                <tr class="fw-semibold">
+                                    <td>Total</td>
+                                    <td class="text-center">@ActiveFilteredIssues.Count</td>
+                                    <td class="text-center text-danger">@ActiveBugCount</td>
+                                    <td class="text-center"><span class="badge @BugRateBadge(OverallBugRate)">@OverallBugRate.ToString("0.0")%</span></td>
+                                    <td class="text-center text-muted">@(AvgFixTimeHours < 0 ? "—" : FormatFixTime(AvgFixTimeHours))</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        }
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Resolved Bugs — Fix Time Detail ────────────────────────────────── -->
+        @if (ResolvedBugsWithTime.Any())
+        {
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body">
+                    <h6 class="text-muted text-uppercase small fw-semibold mb-3">
+                        Bug Fix Time — Resolved Bugs
+                        <span class="badge bg-success ms-1">@ResolvedBugsWithTime.Count resolved</span>
+                    </h6>
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0 small">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width:100px">Key</th>
+                                    <th>Summary</th>
+                                    <th style="width:80px">Priority</th>
+                                    <th style="width:130px">Assignee</th>
+                                    <th style="width:110px">Reported</th>
+                                    <th style="width:110px">Resolved</th>
+                                    <th style="width:90px" class="text-center">Fix Time (h)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var (bug, hours) in ResolvedBugsWithTime)
+                                {
+                                    <tr>
+                                        <td class="fw-semibold text-nowrap text-success">@bug.Key</td>
+                                        <td>@bug.Summary</td>
+                                        <td><span class="badge @PriorityBadge(bug.Priority)">@bug.Priority</span></td>
+                                        <td class="text-nowrap">@bug.Assignee</td>
+                                        <td class="text-muted text-nowrap">@(bug.Created.HasValue ? bug.Created.Value.ToString("dd MMM yy") : "—")</td>
+                                        <td class="text-muted text-nowrap">@(bug.ResolutionDate.HasValue ? bug.ResolutionDate.Value.ToString("dd MMM yy") : "—")</td>
+                                        <td class="text-center">
+                                            <span class="badge @FixTimeBadge(hours)">
+                                                @FormatFixTime(hours)
+                                            </span>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- ── All Bug Issues ──────────────────────────────────────────────────── -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-body">
+                <h6 class="text-muted text-uppercase small fw-semibold mb-3">
+                    All Bug Issues
+                    <span class="badge bg-danger ms-1">@ActiveBugs.Count</span>
+                </h6>
+                @if (ActiveBugs.Any())
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle mb-0 small">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width:100px">Key</th>
+                                    <th>Summary</th>
+                                    <th style="width:80px">Priority</th>
+                                    <th style="width:110px">Status</th>
+                                    <th style="width:130px">Assignee</th>
+                                    <th style="width:120px">Epic</th>
+                                    <th style="width:90px" class="text-center">Fix Time (h)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var bug in ActiveBugs)
+                                {
+                                    var fixHours = bug.StatusCategoryKey == "done" && bug.ResolutionDate.HasValue && bug.Created.HasValue
+                                        ? WorkingHours(bug.Created.Value, bug.ResolutionDate.Value)
+                                        : (double)-1;
+                                    <tr>
+                                        <td class="fw-semibold text-nowrap @(bug.StatusCategoryKey == "done" ? "text-success" : "text-danger")">@bug.Key</td>
+                                        <td>@bug.Summary</td>
+                                        <td><span class="badge @PriorityBadge(bug.Priority)">@bug.Priority</span></td>
+                                        <td><span class="badge @StatusBadge(bug.StatusCategoryKey)">@bug.Status</span></td>
+                                        <td class="text-nowrap">@bug.Assignee</td>
+                                        <td class="text-muted text-nowrap small">@(string.IsNullOrEmpty(bug.EpicKey) ? "—" : bug.EpicKey)</td>
+                                        <td class="text-center">
+                                            @if (fixHours >= 0)
+                                            {
+                                                <span class="badge @FixTimeBadge(fixHours)">
+                                                    @FormatFixTime(fixHours)
+                                                </span>
+                                            }
+                                            else
+                                            {
+                                                <span class="text-muted">—</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+                else
+                {
+                    <div class="text-center text-muted py-4">No bugs found for the current filters.</div>
+                }
+            </div>
+        </div>
+    }
+}
+
+@code {
+    // ── State ─────────────────────────────────────────────────────────────────
+    private SprintReport? SprintData;
+    private SprintReport? EpicAllIssues;
+    private bool EpicLoading;
+    private string? DrillEpicKey;
+    private string? DrillEpicName;
+    private string SprintId = "";
+    private bool IsLoading;
+    private string? ErrorMessage;
+
+    // ── Saved filters ─────────────────────────────────────────────────────────
+    private List<JiraFilter> MyFilters = [];
+    private bool FiltersLoading;
+    private string SelectedFilterId = "";
+    private string SelectedFilterJql => MyFilters.FirstOrDefault(f => f.Id == SelectedFilterId)?.Jql ?? "";
+
+    // ── Filters ───────────────────────────────────────────────────────────────
+    private string FilterAssignee = "";
+    private string AssigneeSearch = "";
+
+    // ── Computed scope ────────────────────────────────────────────────────────
+    private SprintReport? ActiveReport => DrillEpicKey != null ? EpicAllIssues : SprintData;
+
+    private IEnumerable<EpicSummary> SprintEpics => SprintData?.EpicSummaries
+        .Where(e => !string.IsNullOrEmpty(e.Key))
+        ?? Enumerable.Empty<EpicSummary>();
+
+    private IEnumerable<string> AssigneeOptions => ActiveReport?.Issues
+        .Select(i => i.Assignee).Distinct().Order()
+        .Where(a => string.IsNullOrEmpty(AssigneeSearch) || a.Contains(AssigneeSearch, StringComparison.OrdinalIgnoreCase))
+        ?? Enumerable.Empty<string>();
+
+    private List<SprintIssue> ActiveFilteredIssues => ActiveReport?.Issues
+        .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee)
+        .ToList() ?? [];
+
+    // ── Bug metrics ───────────────────────────────────────────────────────────
+    private static bool IsBug(SprintIssue i) =>
+        i.IssueType.Contains("Bug", StringComparison.OrdinalIgnoreCase) ||
+        i.IssueType.Contains("Defect", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsFeatureWork(SprintIssue i) =>
+        i.IssueType.Contains("Story",       StringComparison.OrdinalIgnoreCase) ||
+        i.IssueType.Contains("Task",        StringComparison.OrdinalIgnoreCase) ||
+        i.IssueType.Contains("Sub-task",    StringComparison.OrdinalIgnoreCase) ||
+        i.IssueType.Contains("Subtask",     StringComparison.OrdinalIgnoreCase) ||
+        i.IssueType.Contains("Feature",     StringComparison.OrdinalIgnoreCase) ||
+        i.IssueType.Contains("Improvement", StringComparison.OrdinalIgnoreCase) ||
+        i.IssueType.Contains("Enhancement", StringComparison.OrdinalIgnoreCase);
+
+    private int ActiveBugCount => ActiveFilteredIssues.Count(IsBug);
+
+    private double OverallBugRate => ActiveFilteredIssues.Count == 0 ? 0
+        : (double)ActiveBugCount / ActiveFilteredIssues.Count * 100;
+
+    private List<SprintIssue> ActiveBugs => ActiveFilteredIssues
+        .Where(IsBug)
+        .OrderBy(i => i.StatusCategoryKey == "done" ? 1 : 0)
+        .ThenBy(i => PrioritySortOrder(i.Priority))
+        .ToList();
+
+    // ── Bug Fix Time ──────────────────────────────────────────────────────────
+    // Counts Mon–Fri working days between two dates, then converts to hours at 6h/day.
+    private static double WorkingHours(DateTime from, DateTime to)
+    {
+        if (to.Date <= from.Date) return 0;
+        int days = 0;
+        var d = from.Date.AddDays(1); // start the day AFTER creation
+        while (d <= to.Date)
+        {
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday)
+                days++;
+            d = d.AddDays(1);
+        }
+        return days * 6.0;
+    }
+
+    private List<(SprintIssue Bug, double Hours)> ResolvedBugsWithTime =>
+        ActiveFilteredIssues
+            .Where(b => IsBug(b) && b.StatusCategoryKey == "done" && b.ResolutionDate.HasValue && b.Created.HasValue)
+            .Select(b => (b, WorkingHours(b.Created!.Value, b.ResolutionDate!.Value)))
+            .Where(x => x.Item2 >= 0)
+            .OrderByDescending(x => x.Item2)
+            .ToList();
+
+    private double AvgFixTimeHours => ResolvedBugsWithTime.Count > 0
+        ? ResolvedBugsWithTime.Average(x => x.Hours)
+        : -1;
+
+    // ── Per-assignee bug metrics ───────────────────────────────────────────────
+    private record AssigneeBugMetric(string Assignee, int TotalTasks, int BugCount, double BugRate, double AvgFixHours);
+
+    private List<AssigneeBugMetric> AssigneeBugRates => ActiveFilteredIssues
+        .GroupBy(i => i.Assignee)
+        .Select(g =>
+        {
+            var total = g.Count();
+            var bugs = g.Where(IsBug).ToList();
+            var resolved = bugs.Where(b => b.StatusCategoryKey == "done" && b.ResolutionDate.HasValue && b.Created.HasValue).ToList();
+            return new AssigneeBugMetric(
+                g.Key,
+                total,
+                bugs.Count,
+                total == 0 ? 0 : (double)bugs.Count / total * 100,
+                resolved.Count > 0 ? resolved.Average(b => WorkingHours(b.Created!.Value, b.ResolutionDate!.Value)) : -1
+            );
+        })
+        .OrderByDescending(m => m.BugRate)
+        .ThenByDescending(m => m.BugCount)
+        .ToList();
+
+    private int HighBugRateCount => AssigneeBugRates.Count(m => m.BugRate > 50);
+
+    // ── Effort metrics ────────────────────────────────────────────────────────
+    // Use worklog entries (never aggregated) instead of timetracking.timeSpentSeconds
+    // which Jira returns as the aggregate total including all sub-tasks, causing double-counting.
+    private double BugFixHours => ActiveFilteredIssues.Where(IsBug).Sum(i => i.Worklogs.Sum(w => w.TimeSpentSeconds)) / 3600.0;
+    private double FeatureDevHours => ActiveFilteredIssues.Where(IsFeatureWork).Sum(i => i.Worklogs.Sum(w => w.TimeSpentSeconds)) / 3600.0;
+    private double TotalLoggedHours => BugFixHours + FeatureDevHours;
+
+    // Bug Fix Hours / (Feature Dev Hours + Bug Fix Hours)  — returns -1 when no hours logged
+    private double BugFixEffortRatio => TotalLoggedHours == 0 ? -1 : BugFixHours / TotalLoggedHours * 100;
+
+    // Bug Fix Hours / Feature Dev Hours  — returns -1 when no feature hours logged
+    private double BugOverheadPct => FeatureDevHours == 0 ? -1 : BugFixHours / FeatureDevHours * 100;
+
+    // ── Epic card helpers ─────────────────────────────────────────────────────
+    private static int EpicBugCount(EpicSummary epic) => epic.Issues.Count(IsBug);
+    private static double EpicBugRate(EpicSummary epic) =>
+        epic.TotalIssues == 0 ? 0 : (double)EpicBugCount(epic) / epic.TotalIssues * 100;
+
+    // ── Lifecycle ─────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        FiltersLoading = true;
+        try { MyFilters = await JiraService.GetMyFiltersAsync(); }
+        finally { FiltersLoading = false; }
+    }
+
+    // ── Data loading ──────────────────────────────────────────────────────────
+    private async Task LoadData()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        SprintData = null;
+        EpicAllIssues = null;
+        DrillEpicKey = null;
+        DrillEpicName = null;
+        FilterAssignee = "";
+        AssigneeSearch = "";
+
+        try
+        {
+            if (!string.IsNullOrEmpty(SelectedFilterId))
+            {
+                var jql = SelectedFilterJql;
+                if (string.IsNullOrEmpty(jql)) { ErrorMessage = "Selected filter has no JQL."; return; }
+                SprintData = await JiraService.GetDeliveryDataByFilterAsync(jql);
+            }
+            else if (int.TryParse(SprintId.Trim(), out var id))
+            {
+                SprintData = await JiraService.GetDeliveryDataAsync(id);
+            }
+            else
+            {
+                ErrorMessage = "Enter a valid numeric Sprint ID.";
+            }
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load data: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private async Task DrillIntoEpic(EpicSummary epic)
+    {
+        DrillEpicKey = epic.Key;
+        DrillEpicName = epic.DisplayName;
+        FilterAssignee = "";
+        AssigneeSearch = "";
+        EpicLoading = true;
+        EpicAllIssues = null;
+        ErrorMessage = null;
+        StateHasChanged();
+        try
+        {
+            EpicAllIssues = await JiraService.GetAllEpicIssuesAsync(epic.Key);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load epic issues: {ex.Message}";
+        }
+        finally
+        {
+            EpicLoading = false;
+        }
+    }
+
+    private void BackToSprint()
+    {
+        DrillEpicKey = null;
+        DrillEpicName = null;
+        EpicAllIssues = null;
+        FilterAssignee = "";
+        AssigneeSearch = "";
+        ErrorMessage = null;
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadData();
+    }
+
+    private void ClearFilters()
+    {
+        FilterAssignee = "";
+        AssigneeSearch = "";
+    }
+
+    // ── Display helpers ───────────────────────────────────────────────────────
+    private static string BugRateColor(double rate) =>
+        rate > 50 ? "text-danger" : rate > 25 ? "text-warning" : "text-success";
+
+    private static string BugRateBadge(double rate) =>
+        rate > 50 ? "bg-danger" : rate > 25 ? "bg-warning text-dark" : "bg-success";
+
+    private static string StatusBadge(string categoryKey) => categoryKey switch
+    {
+        "done"          => "bg-success",
+        "indeterminate" => "bg-primary",
+        _               => "bg-secondary"
+    };
+
+    private static string PriorityBadge(string priority) => priority switch
+    {
+        "Highest" or "Critical" => "bg-danger",
+        "High"                  => "bg-warning text-dark",
+        "Medium"                => "bg-info text-dark",
+        "Low" or "Lowest"       => "bg-secondary",
+        _                       => "bg-secondary"
+    };
+
+    private static int PrioritySortOrder(string priority) => priority switch
+    {
+        "Highest" or "Critical" => 0,
+        "High"                  => 1,
+        "Medium"                => 2,
+        "Low"                   => 3,
+        "Lowest"                => 4,
+        _                       => 5
+    };
+
+    // Total logged hours displayed as "90h 4m" to match Jira's format.
+    private static string FormatHours(double totalHours)
+    {
+        if (totalHours <= 0) return "0h";
+        var h = (int)totalHours;
+        var m = (int)Math.Round((totalHours - h) * 60);
+        return m > 0 ? $"{h}h {m}m" : $"{h}h";
+    }
+
+    // hours = working hours (6h/day, Mon–Fri). Display always in hours.
+    private static string FormatFixTime(double hours) =>
+        hours < 0  ? "N/A"  :
+        hours == 0 ? "<6h"  :
+                     $"{(int)hours}h";
+
+    // Thresholds: ≤12h (≤2 days) green · ≤30h (≤1 week) yellow · >30h red
+    private static string FixTimeBadge(double hours) =>
+        hours > 30 ? "bg-danger" : hours > 12 ? "bg-warning text-dark" : "bg-success";
+}

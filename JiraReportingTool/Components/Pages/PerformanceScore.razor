@@ -1,0 +1,437 @@
+@page "/performance-score"
+@rendermode InteractiveServer
+@inject JiraService JiraService
+@using JiraReportingTool.Models
+
+<PageTitle>Performance Score</PageTitle>
+
+<h1 class="mb-4">Performance Score</h1>
+
+<div class="row g-2 mb-4 align-items-end">
+    <div class="col-auto">
+        <label class="form-label small text-muted mb-1">
+            Sprint ID(s) <span class="text-muted fst-italic">(comma-separated for multi-sprint consistency)</span>
+        </label>
+        <input class="form-control" style="width:340px"
+               @bind="SprintIdsInput"
+               @onkeyup="HandleKeyUp"
+               placeholder="e.g. 6690  or  6690, 6691, 6692" />
+    </div>
+    <div class="col-auto">
+        <button class="btn btn-primary" @onclick="LoadData" disabled="@IsLoading">
+            @if (IsLoading)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Compute Scores
+        </button>
+    </div>
+</div>
+
+@if (ErrorMessage != null)
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+@if (SprintReports.Count > 0)
+{
+    var scores = ComputeScores();
+
+    <!-- Assignee filter -->
+    <div class="row g-2 mb-4 align-items-center">
+        <div class="col-auto">
+            <select class="form-select form-select-sm" style="width:200px"
+                    @bind="AssigneeFilter" @bind:after="StateHasChanged">
+                <option value="">All Assignees</option>
+                @foreach (var a in scores.Select(s => s.Assignee).OrderBy(x => x))
+                {
+                    <option value="@a">@a</option>
+                }
+            </select>
+        </div>
+        <div class="col-auto text-muted small">
+            @SprintReports.Count sprint(s) &nbsp;·&nbsp; @scores.Count team member(s)
+            @if (SprintReports.Count == 1)
+            {
+                <span class="ms-2 text-warning">⚠ Load 2+ sprints for Consistency scoring</span>
+            }
+        </div>
+    </div>
+
+    var filteredScores = string.IsNullOrEmpty(AssigneeFilter)
+        ? scores
+        : scores.Where(s => s.Assignee == AssigneeFilter).ToList();
+
+    var avgScore      = scores.Count > 0 ? scores.Average(s => s.TotalScore) : 0;
+    var topPerformer  = scores.OrderByDescending(s => s.TotalScore).FirstOrDefault();
+    var teamAvgDoneH  = scores.Count > 0 ? scores.Average(s => s.DoneHours) : 0;
+
+    <!-- KPI cards -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold" style="color:#4361ee">@avgScore.ToString("F0")</div>
+                    <div class="text-muted small">Team Avg Score</div>
+                    <div class="text-muted" style="font-size:0.7rem">out of 100 pts</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold text-success">@(topPerformer?.TotalScore.ToString("F0") ?? "-")</div>
+                    <div class="text-muted small">Top Score</div>
+                    <div class="text-muted" style="font-size:0.7rem">@(topPerformer?.Assignee ?? "-")</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold">@SprintReports.Count</div>
+                    <div class="text-muted small">Sprints Analyzed</div>
+                    <div class="text-muted" style="font-size:0.7rem">IDs: @string.Join(", ", ParsedSprintIds)</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold">@FormatHours(teamAvgDoneH)</div>
+                    <div class="text-muted small">Avg Done Hours</div>
+                    <div class="text-muted" style="font-size:0.7rem">per team member</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body py-2">
+            <div class="d-flex flex-wrap gap-3 align-items-center small">
+                <span><span class="badge" style="background:#4361ee; font-size:0.75rem">40pts</span> <span class="text-muted">Estimate Accuracy</span></span>
+                <span><span class="badge" style="background:#06d6a0; font-size:0.75rem">30pts</span> <span class="text-muted">Delivery Rate</span></span>
+                <span><span class="badge" style="background:#fb8500; font-size:0.75rem">20pts</span> <span class="text-muted">Throughput</span></span>
+                <span><span class="badge" style="background:#9b5de5; font-size:0.75rem">10pts</span> <span class="text-muted">Consistency</span></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Score table -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-transparent border-0 fw-semibold">Team Performance Scores</div>
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 align-middle">
+                <thead class="table-light">
+                    <tr>
+                        <th>Assignee</th>
+                        <th class="text-center">Score</th>
+                        <th style="min-width:180px">Breakdown</th>
+                        <th class="text-end" style="white-space:nowrap">
+                            Accuracy
+                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 40 pts</div>
+                        </th>
+                        <th class="text-end" style="white-space:nowrap">
+                            Delivery Rate
+                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 30 pts</div>
+                        </th>
+                        <th class="text-end" style="white-space:nowrap">
+                            Throughput
+                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 20 pts</div>
+                        </th>
+                        <th class="text-end" style="white-space:nowrap">
+                            Consistency
+                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 10 pts</div>
+                        </th>
+                        <th class="text-end">Issues</th>
+                        <th class="text-end">Done</th>
+                        <th class="text-end" style="white-space:nowrap">Hours Done</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var s in filteredScores.OrderByDescending(x => x.TotalScore))
+                    {
+                        var badgeColor = s.TotalScore >= 80 ? "#06d6a0" : s.TotalScore >= 60 ? "#fb8500" : "#ef233c";
+                        <tr>
+                            <td class="fw-semibold">@s.Assignee</td>
+                            <td class="text-center">
+                                <span class="badge fs-6 px-2 py-1" style="background:@badgeColor; min-width:3rem">
+                                    @s.TotalScore.ToString("F0")
+                                </span>
+                            </td>
+                            <td>
+                                <div class="d-flex rounded overflow-hidden" style="height:12px; background:#e9ecef;">
+                                    @if (s.EstimateAccuracyScore > 0)
+                                    {
+                                        <div style="width:@(s.EstimateAccuracyScore.ToString("F1"))%; background:#4361ee;"
+                                             title="Accuracy: @s.EstimateAccuracyScore.ToString("F1")pts"></div>
+                                    }
+                                    @if (s.DeliveryRateScore > 0)
+                                    {
+                                        <div style="width:@(s.DeliveryRateScore.ToString("F1"))%; background:#06d6a0;"
+                                             title="Delivery: @s.DeliveryRateScore.ToString("F1")pts"></div>
+                                    }
+                                    @if (s.ThroughputScore > 0)
+                                    {
+                                        <div style="width:@(s.ThroughputScore.ToString("F1"))%; background:#fb8500;"
+                                             title="Throughput: @s.ThroughputScore.ToString("F1")pts"></div>
+                                    }
+                                    @if (s.ConsistencyScore > 0)
+                                    {
+                                        <div style="width:@(s.ConsistencyScore.ToString("F1"))%; background:#9b5de5;"
+                                             title="Consistency: @s.ConsistencyScore.ToString("F1")pts"></div>
+                                    }
+                                </div>
+                            </td>
+                            <td class="text-end">
+                                @s.EstimateAccuracyScore.ToString("F1")
+                                <div class="text-muted" style="font-size:0.7rem">@((s.AvgAccuracyPct * 100).ToString("F0"))% avg</div>
+                            </td>
+                            <td class="text-end">
+                                @s.DeliveryRateScore.ToString("F1")
+                                <div class="text-muted" style="font-size:0.7rem">@((s.DeliveryRate * 100).ToString("F0"))% done</div>
+                            </td>
+                            <td class="text-end">
+                                @s.ThroughputScore.ToString("F1")
+                                <div class="text-muted" style="font-size:0.7rem">@FormatHours(s.DoneHours)</div>
+                            </td>
+                            <td class="text-end">
+                                @s.ConsistencyScore.ToString("F1")
+                                @if (SprintReports.Count < 2)
+                                {
+                                    <div class="text-muted" style="font-size:0.7rem">1 sprint</div>
+                                }
+                            </td>
+                            <td class="text-end">@s.TotalIssues</td>
+                            <td class="text-end">@s.DoneIssues</td>
+                            <td class="text-end">@FormatHours(s.DoneHours)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Methodology -->
+    <div class="card border-0 bg-light">
+        <div class="card-body small text-muted">
+            <div class="fw-semibold text-dark mb-2">Scoring Methodology</div>
+            <div class="row g-3">
+                <div class="col-md-3">
+                    <div class="fw-semibold text-dark">Estimate Accuracy · 40pts</div>
+                    For each issue with both an estimate and logged hours:<br/>
+                    accuracy = max(0, 1 − |spent − estimate| / estimate)<br/>
+                    Score = 40 × average accuracy.
+                </div>
+                <div class="col-md-3">
+                    <div class="fw-semibold text-dark">Delivery Rate · 30pts</div>
+                    Percentage of assigned issues marked <em>Done</em> across all loaded sprints.<br/>
+                    Score = 30 × (done / total).
+                </div>
+                <div class="col-md-3">
+                    <div class="fw-semibold text-dark">Throughput · 20pts</div>
+                    Hours logged on Done issues vs. team average.<br/>
+                    Score = 20 × min(1, personal_done_hours / team_avg_done_hours).
+                </div>
+                <div class="col-md-3">
+                    <div class="fw-semibold text-dark">Consistency · 10pts</div>
+                    Stability of delivery rate across sprints (coefficient of variation).<br/>
+                    Score = 10 × max(0, 1 − CV). Requires 2+ sprints; single sprint awards full 10pts.
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string SprintIdsInput = "";
+    private string AssigneeFilter = "";
+    private bool IsLoading;
+    private string? ErrorMessage;
+
+    private List<int> ParsedSprintIds = [];
+    private List<SprintReport> SprintReports = [];
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var ids = SprintIdsInput
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s.Trim(), out var n) ? (int?)n : null)
+            .Where(n => n.HasValue)
+            .Select(n => n!.Value)
+            .Distinct()
+            .ToList();
+
+        if (ids.Count == 0)
+        {
+            ErrorMessage = "Enter at least one sprint ID.";
+            return;
+        }
+
+        IsLoading = true;
+        ErrorMessage = null;
+        SprintReports.Clear();
+        AssigneeFilter = "";
+        StateHasChanged();
+
+        try
+        {
+            var tasks = ids.Select(id => JiraService.GetDeliveryDataAsync(id)).ToList();
+            var results = await Task.WhenAll(tasks);
+            ParsedSprintIds = ids;
+            SprintReports = [.. results];
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load sprint data: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    private sealed record AssigneeScore(
+        string Assignee,
+        double EstimateAccuracyScore,
+        double DeliveryRateScore,
+        double ThroughputScore,
+        double ConsistencyScore,
+        int TotalIssues,
+        int DoneIssues,
+        double DoneHours,
+        double DeliveryRate,
+        double AvgAccuracyPct
+    )
+    {
+        public double TotalScore => EstimateAccuracyScore + DeliveryRateScore + ThroughputScore + ConsistencyScore;
+    }
+
+    private List<AssigneeScore> ComputeScores()
+    {
+        var allAssignees = SprintReports
+            .SelectMany(r => r.Issues)
+            .Where(i => i.Assignee != "Unassigned")
+            .Select(i => i.Assignee)
+            .Distinct()
+            .OrderBy(a => a)
+            .ToList();
+
+        if (allAssignees.Count == 0) return [];
+
+        // Per-sprint delivery rates per assignee (for Consistency)
+        var perSprintRates = allAssignees.ToDictionary(a => a, _ => new List<double>());
+
+        foreach (var report in SprintReports)
+        {
+            var byAssignee = report.Issues
+                .Where(i => i.Assignee != "Unassigned")
+                .GroupBy(i => i.Assignee);
+
+            foreach (var grp in byAssignee)
+            {
+                if (!perSprintRates.ContainsKey(grp.Key)) continue;
+                var rate = (double)grp.Count(i => i.StatusCategoryKey == "done") / grp.Count();
+                perSprintRates[grp.Key].Add(rate);
+            }
+        }
+
+        // All issues aggregated per assignee across all sprints
+        var issuesByAssignee = SprintReports
+            .SelectMany(r => r.Issues)
+            .Where(i => i.Assignee != "Unassigned")
+            .GroupBy(i => i.Assignee)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        // Done hours per assignee (worklog-based, done issues only)
+        var doneHoursByAssignee = allAssignees.ToDictionary(a => a, a =>
+        {
+            var issues = issuesByAssignee.TryGetValue(a, out var lst) ? lst : [];
+            return issues.Where(i => i.StatusCategoryKey == "done")
+                         .Sum(i => i.Worklogs.Sum(w => w.TimeSpentSeconds)) / 3600.0;
+        });
+
+        var teamAvgDoneHours = doneHoursByAssignee.Values.Average();
+
+        return allAssignees.Select(assignee =>
+        {
+            var issues = issuesByAssignee.TryGetValue(assignee, out var lst) ? lst : [];
+
+            // --- Estimate Accuracy (40pts) ---
+            var estimatedIssues = issues.Where(i =>
+                i.OriginalEstimateSeconds > 0 &&
+                i.Worklogs.Sum(w => w.TimeSpentSeconds) > 0).ToList();
+
+            double accuracyScore = 0;
+            double avgAccuracyPct = 0;
+            if (estimatedIssues.Count > 0)
+            {
+                avgAccuracyPct = estimatedIssues.Average(i =>
+                {
+                    var spent = i.Worklogs.Sum(w => w.TimeSpentSeconds);
+                    var deviation = Math.Abs(spent - i.OriginalEstimateSeconds) / (double)i.OriginalEstimateSeconds;
+                    return Math.Max(0.0, 1.0 - deviation);
+                });
+                accuracyScore = 40.0 * avgAccuracyPct;
+            }
+
+            // --- Delivery Rate (30pts) ---
+            var total = issues.Count;
+            var done  = issues.Count(i => i.StatusCategoryKey == "done");
+            var deliveryRate = total > 0 ? (double)done / total : 0;
+            var deliveryScore = 30.0 * deliveryRate;
+
+            // --- Throughput (20pts) ---
+            var doneHours = doneHoursByAssignee[assignee];
+            var throughputScore = teamAvgDoneHours > 0
+                ? 20.0 * Math.Min(1.0, doneHours / teamAvgDoneHours)
+                : 0;
+
+            // --- Consistency (10pts) ---
+            var rates = perSprintRates[assignee];
+            double consistencyScore;
+            if (SprintReports.Count == 1)
+            {
+                consistencyScore = 10; // single sprint: can't penalise
+            }
+            else if (rates.Count < 2)
+            {
+                consistencyScore = 0; // active in fewer sprints than loaded
+            }
+            else
+            {
+                var mean   = rates.Average();
+                var stdDev = Math.Sqrt(rates.Average(x => Math.Pow(x - mean, 2)));
+                var cv     = mean > 0 ? stdDev / mean : (stdDev > 0 ? 1.0 : 0.0);
+                consistencyScore = 10.0 * Math.Max(0.0, 1.0 - cv);
+            }
+
+            return new AssigneeScore(
+                assignee,
+                Math.Round(accuracyScore,    1),
+                Math.Round(deliveryScore,    1),
+                Math.Round(throughputScore,  1),
+                Math.Round(consistencyScore, 1),
+                total,
+                done,
+                Math.Round(doneHours, 1),
+                deliveryRate,
+                avgAccuracyPct
+            );
+        }).ToList();
+    }
+
+    private static string FormatHours(double hours)
+    {
+        if (hours <= 0) return "0h";
+        var h = (int)hours;
+        var m = (int)Math.Round((hours - h) * 60);
+        return m > 0 ? $"{h}h {m}m" : $"{h}h";
+    }
+}
