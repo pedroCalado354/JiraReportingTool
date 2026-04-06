@@ -8,4 +8,8 @@
     <UserSecretsId>jira-reporting-tool</UserSecretsId>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.104.2" />
+  </ItemGroup>
+
 </Project>
