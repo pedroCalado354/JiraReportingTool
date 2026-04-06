@@ -450,6 +450,17 @@
                         }
                     </div>
                     <div class="text-muted small mt-2">@ExportSelectedMembers.Count of @ExportAllMembers.Count member(s) selected</div>
+
+                    <hr class="my-3" />
+
+                    <div>
+                        <label class="form-label small fw-semibold mb-1">Exclude epics (comma-separated keys)</label>
+                        <input class="form-control form-control-sm" placeholder="e.g. JM-10, JM-42, JM-77"
+                               @bind="ExportIgnoredEpicsInput" />
+                        <div class="text-muted mt-1" style="font-size:0.72rem">
+                            Issues belonging to these epics will be omitted from the export.
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" @onclick="() => ShowExportModal = false">Cancel</button>
@@ -493,6 +504,8 @@
     private bool IsExporting;
     private HashSet<string> ExportSelectedMembers = [];
 
+    private string ExportIgnoredEpicsInput = "";
+
     // Team members come from the full-sprint data (available once sprint is loaded)
     private List<string> ExportAllMembers => SprintAllIssues?.Issues
         .Where(i => i.Assignee != "Unassigned")
@@ -509,7 +522,8 @@
     private string FilterMemberSearch = "";
 
     private List<SprintIssue> FilteredIssues => Report?.Issues
-        .Where(i => string.IsNullOrEmpty(FilterMember) || i.Assignee == FilterMember)
+        .Where(i => !i.Key.Contains("JSSUPPORT", StringComparison.OrdinalIgnoreCase)
+                 && (string.IsNullOrEmpty(FilterMember) || i.Assignee == FilterMember))
         .ToList() ?? [];
 
     private IEnumerable<string> MemberOptions => Report?.Issues
@@ -703,10 +717,18 @@ FilteredIssues
 
         try
         {
-            // All sprint issues for selected members, non-Epic types only
+            // Parse ignored epic keys from the input field
+            var ignoredEpics = ExportIgnoredEpicsInput
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(k => k.ToUpperInvariant())
+                .ToHashSet();
+
+            // All sprint issues for selected members — exclude Epics, JSSUPPORT tasks, and manually ignored epics
             var issues = SprintAllIssues.Issues
                 .Where(i => ExportSelectedMembers.Contains(i.Assignee)
-                         && !string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase))
+                         && !string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase)
+                         && !i.Key.Contains("JSSUPPORT", StringComparison.OrdinalIgnoreCase)
+                         && (ignoredEpics.Count == 0 || !ignoredEpics.Contains(i.EpicKey.ToUpperInvariant())))
                 .ToList();
 
             using var wb = new XLWorkbook();
