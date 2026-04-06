@@ -4,7 +4,9 @@
       "Bash(dotnet build:*)",
       "Bash(dotnet add:*)",
       "Bash(xargs -I{} sed -i 's/@inject JiraService JiraService/@inject IJiraService JiraService/g' {})",
-      "Bash(dotnet ef:*)"
+      "Bash(dotnet ef:*)",
+      "Bash(xargs grep:*)",
+      "Bash(grep \"System.OneOf\\\\|OneOf\\\\`\" ~/.nuget/packages/anthropic/1.0.0/lib/net8.0/Anthropic.xml)"
     ]
   }
 }

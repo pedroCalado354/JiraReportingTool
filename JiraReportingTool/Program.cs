@@ -13,10 +13,12 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 
 builder.Services
     .AddHttpClient<JiraService>();
+builder.Services.AddHttpClient("anthropic");
 
 builder.Services.AddScoped<JiraDbRepository>();
 builder.Services.AddScoped<IJiraService, JiraCacheService>();
 builder.Services.AddScoped<DataSyncService>();
+builder.Services.AddScoped<ChatService>();
 
 var app = builder.Build();
 

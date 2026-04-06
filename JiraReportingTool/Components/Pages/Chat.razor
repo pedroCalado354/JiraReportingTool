@@ -1,0 +1,175 @@
+@page "/chat"
+@rendermode InteractiveServer
+@inject ChatService ChatService
+@using Markdig
+
+<PageTitle>Chat</PageTitle>
+
+<div class="d-flex flex-column" style="height: calc(100vh - 120px);">
+
+    <div class="mb-3">
+        <h1 class="mb-1">Jira Assistant</h1>
+        <p class="text-muted mb-2">Ask questions about your sprints and team. Provide the sprint ID when needed.</p>
+        <div class="d-flex align-items-center gap-2">
+            <label class="form-label mb-0 text-nowrap">Default Sprint ID:</label>
+            <input class="form-control form-control-sm" style="width:120px"
+                   type="number" @bind="_sprintId" @bind:event="oninput" placeholder="e.g. 42" />
+            <button class="btn btn-sm btn-outline-secondary" @onclick="ClearChat">Clear chat</button>
+        </div>
+    </div>
+
+    <!-- Messages -->
+    <div class="flex-grow-1 overflow-auto border rounded p-3 bg-light mb-3" @ref="_scrollContainer">
+        @if (_messages.Count == 0)
+        {
+            <p class="text-muted text-center mt-4">
+                Start by asking something like:<br />
+                <em>"What is Duarte working on and is he on track?"</em><br />
+                <em>"Summarise sprint 42 for me."</em><br />
+                <em>"Which issues are at risk this sprint?"</em>
+            </p>
+        }
+
+        @foreach (var msg in _messages)
+        {
+            @if (msg.IsUser)
+            {
+                <div class="d-flex justify-content-end mb-2">
+                    <div class="rounded-3 px-3 py-2 text-white"
+                         style="background:#0d6efd; max-width:75%; white-space:pre-wrap;">@msg.Text</div>
+                </div>
+            }
+            else
+            {
+                <div class="d-flex justify-content-start mb-2">
+                    <div class="rounded-3 px-3 py-2 border bg-white"
+                         style="max-width:85%;">
+                        @if (msg.IsMarkdown)
+                        {
+                            @((MarkupString)RenderMarkdown(msg.Text))
+                        }
+                        else
+                        {
+                            <span style="white-space:pre-wrap;">@msg.Text</span>
+                        }
+                    </div>
+                </div>
+            }
+        }
+
+        @if (_thinking)
+        {
+            <div class="d-flex justify-content-start mb-2">
+                <div class="rounded-3 px-3 py-2 border bg-white text-muted fst-italic">
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    @_statusText
+                </div>
+            </div>
+        }
+    </div>
+
+    <!-- Input -->
+    <div class="d-flex gap-2">
+        <input class="form-control"
+               @bind="_input"
+               @bind:event="oninput"
+               @onkeydown="OnKeyDown"
+               placeholder="Ask about your sprint…"
+               disabled="@_thinking" />
+        <button class="btn btn-primary px-4"
+                @onclick="SendAsync"
+                disabled="@(_thinking || string.IsNullOrWhiteSpace(_input))">
+            @if (_thinking)
+            {
+                <span class="spinner-border spinner-border-sm" role="status"></span>
+            }
+            else
+            {
+                <span>Send</span>
+            }
+        </button>
+    </div>
+</div>
+
+@code {
+    private readonly List<ChatMessage> _history = [];
+    private readonly List<ChatMessage> _messages = [];
+    private string _input = "";
+    private int? _sprintId;
+    private bool _thinking;
+    private string _statusText = "Thinking…";
+    private ElementReference _scrollContainer;
+
+    private async Task SendAsync()
+    {
+        var text = _input.Trim();
+        if (string.IsNullOrEmpty(text)) return;
+
+        // Inject sprint ID context if set
+        var userText = _sprintId.HasValue
+            ? $"[Sprint ID context: {_sprintId}]\n{text}"
+            : text;
+
+        _messages.Add(new ChatMessage(text, IsUser: true));
+        _history.Add(new ChatMessage(userText, IsUser: true));
+        _input = "";
+        _thinking = true;
+        _statusText = "Thinking…";
+        StateHasChanged();
+        await ScrollToBottomAsync();
+
+        try
+        {
+            var reply = await ChatService.SendAsync(
+                _history,
+                userText,
+                status =>
+                {
+                    _statusText = status;
+                    InvokeAsync(StateHasChanged);
+                });
+
+            _messages.Add(new ChatMessage(reply, IsUser: false, IsMarkdown: true));
+            _history.Add(new ChatMessage(reply, IsUser: false));
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessage($"**Error:** {ex.Message}", IsUser: false, IsMarkdown: true));
+        }
+        finally
+        {
+            _thinking = false;
+            StateHasChanged();
+            await ScrollToBottomAsync();
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendAsync();
+    }
+
+    private void ClearChat()
+    {
+        _history.Clear();
+        _messages.Clear();
+        _input = "";
+    }
+
+    private async Task ScrollToBottomAsync()
+    {
+        // Small delay to let DOM update before scrolling
+        await Task.Delay(50);
+        // Scrolling is handled via JS interop but we skip it here to avoid additional dependencies.
+        // The overflow-auto container scrolls naturally as messages are added.
+    }
+
+    private static string RenderMarkdown(string markdown)
+    {
+        var pipeline = new MarkdownPipelineBuilder()
+            .UseAdvancedExtensions()
+            .Build();
+        return Markdown.ToHtml(markdown, pipeline);
+    }
+}

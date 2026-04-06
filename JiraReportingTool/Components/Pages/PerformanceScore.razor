@@ -62,9 +62,9 @@
         ? scores
         : scores.Where(s => s.Assignee == AssigneeFilter).ToList();
 
-    var avgScore      = scores.Count > 0 ? scores.Average(s => s.TotalScore) : 0;
-    var topPerformer  = scores.OrderByDescending(s => s.TotalScore).FirstOrDefault();
-    var teamAvgDoneH  = scores.Count > 0 ? scores.Average(s => s.DoneHours) : 0;
+    var avgScore     = scores.Count > 0 ? scores.Average(s => s.TotalScore) : 0;
+    var topPerformer = scores.OrderByDescending(s => s.TotalScore).FirstOrDefault();
+    var teamAvgDoneH = scores.Count > 0 ? scores.Average(s => s.DoneHours) : 0;
 
     <!-- KPI cards -->
     <div class="row g-3 mb-4">
@@ -110,10 +110,12 @@
     <div class="card border-0 shadow-sm mb-4">
         <div class="card-body py-2">
             <div class="d-flex flex-wrap gap-3 align-items-center small">
-                <span><span class="badge" style="background:#4361ee; font-size:0.75rem">40pts</span> <span class="text-muted">Estimate Accuracy</span></span>
-                <span><span class="badge" style="background:#06d6a0; font-size:0.75rem">30pts</span> <span class="text-muted">Delivery Rate</span></span>
+                <span><span class="badge" style="background:#4361ee; font-size:0.75rem">30pts</span> <span class="text-muted">Estimate Accuracy</span></span>
+                <span><span class="badge" style="background:#06d6a0; font-size:0.75rem">25pts</span> <span class="text-muted">Delivery Rate</span></span>
                 <span><span class="badge" style="background:#fb8500; font-size:0.75rem">20pts</span> <span class="text-muted">Throughput</span></span>
                 <span><span class="badge" style="background:#9b5de5; font-size:0.75rem">10pts</span> <span class="text-muted">Consistency</span></span>
+                <span><span class="badge" style="background:#f72585; font-size:0.75rem">10pts</span> <span class="text-muted">Worklog Regularity</span></span>
+                <span><span class="badge" style="background:#4cc9f0; font-size:0.75rem">5pts</span>  <span class="text-muted">Cycle Time</span></span>
             </div>
         </div>
     </div>
@@ -130,11 +132,11 @@
                         <th style="min-width:180px">Breakdown</th>
                         <th class="text-end" style="white-space:nowrap">
                             Accuracy
-                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 40 pts</div>
+                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 30 pts</div>
                         </th>
                         <th class="text-end" style="white-space:nowrap">
                             Delivery Rate
-                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 30 pts</div>
+                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 25 pts</div>
                         </th>
                         <th class="text-end" style="white-space:nowrap">
                             Throughput
@@ -143,6 +145,14 @@
                         <th class="text-end" style="white-space:nowrap">
                             Consistency
                             <div class="fw-normal text-muted" style="font-size:0.7rem">/ 10 pts</div>
+                        </th>
+                        <th class="text-end" style="white-space:nowrap">
+                            Regularity
+                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 10 pts</div>
+                        </th>
+                        <th class="text-end" style="white-space:nowrap">
+                            Cycle Time
+                            <div class="fw-normal text-muted" style="font-size:0.7rem">/ 5 pts</div>
                         </th>
                         <th class="text-end">Issues</th>
                         <th class="text-end">Done</th>
@@ -182,6 +192,16 @@
                                         <div style="width:@(s.ConsistencyScore.ToString("F1"))%; background:#9b5de5;"
                                              title="Consistency: @s.ConsistencyScore.ToString("F1")pts"></div>
                                     }
+                                    @if (s.WorklogRegularityScore > 0)
+                                    {
+                                        <div style="width:@(s.WorklogRegularityScore.ToString("F1"))%; background:#f72585;"
+                                             title="Regularity: @s.WorklogRegularityScore.ToString("F1")pts"></div>
+                                    }
+                                    @if (s.CycleTimeScore > 0)
+                                    {
+                                        <div style="width:@(s.CycleTimeScore.ToString("F1"))%; background:#4cc9f0;"
+                                             title="Cycle Time: @s.CycleTimeScore.ToString("F1")pts"></div>
+                                    }
                                 </div>
                             </td>
                             <td class="text-end">
@@ -203,6 +223,17 @@
                                     <div class="text-muted" style="font-size:0.7rem">1 sprint</div>
                                 }
                             </td>
+                            <td class="text-end">
+                                @s.WorklogRegularityScore.ToString("F1")
+                                <div class="text-muted" style="font-size:0.7rem">@((s.WorklogRegularityPct * 100).ToString("F0"))% days</div>
+                            </td>
+                            <td class="text-end">
+                                @s.CycleTimeScore.ToString("F1")
+                                @if (s.AvgCycleDays > 0)
+                                {
+                                    <div class="text-muted" style="font-size:0.7rem">@s.AvgCycleDays.ToString("F1")d avg</div>
+                                }
+                            </td>
                             <td class="text-end">@s.TotalIssues</td>
                             <td class="text-end">@s.DoneIssues</td>
                             <td class="text-end">@FormatHours(s.DoneHours)</td>
@@ -218,26 +249,36 @@
         <div class="card-body small text-muted">
             <div class="fw-semibold text-dark mb-2">Scoring Methodology</div>
             <div class="row g-3">
-                <div class="col-md-3">
-                    <div class="fw-semibold text-dark">Estimate Accuracy · 40pts</div>
+                <div class="col-md-2">
+                    <div class="fw-semibold text-dark">Estimate Accuracy · 30pts</div>
                     For each issue with both an estimate and logged hours:<br/>
                     accuracy = max(0, 1 − |spent − estimate| / estimate)<br/>
-                    Score = 40 × average accuracy.
+                    Score = 30 × average accuracy.
                 </div>
-                <div class="col-md-3">
-                    <div class="fw-semibold text-dark">Delivery Rate · 30pts</div>
+                <div class="col-md-2">
+                    <div class="fw-semibold text-dark">Delivery Rate · 25pts</div>
                     Percentage of assigned issues marked <em>Done</em> across all loaded sprints.<br/>
-                    Score = 30 × (done / total).
+                    Score = 25 × (done / total).
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <div class="fw-semibold text-dark">Throughput · 20pts</div>
                     Hours logged on Done issues vs. team average.<br/>
                     Score = 20 × min(1, personal_done_hours / team_avg_done_hours).
                 </div>
-                <div class="col-md-3">
+                <div class="col-md-2">
                     <div class="fw-semibold text-dark">Consistency · 10pts</div>
                     Stability of delivery rate across sprints (coefficient of variation).<br/>
-                    Score = 10 × max(0, 1 − CV). Requires 2+ sprints; single sprint awards full 10pts.
+                    Score = 10 × max(0, 1 − CV). Requires 2+ sprints.
+                </div>
+                <div class="col-md-2">
+                    <div class="fw-semibold text-dark">Worklog Regularity · 10pts</div>
+                    Proportion of sprint working days with at least one worklog entry — proxy for daily engagement.<br/>
+                    Score = 10 × (active_days / sprint_days), averaged across sprints.
+                </div>
+                <div class="col-md-2">
+                    <div class="fw-semibold text-dark">Cycle Time · 5pts</div>
+                    Average days from issue creation to resolution, compared to the team average.<br/>
+                    Score = 5 × min(1, team_avg_days / personal_avg_days). Faster than average = full points.
                 </div>
             </div>
         </div>
@@ -303,14 +344,20 @@
         double DeliveryRateScore,
         double ThroughputScore,
         double ConsistencyScore,
+        double WorklogRegularityScore,
+        double CycleTimeScore,
         int TotalIssues,
         int DoneIssues,
         double DoneHours,
         double DeliveryRate,
-        double AvgAccuracyPct
+        double AvgAccuracyPct,
+        double WorklogRegularityPct,
+        double AvgCycleDays
     )
     {
-        public double TotalScore => EstimateAccuracyScore + DeliveryRateScore + ThroughputScore + ConsistencyScore;
+        public double TotalScore =>
+            EstimateAccuracyScore + DeliveryRateScore + ThroughputScore +
+            ConsistencyScore + WorklogRegularityScore + CycleTimeScore;
     }
 
     private List<AssigneeScore> ComputeScores()
@@ -359,50 +406,62 @@
 
         var teamAvgDoneHours = doneHoursByAssignee.Values.Average();
 
+        // Team average cycle time (creation → resolution, done issues only)
+        var teamCycleSamples = allAssignees
+            .SelectMany(a => issuesByAssignee.TryGetValue(a, out var lst) ? lst : [])
+            .Where(i => i.StatusCategoryKey == "done"
+                     && i.ResolutionDate.HasValue
+                     && i.Created.HasValue
+                     && (i.ResolutionDate.Value - i.Created.Value).TotalDays >= 0)
+            .Select(i => (i.ResolutionDate!.Value - i.Created!.Value).TotalDays)
+            .ToList();
+
+        var teamAvgCycleDays = teamCycleSamples.Count > 0 ? teamCycleSamples.Average() : 0;
+
         return allAssignees.Select(assignee =>
         {
             var issues = issuesByAssignee.TryGetValue(assignee, out var lst) ? lst : [];
 
-            // --- Estimate Accuracy (40pts) ---
+            // ── Estimate Accuracy (30pts) ────────────────────────────────────
             var estimatedIssues = issues.Where(i =>
                 i.OriginalEstimateSeconds > 0 &&
                 i.Worklogs.Sum(w => w.TimeSpentSeconds) > 0).ToList();
 
-            double accuracyScore = 0;
+            double accuracyScore  = 0;
             double avgAccuracyPct = 0;
             if (estimatedIssues.Count > 0)
             {
                 avgAccuracyPct = estimatedIssues.Average(i =>
                 {
-                    var spent = i.Worklogs.Sum(w => w.TimeSpentSeconds);
+                    var spent     = i.Worklogs.Sum(w => w.TimeSpentSeconds);
                     var deviation = Math.Abs(spent - i.OriginalEstimateSeconds) / (double)i.OriginalEstimateSeconds;
                     return Math.Max(0.0, 1.0 - deviation);
                 });
-                accuracyScore = 40.0 * avgAccuracyPct;
+                accuracyScore = 30.0 * avgAccuracyPct;
             }
 
-            // --- Delivery Rate (30pts) ---
-            var total = issues.Count;
-            var done  = issues.Count(i => i.StatusCategoryKey == "done");
+            // ── Delivery Rate (25pts) ────────────────────────────────────────
+            var total        = issues.Count;
+            var done         = issues.Count(i => i.StatusCategoryKey == "done");
             var deliveryRate = total > 0 ? (double)done / total : 0;
-            var deliveryScore = 30.0 * deliveryRate;
+            var deliveryScore = 25.0 * deliveryRate;
 
-            // --- Throughput (20pts) ---
-            var doneHours = doneHoursByAssignee[assignee];
+            // ── Throughput (20pts) ───────────────────────────────────────────
+            var doneHours      = doneHoursByAssignee[assignee];
             var throughputScore = teamAvgDoneHours > 0
                 ? 20.0 * Math.Min(1.0, doneHours / teamAvgDoneHours)
                 : 0;
 
-            // --- Consistency (10pts) ---
+            // ── Consistency (10pts) ──────────────────────────────────────────
             var rates = perSprintRates[assignee];
             double consistencyScore;
             if (SprintReports.Count == 1)
             {
-                consistencyScore = 10; // single sprint: can't penalise
+                consistencyScore = 10;
             }
             else if (rates.Count < 2)
             {
-                consistencyScore = 0; // active in fewer sprints than loaded
+                consistencyScore = 0;
             }
             else
             {
@@ -412,17 +471,59 @@
                 consistencyScore = 10.0 * Math.Max(0.0, 1.0 - cv);
             }
 
+            // ── Worklog Regularity (10pts) ───────────────────────────────────
+            // How many sprint working days did this person log work on?
+            var regularitySamples = new List<double>();
+            foreach (var report in SprintReports)
+            {
+                var sprintDays    = report.TotalSprintDays;
+                var sprintIssues  = report.Issues.Where(i => i.Assignee == assignee);
+                IEnumerable<WorklogEntry> worklogs = sprintIssues.SelectMany(i => i.Worklogs);
+
+                if (report.StartDate.HasValue && report.EndDate.HasValue)
+                    worklogs = worklogs.Where(w =>
+                        w.Started.Date >= report.StartDate.Value.Date &&
+                        w.Started.Date <= report.EndDate.Value.Date);
+
+                var activeDays = worklogs.Select(w => w.Started.Date).Distinct().Count();
+                regularitySamples.Add(Math.Min(1.0, (double)activeDays / sprintDays));
+            }
+
+            var regularityPct   = regularitySamples.Count > 0 ? regularitySamples.Average() : 0;
+            var regularityScore = 10.0 * regularityPct;
+
+            // ── Cycle Time Efficiency (5pts) ─────────────────────────────────
+            // Faster than the team average = full points; proportional otherwise.
+            var cycleSamples = issues
+                .Where(i => i.StatusCategoryKey == "done"
+                         && i.ResolutionDate.HasValue
+                         && i.Created.HasValue
+                         && (i.ResolutionDate!.Value - i.Created!.Value).TotalDays >= 0)
+                .Select(i => (i.ResolutionDate!.Value - i.Created!.Value).TotalDays)
+                .ToList();
+
+            double avgCycleDays  = cycleSamples.Count > 0 ? cycleSamples.Average() : 0;
+            double cycleTimeScore = 0;
+            if (cycleSamples.Count > 0 && teamAvgCycleDays > 0)
+                cycleTimeScore = 5.0 * Math.Min(1.0, Math.Max(0, teamAvgCycleDays / avgCycleDays));
+            else if (cycleSamples.Count > 0)
+                cycleTimeScore = 2.5; // done issues present but no team baseline
+
             return new AssigneeScore(
                 assignee,
                 Math.Round(accuracyScore,    1),
                 Math.Round(deliveryScore,    1),
                 Math.Round(throughputScore,  1),
                 Math.Round(consistencyScore, 1),
+                Math.Round(regularityScore,  1),
+                Math.Round(cycleTimeScore,   1),
                 total,
                 done,
                 Math.Round(doneHours, 1),
                 deliveryRate,
-                avgAccuracyPct
+                avgAccuracyPct,
+                regularityPct,
+                Math.Round(avgCycleDays, 1)
             );
         }).ToList();
     }
