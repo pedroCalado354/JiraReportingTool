@@ -1,9 +1,14 @@
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+
 namespace JiraReportingTool.Models;
 
 // ── Epic Report ──────────────────────────────────────────────────────────────
 
 public class JiraEpicReport
 {
+    public int Id { get; set; }
+    public DateTime? SyncedAt { get; set; }
     public string Key { get; set; } = "";
     public string Summary { get; set; } = "";
     public string Status { get; set; } = "";
@@ -11,16 +16,19 @@ public class JiraEpicReport
     public string Assignee { get; set; } = "Unassigned";
     public List<JiraIssueModel> Issues { get; set; } = new();
 
-    public int TotalIssues => Issues.Count;
-    public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
-    public int InProgressCount => Issues.Count(i => i.StatusCategoryKey == "indeterminate");
-    public int ToDoCount => Issues.Count(i => i.StatusCategoryKey == "new");
-    public int TotalTimeSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
-    public int TotalOriginalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
+    [NotMapped] public int TotalIssues => Issues.Count;
+    [NotMapped] public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
+    [NotMapped] public int InProgressCount => Issues.Count(i => i.StatusCategoryKey == "indeterminate");
+    [NotMapped] public int ToDoCount => Issues.Count(i => i.StatusCategoryKey == "new");
+    [NotMapped] public int TotalTimeSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
+    [NotMapped] public int TotalOriginalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
 }
 
 public class JiraIssueModel
 {
+    public int Id { get; set; }
+    public int JiraEpicReportId { get; set; }
+
     public string Key { get; set; } = "";
     public string Summary { get; set; } = "";
     public string IssueType { get; set; } = "";
@@ -33,11 +41,16 @@ public class JiraIssueModel
     public int TimeSpentSeconds { get; set; }
     public string RemainingEstimate { get; set; } = "-";
     public List<WorklogEntry> Worklogs { get; set; } = new();
-    public bool IsExpanded { get; set; }
+
+    [NotMapped] public bool IsExpanded { get; set; }
 }
 
 public class WorklogEntry
 {
+    public int Id { get; set; }
+    public int? JiraIssueModelId { get; set; }
+    public int? SprintIssueId { get; set; }
+
     public string Author { get; set; } = "";
     public string TimeSpent { get; set; } = "";
     public int TimeSpentSeconds { get; set; }
@@ -51,34 +64,43 @@ public enum SprintRisk { OnTrack, AtRisk, Behind }
 
 public class SprintReport
 {
+    public int Id { get; set; }
+    public DateTime? SyncedAt { get; set; }
+
+    /// <summary>Jira internal sprint ID — used as DB cache key.</summary>
+    public int? JiraSprintId { get; set; }
+
+    /// <summary>Unique identifier used to look up a cached report (e.g. "sprint:PROJ:42", "delivery:42", "epicall:KEY-1").</summary>
+    public string? ReportIdentifier { get; set; }
+
     public string ProjectKey { get; set; } = "";
     public string SprintName { get; set; } = "";
     public DateTime? StartDate { get; set; }
     public DateTime? EndDate { get; set; }
     public List<SprintIssue> Issues { get; set; } = new();
 
-    public int TotalIssues => Issues.Count;
-    public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
-    public int InProgressCount => Issues.Count(i => i.StatusCategoryKey == "indeterminate");
-    public int ToDoCount => Issues.Count(i => i.StatusCategoryKey == "new");
+    [NotMapped] public int TotalIssues => Issues.Count;
+    [NotMapped] public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
+    [NotMapped] public int InProgressCount => Issues.Count(i => i.StatusCategoryKey == "indeterminate");
+    [NotMapped] public int ToDoCount => Issues.Count(i => i.StatusCategoryKey == "new");
 
-    public int TotalStoryPoints => Issues.Sum(i => i.StoryPoints ?? 0);
-    public int DoneStoryPoints => Issues.Where(i => i.StatusCategoryKey == "done").Sum(i => i.StoryPoints ?? 0);
-    public bool HasStoryPoints => Issues.Any(i => i.StoryPoints.HasValue);
+    [NotMapped] public int TotalStoryPoints => Issues.Sum(i => i.StoryPoints ?? 0);
+    [NotMapped] public int DoneStoryPoints => Issues.Where(i => i.StatusCategoryKey == "done").Sum(i => i.StoryPoints ?? 0);
+    [NotMapped] public bool HasStoryPoints => Issues.Any(i => i.StoryPoints.HasValue);
 
-    public int TotalTimeSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
-    public int TotalOriginalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
-    public int TotalRemainingEstimateSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
+    [NotMapped] public int TotalTimeSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
+    [NotMapped] public int TotalOriginalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
+    [NotMapped] public int TotalRemainingEstimateSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
 
-    public int TotalSprintDays => (StartDate.HasValue && EndDate.HasValue)
+    [NotMapped] public int TotalSprintDays => (StartDate.HasValue && EndDate.HasValue)
         ? Math.Max(1, CountWeekdays(StartDate.Value.Date, EndDate.Value.Date))
         : 10; // 2-week sprint = 10 weekdays
 
-    public int ElapsedDays => StartDate.HasValue
+    [NotMapped] public int ElapsedDays => StartDate.HasValue
         ? Math.Clamp(CountWeekdays(StartDate.Value.Date, DateTime.Today.AddDays(-1)), 0, TotalSprintDays)
         : 0;
 
-    public int DaysRemaining => EndDate.HasValue
+    [NotMapped] public int DaysRemaining => EndDate.HasValue
         ? Math.Max(0, CountWeekdays(DateTime.Today, EndDate.Value.Date))
         : 0;
 
@@ -96,10 +118,10 @@ public class SprintReport
         return count;
     }
 
-    public double SprintProgressPct => (double)ElapsedDays / TotalSprintDays * 100;
-    public double CompletionPct => TotalIssues == 0 ? 0 : (double)DoneCount / TotalIssues * 100;
+    [NotMapped] public double SprintProgressPct => (double)ElapsedDays / TotalSprintDays * 100;
+    [NotMapped] public double CompletionPct => TotalIssues == 0 ? 0 : (double)DoneCount / TotalIssues * 100;
 
-    public SprintRisk RiskLevel
+    [NotMapped] public SprintRisk RiskLevel
     {
         get
         {
@@ -114,12 +136,12 @@ public class SprintReport
         }
     }
 
-    public List<SprintIssue> AtRiskIssues => Issues
+    [NotMapped] public List<SprintIssue> AtRiskIssues => Issues
         .Where(i => (i.StatusCategoryKey != "done" && i.Status != "In Review") && IsAtRisk(i))
         .ToList();
 
     // Epics derived from sprint issues (used by delivery dashboard)
-    public List<EpicSummary> EpicSummaries => Issues
+    [NotMapped] public List<EpicSummary> EpicSummaries => Issues
         .GroupBy(i => i.EpicKey)
         .Select(g => new EpicSummary
         {
@@ -145,6 +167,9 @@ public class SprintReport
 
 public class SprintIssue
 {
+    public int Id { get; set; }
+    public int SprintReportId { get; set; }
+
     public string Key { get; set; } = "";
     public string Summary { get; set; } = "";
     public string IssueType { get; set; } = "";
@@ -163,11 +188,12 @@ public class SprintIssue
     public string EpicName { get; set; } = "No Epic";
     public List<WorklogEntry> Worklogs { get; set; } = new();
     public List<string> Labels { get; set; } = new();
-    public bool IsExpanded { get; set; }
     public DateTime? Created { get; set; }
     public DateTime? ResolutionDate { get; set; }
 
-    public int DaysSinceLastWorklog => Worklogs.Any()
+    [NotMapped] public bool IsExpanded { get; set; }
+
+    [NotMapped] public int DaysSinceLastWorklog => Worklogs.Any()
         ? Math.Max(0, (int)(DateTime.Today - Worklogs.Max(w => w.Started).Date).TotalDays)
         : 999;
 }
@@ -186,28 +212,30 @@ public class JiraFilter
 
 public class EpicSummary
 {
+    public int Id { get; set; }
     public string Key { get; set; } = "";
     public string Name { get; set; } = "";
-    public List<SprintIssue> Issues { get; set; } = new();
 
-    public int TotalIssues => Issues.Count;
-    public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
-    public int InProgressCount => Issues.Count(i => i.StatusCategoryKey == "indeterminate");
-    public int ToDoCount => Issues.Count(i => i.StatusCategoryKey == "new");
+    [NotMapped] public List<SprintIssue> Issues { get; set; } = new();
 
-    public int TotalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
-    public int TotalSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
-    public int TotalRemainingSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
+    [NotMapped] public int TotalIssues => Issues.Count;
+    [NotMapped] public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
+    [NotMapped] public int InProgressCount => Issues.Count(i => i.StatusCategoryKey == "indeterminate");
+    [NotMapped] public int ToDoCount => Issues.Count(i => i.StatusCategoryKey == "new");
 
-    public double CompletionPct => TotalIssues == 0 ? 0
+    [NotMapped] public int TotalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
+    [NotMapped] public int TotalSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
+    [NotMapped] public int TotalRemainingSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
+
+    [NotMapped] public double CompletionPct => TotalIssues == 0 ? 0
         : (double)DoneCount / TotalIssues * 100;
 
-    public double HoursVariancePct => TotalEstimateSeconds == 0 ? 0
+    [NotMapped] public double HoursVariancePct => TotalEstimateSeconds == 0 ? 0
         : (TotalSpentSeconds - TotalEstimateSeconds) / (double)TotalEstimateSeconds * 100;
 
-    public bool IsOverBudget => TotalEstimateSeconds > 0 && TotalSpentSeconds > TotalEstimateSeconds;
+    [NotMapped] public bool IsOverBudget => TotalEstimateSeconds > 0 && TotalSpentSeconds > TotalEstimateSeconds;
 
-    public string DisplayName => string.IsNullOrEmpty(Name) || Name == "No Epic"
+    [NotMapped] public string DisplayName => string.IsNullOrEmpty(Name) || Name == "No Epic"
         ? (string.IsNullOrEmpty(Key) ? "No Epic" : Key)
         : $"{Key} {Name}" ;
 }

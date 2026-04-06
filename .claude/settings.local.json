@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(dotnet build:*)",
-      "Bash(dotnet add:*)"
+      "Bash(dotnet add:*)",
+      "Bash(xargs -I{} sed -i 's/@inject JiraService JiraService/@inject IJiraService JiraService/g' {})",
+      "Bash(dotnet ef:*)"
     ]
   }
 }

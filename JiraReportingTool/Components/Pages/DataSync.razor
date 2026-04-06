@@ -1,0 +1,251 @@
+@page "/sync"
+@rendermode InteractiveServer
+@inject DataSyncService SyncService
+@inject IConfiguration Config
+@using JiraReportingTool.Models
+
+<PageTitle>Data Sync</PageTitle>
+
+<h1 class="mb-1">Data Sync</h1>
+<p class="text-muted mb-4">
+    Cache TTL: <strong>@_ttl min</strong> &nbsp;·&nbsp;
+    Fresh data serves from the database; stale or missing data is re-fetched from Jira and persisted.
+</p>
+
+@if (_error is not null)
+{
+    <div class="alert alert-danger">@_error</div>
+}
+@if (_message is not null)
+{
+    <div class="alert alert-success">@_message</div>
+}
+
+<div class="d-flex gap-2 mb-4">
+    <button class="btn btn-primary" @onclick="RefreshAllAsync" disabled="@_busy">
+        @if (_busy && _busyAll) { <span class="spinner-border spinner-border-sm me-1" role="status"></span> }
+        Refresh All
+    </button>
+    <button class="btn btn-outline-secondary" @onclick="RefreshStaleAsync" disabled="@_busy">
+        @if (_busy && _busyStale) { <span class="spinner-border spinner-border-sm me-1" role="status"></span> }
+        Refresh Stale Only
+    </button>
+</div>
+
+@if (_sprints == null || _epics == null)
+{
+    <p><span class="spinner-border spinner-border-sm me-1"></span> Loading inventory…</p>
+}
+else
+{
+    <!-- Sprint Reports -->
+    <h5 class="mt-2">Sprint Reports
+        <span class="badge bg-secondary ms-1">@_sprints.Count</span>
+    </h5>
+
+    @if (_sprints.Count == 0)
+    {
+        <p class="text-muted">No sprint reports cached yet — browse to any sprint page to populate.</p>
+    }
+    else
+    {
+        <table class="table table-sm table-hover align-middle mb-4">
+            <thead class="table-light">
+                <tr>
+                    <th>Sprint</th>
+                    <th>Type</th>
+                    <th>Last Synced</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var r in _sprints)
+                {
+                    <tr>
+                        <td>@(string.IsNullOrEmpty(r.SprintName) ? r.ReportIdentifier : r.SprintName)</td>
+                        <td><span class="badge bg-secondary">@ReportType(r.ReportIdentifier)</span></td>
+                        <td class="text-muted small">@Age(r.SyncedAt)</td>
+                        <td>@FreshBadge(r.SyncedAt)</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary"
+                                    @onclick="() => RefreshOneSprintAsync(r)"
+                                    disabled="@(_busy || _refreshingId == r.Id)">
+                                @if (_refreshingId == r.Id)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                }
+                                else
+                                {
+                                    <span>Refresh</span>
+                                }
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <!-- Epic Reports -->
+    <h5 class="mt-2">Epic Reports
+        <span class="badge bg-secondary ms-1">@_epics.Count</span>
+    </h5>
+
+    @if (_epics.Count == 0)
+    {
+        <p class="text-muted">No epic reports cached yet — browse to any Epic Report page to populate.</p>
+    }
+    else
+    {
+        <table class="table table-sm table-hover align-middle mb-4">
+            <thead class="table-light">
+                <tr>
+                    <th>Key</th>
+                    <th>Summary</th>
+                    <th>Last Synced</th>
+                    <th>Status</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var e in _epics)
+                {
+                    <tr>
+                        <td><code>@e.Key</code></td>
+                        <td>@e.Summary</td>
+                        <td class="text-muted small">@Age(e.SyncedAt)</td>
+                        <td>@FreshBadge(e.SyncedAt)</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-primary"
+                                    @onclick="() => RefreshOneEpicAsync(e)"
+                                    disabled="@(_busy || _refreshingEpicId == e.Id)">
+                                @if (_refreshingEpicId == e.Id)
+                                {
+                                    <span class="spinner-border spinner-border-sm" role="status"></span>
+                                }
+                                else
+                                {
+                                    <span>Refresh</span>
+                                }
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+}
+
+@code {
+    List<SprintReport>? _sprints;
+    List<JiraEpicReport>? _epics;
+    bool _busy;
+    bool _busyAll;
+    bool _busyStale;
+    int _refreshingId;
+    int _refreshingEpicId;
+    string? _message;
+    string? _error;
+    int _ttl;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _ttl = Config.GetValue<int>("Database:CacheTtlMinutes", 60);
+        await LoadAsync();
+    }
+
+    async Task LoadAsync()
+    {
+        var (sprints, epics) = await SyncService.GetCachedInventoryAsync();
+        _sprints = sprints;
+        _epics = epics;
+    }
+
+    async Task RefreshAllAsync()
+    {
+        _busy = _busyAll = true;
+        _message = _error = null;
+        StateHasChanged();
+        try
+        {
+            var (s, e) = await SyncService.RefreshAllAsync(staleOnly: false, _ttl);
+            await LoadAsync();
+            _message = $"Refreshed {s} sprint report(s) and {e} epic report(s).";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = _busyAll = false; }
+    }
+
+    async Task RefreshStaleAsync()
+    {
+        _busy = _busyStale = true;
+        _message = _error = null;
+        StateHasChanged();
+        try
+        {
+            var (s, e) = await SyncService.RefreshAllAsync(staleOnly: true, _ttl);
+            await LoadAsync();
+            _message = s + e == 0
+                ? "Everything is already fresh — nothing to refresh."
+                : $"Refreshed {s} stale sprint report(s) and {e} stale epic report(s).";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _busy = _busyStale = false; }
+    }
+
+    async Task RefreshOneSprintAsync(SprintReport report)
+    {
+        _refreshingId = report.Id;
+        _message = _error = null;
+        StateHasChanged();
+        try
+        {
+            await SyncService.RefreshSprintReportAsync(report);
+            await LoadAsync();
+            _message = $"Refreshed \"{(string.IsNullOrEmpty(report.SprintName) ? report.ReportIdentifier : report.SprintName)}\"";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _refreshingId = 0; }
+    }
+
+    async Task RefreshOneEpicAsync(JiraEpicReport report)
+    {
+        _refreshingEpicId = report.Id;
+        _message = _error = null;
+        StateHasChanged();
+        try
+        {
+            await SyncService.RefreshEpicReportAsync(report);
+            await LoadAsync();
+            _message = $"Refreshed epic {report.Key}.";
+        }
+        catch (Exception ex) { _error = ex.Message; }
+        finally { _refreshingEpicId = 0; }
+    }
+
+    string Age(DateTime? dt) => dt switch
+    {
+        null => "Never",
+        var d when (DateTime.UtcNow - d.Value).TotalMinutes < 60  => $"{(int)(DateTime.UtcNow - d.Value).TotalMinutes}m ago",
+        var d when (DateTime.UtcNow - d.Value).TotalHours  < 24   => $"{(int)(DateTime.UtcNow - d.Value).TotalHours}h ago",
+        var d => $"{(int)(DateTime.UtcNow - d.Value).TotalDays}d ago"
+    };
+
+    MarkupString FreshBadge(DateTime? dt)
+    {
+        var stale = dt is null || (DateTime.UtcNow - dt.Value).TotalMinutes >= _ttl;
+        return stale
+            ? (MarkupString)"<span class=\"badge bg-danger\">Stale</span>"
+            : (MarkupString)"<span class=\"badge bg-success\">Fresh</span>";
+    }
+
+    static string ReportType(string? id) => id switch
+    {
+        null                                => "?",
+        var s when s.StartsWith("sprint:")  => "sprint",
+        var s when s.StartsWith("delivery:")=> "delivery",
+        var s when s.StartsWith("epicall:") => "epic-all",
+        _                                   => "custom"
+    };
+}

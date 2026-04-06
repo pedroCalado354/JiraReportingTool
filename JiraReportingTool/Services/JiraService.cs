@@ -3,7 +3,7 @@ using System.Text;
 using System.Text.Json;
 using JiraReportingTool.Models;
 
-public class JiraService
+public class JiraService : IJiraService
 {
     private readonly HttpClient _httpClient;
     private readonly IConfiguration _config;
