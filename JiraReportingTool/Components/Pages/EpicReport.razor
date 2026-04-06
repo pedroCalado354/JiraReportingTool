@@ -86,10 +86,85 @@
         </div>
     }
 
+    <!-- Filters -->
+    <div class="card border-0 shadow-sm mb-3">
+        <div class="card-body">
+            <div class="row g-3 align-items-start">
+
+                <!-- Team members multi-select -->
+                <div class="col-lg-4">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="small fw-semibold">Team Members</span>
+                        <div class="d-flex gap-2 small">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" @onclick="SelectAllMembers">All</button>
+                            <span class="text-muted">/</span>
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" @onclick="ClearMembersFilter">None</button>
+                        </div>
+                    </div>
+                    <div class="border rounded p-2" style="max-height:140px;overflow-y:auto">
+                        @foreach (var member in AllMembers)
+                        {
+                            <div class="form-check mb-0">
+                                <input class="form-check-input" type="checkbox" id="er_@member"
+                                       checked="@SelectedMembers.Contains(member)"
+                                       @onchange="e => ToggleMember(member, (bool)(e.Value ?? false))" />
+                                <label class="form-check-label small" for="er_@member">@member</label>
+                            </div>
+                        }
+                    </div>
+                    <div class="text-muted small mt-1">@SelectedMembers.Count of @AllMembers.Count selected</div>
+                </div>
+
+                <!-- Table filters -->
+                <div class="col-lg-8">
+                    <span class="form-label small fw-semibold d-block mb-1">Table Filters</span>
+                    <div class="row g-2">
+                        <div class="col-md-5">
+                            <input class="form-control form-control-sm" placeholder="Search key or summary…"
+                                   @bind="FilterText" @bind:event="oninput" />
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select form-select-sm" @bind="FilterStatus">
+                                <option value="">All statuses</option>
+                                @foreach (var s in AllStatuses)
+                                {
+                                    <option value="@s">@s</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select form-select-sm" @bind="FilterType">
+                                <option value="">All types</option>
+                                @foreach (var t in AllTypes)
+                                {
+                                    <option value="@t">@t</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="col-md-1 d-flex align-items-center">
+                            @if (!string.IsNullOrEmpty(FilterText) || !string.IsNullOrEmpty(FilterStatus) || !string.IsNullOrEmpty(FilterType) || SelectedMembers.Count < AllMembers.Count)
+                            {
+                                <button class="btn btn-sm btn-outline-secondary w-100" @onclick="ClearFilters" title="Clear filters">✕</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
     <!-- Issues table -->
     <div class="card border-0 shadow-sm">
         <div class="card-header bg-white d-flex justify-content-between align-items-center">
-            <strong>Issues (@Report.TotalIssues)</strong>
+            <strong>
+                Issues (@FilteredIssues.Count
+                @if (FilteredIssues.Count != Report.TotalIssues)
+                {
+                    <span class="text-muted fw-normal"> of @Report.TotalIssues</span>
+                }
+                )
+            </strong>
             <span class="text-muted small">Click a row to expand worklogs</span>
         </div>
         <div class="table-responsive">
@@ -107,7 +182,7 @@
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var issue in Report.Issues)
+                    @foreach (var issue in FilteredIssues)
                     {
                         <tr class="@(issue.IsExpanded ? "table-active" : "")"
                             style="cursor: pointer;"
@@ -170,6 +245,10 @@
                             </tr>
                         }
                     }
+                    @if (FilteredIssues.Count == 0)
+                    {
+                        <tr><td colspan="8" class="text-center text-muted py-4">No issues match the selected filters.</td></tr>
+                    }
                 </tbody>
             </table>
         </div>
@@ -182,6 +261,39 @@
     private string? ErrorMessage;
     private JiraEpicReport? Report;
 
+    // ── Filters ───────────────────────────────────────────────────────────────
+    private HashSet<string> SelectedMembers = [];
+    private string FilterText   = "";
+    private string FilterStatus = "";
+    private string FilterType   = "";
+
+    // ── Derived ───────────────────────────────────────────────────────────────
+    private List<string> AllMembers => Report?.Issues
+        .Select(i => i.Assignee)
+        .Where(a => !string.IsNullOrEmpty(a))
+        .Distinct().Order().ToList() ?? [];
+
+    private List<string> AllStatuses => Report?.Issues
+        .Select(i => i.Status)
+        .Where(s => !string.IsNullOrEmpty(s))
+        .Distinct().Order().ToList() ?? [];
+
+    private List<string> AllTypes => Report?.Issues
+        .Select(i => i.IssueType)
+        .Where(t => !string.IsNullOrEmpty(t))
+        .Distinct().Order().ToList() ?? [];
+
+    private List<JiraIssueModel> FilteredIssues => Report?.Issues
+        .Where(i =>
+            (SelectedMembers.Count == 0 || SelectedMembers.Contains(i.Assignee)) &&
+            (string.IsNullOrEmpty(FilterStatus) || i.Status == FilterStatus) &&
+            (string.IsNullOrEmpty(FilterType)   || i.IssueType == FilterType) &&
+            (string.IsNullOrEmpty(FilterText)   ||
+                i.Key.Contains(FilterText, StringComparison.OrdinalIgnoreCase) ||
+                i.Summary.Contains(FilterText, StringComparison.OrdinalIgnoreCase)))
+        .ToList() ?? [];
+
+    // ── Load ──────────────────────────────────────────────────────────────────
     private async Task LoadEpic()
     {
         if (string.IsNullOrWhiteSpace(EpicKey)) return;
@@ -189,10 +301,13 @@
         IsLoading = true;
         ErrorMessage = null;
         Report = null;
+        SelectedMembers.Clear();
+        FilterText = FilterStatus = FilterType = "";
 
         try
         {
             Report = await JiraService.GetEpicReportAsync(EpicKey.Trim().ToUpper());
+            SelectedMembers = new HashSet<string>(AllMembers);
         }
         catch (HttpRequestException ex)
         {
@@ -213,11 +328,28 @@
         if (e.Key == "Enter") await LoadEpic();
     }
 
+    // ── Filter actions ────────────────────────────────────────────────────────
+    private void SelectAllMembers()  => SelectedMembers = new HashSet<string>(AllMembers);
+    private void ClearMembersFilter() => SelectedMembers.Clear();
+
+    private void ToggleMember(string member, bool selected)
+    {
+        if (selected) SelectedMembers.Add(member);
+        else          SelectedMembers.Remove(member);
+    }
+
+    private void ClearFilters()
+    {
+        FilterText = FilterStatus = FilterType = "";
+        SelectedMembers = new HashSet<string>(AllMembers);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
     private static string StatusBadge(string categoryKey) => categoryKey switch
     {
-        "done" => "bg-success",
+        "done"          => "bg-success",
         "indeterminate" => "bg-primary",
-        _ => "bg-secondary"
+        _               => "bg-secondary"
     };
 
     private static int Pct(int count, int total) =>

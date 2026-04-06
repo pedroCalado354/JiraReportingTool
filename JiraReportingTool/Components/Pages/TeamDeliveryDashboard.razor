@@ -3,6 +3,7 @@
 @inject JiraService JiraService
 @inject IJSRuntime JS
 @using JiraReportingTool.Models
+@using ClosedXML.Excel
 
 <PageTitle>Team Delivery Dashboard</PageTitle>
 
@@ -68,7 +69,7 @@
                        min="0" max="99" />
             </div>
 
-            <div class="col-auto">
+            <div class="col-auto d-flex gap-2">
                 <button class="btn btn-primary" @onclick="LoadData"
                         disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId)))">
                     @if (IsLoading)
@@ -76,6 +77,15 @@
                         <span class="spinner-border spinner-border-sm me-1" role="status"></span>
                     }
                     Load
+                </button>
+                <button class="btn btn-outline-success" @onclick="OpenExportModal"
+                        disabled="@(Report == null)"
+                        title="Export remaining work to Excel">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1">
+                        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                        <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                    </svg>
+                    Export .xlsx
                 </button>
             </div>
 
@@ -855,6 +865,93 @@
     </div>
 }
 
+<!-- ── Export Modal ──────────────────────────────────────────────────────── -->
+@if (ShowExportModal)
+{
+    <div class="modal fade show d-block" tabindex="-1" style="background:rgba(0,0,0,0.45)">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header">
+                    <h5 class="modal-title fw-semibold">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="#198754" viewBox="0 0 16 16" class="me-2">
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                        </svg>
+                        Export Remaining Work to Excel
+                    </h5>
+                    <button type="button" class="btn-close" @onclick="() => ShowExportModal = false"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-muted mb-3">
+                        Exports remaining work for sprint
+                        <strong>@(Report?.SprintName is { Length: > 0 } sn ? sn : SprintId)</strong>
+                        · <strong>@EffectiveDaysRemaining days left</strong>.
+                        One row per open issue for the selected team members.
+                    </p>
+
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <label class="form-label small fw-semibold mb-0">Select team members</label>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none"
+                                    @onclick='() => ExportSelectedMembers = new HashSet<string>(ExportAllMembers)'>
+                                All
+                            </button>
+                            <span class="text-muted small">/</span>
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none"
+                                    @onclick="() => ExportSelectedMembers.Clear()">
+                                None
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="border rounded p-2" style="max-height:220px;overflow-y:auto">
+                        @foreach (var member in ExportAllMembers)
+                        {
+                            var isChecked = ExportSelectedMembers.Contains(member);
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="dexp_@member"
+                                       checked="@isChecked"
+                                       @onchange="e => ToggleExportMember(member, (bool)(e.Value ?? false))" />
+                                <label class="form-check-label small" for="dexp_@member">@member</label>
+                            </div>
+                        }
+                    </div>
+                    <div class="text-muted small mt-2">@ExportSelectedMembers.Count of @ExportAllMembers.Count member(s) selected</div>
+
+                    <hr class="my-3" />
+
+                    <div>
+                        <label class="form-label small fw-semibold mb-1">Exclude epics (comma-separated keys)</label>
+                        <input class="form-control form-control-sm" placeholder="e.g. JM-10, JM-42"
+                               @bind="ExportIgnoredEpicsInput" />
+                        <div class="text-muted mt-1" style="font-size:0.72rem">
+                            Issues belonging to these epics will be omitted from the export.
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" @onclick="() => ShowExportModal = false">Cancel</button>
+                    <button class="btn btn-success" @onclick="ExportToExcel"
+                            disabled="@(IsExporting || ExportSelectedMembers.Count == 0)">
+                        @if (IsExporting)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        else
+                        {
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1">
+                                <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                                <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                            </svg>
+                        }
+                        Export .xlsx
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     private string SprintId = "";
     private bool IsLoading = false;
@@ -1229,4 +1326,174 @@
 
     private static string FmtH(int seconds) =>
         seconds <= 0 ? "0h" : $"{seconds / 3600.0:0.#}h";
+
+    // ── Export ───────────────────────────────────────────────────────────────
+
+    private bool ShowExportModal;
+    private bool IsExporting;
+    private HashSet<string> ExportSelectedMembers = [];
+    private string ExportIgnoredEpicsInput = "";
+
+    private List<string> ExportAllMembers => Report?.Issues
+        .Where(i => i.Assignee != "Unassigned")
+        .Select(i => i.Assignee).Distinct().Order().ToList() ?? [];
+
+    private void OpenExportModal()
+    {
+        ExportSelectedMembers = new HashSet<string>(ExportAllMembers);
+        ShowExportModal = true;
+    }
+
+    private void ToggleExportMember(string member, bool selected)
+    {
+        if (selected) ExportSelectedMembers.Add(member);
+        else          ExportSelectedMembers.Remove(member);
+    }
+
+    private async Task ExportToExcel()
+    {
+        if (Report == null || ExportSelectedMembers.Count == 0) return;
+
+        IsExporting = true;
+        StateHasChanged();
+
+        try
+        {
+            var ignoredEpics = ExportIgnoredEpicsInput
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(k => k.ToUpperInvariant())
+                .ToHashSet();
+
+            // Remaining (non-done) issues for selected members, respecting epic + date filters
+            var issues = Report.Issues
+                .Where(i => i.StatusCategoryKey != "done"
+                         && ExportSelectedMembers.Contains(i.Assignee)
+                         && !string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase)
+                         && (string.IsNullOrEmpty(FilterEpic) || i.EpicKey == FilterEpic)
+                         && (ignoredEpics.Count == 0 || !ignoredEpics.Contains(i.EpicKey.ToUpperInvariant())))
+                .OrderBy(i => string.IsNullOrEmpty(i.EpicKey) ? "ZZZ" : i.EpicKey)
+                .ThenBy(i => i.Assignee)
+                .ThenBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, _ => 1 })
+                .ThenByDescending(i => i.RemainingEstimateSeconds)
+                .ToList();
+
+            using var wb = new XLWorkbook();
+            BuildRemainingWorkSheet(wb.Worksheets.Add("Remaining Work"), issues);
+
+            using var ms = new MemoryStream();
+            wb.SaveAs(ms);
+            var base64   = Convert.ToBase64String(ms.ToArray());
+            var sprintLabel = (Report.SprintName is { Length: > 0 } sn ? sn : SprintId)
+                .Replace(" ", "_").Replace("/", "-");
+            var fileName = $"RemainingWork_{sprintLabel}_{DateTime.Today:yyyyMMdd}.xlsx";
+            const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+            await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
+            ShowExportModal = false;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsExporting = false;
+        }
+    }
+
+    private void BuildRemainingWorkSheet(IXLWorksheet ws, List<SprintIssue> issues)
+    {
+        // ── Meta block ────────────────────────────────────────────────────────
+        void Meta(int row, string label, string value)
+        {
+            ws.Cell(row, 1).Value = label;
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 1).Style.Font.FontColor = XLColor.FromHtml("#6c757d");
+            ws.Cell(row, 2).Value = value;
+        }
+
+        Meta(1, "Sprint",       Report!.SprintName is { Length: > 0 } sn ? sn : SprintId);
+        Meta(2, "Days Left",    EffectiveDaysRemaining.ToString());
+        Meta(3, "Members",      string.Join(", ", ExportSelectedMembers.Order()));
+        Meta(4, "Exported",     DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+
+        // ── Headers (row 6) ───────────────────────────────────────────────────
+        var headers = new[]
+        {
+            "Epic Key", "Epic Description", 
+            "Task Key", "Task Description","Task Status", "Label Description",
+            "Team Member", "Hours Logged", "Hours Planned"
+        };
+
+        for (int i = 0; i < headers.Length; i++)
+        {
+            var hCell = ws.Cell(6, i + 1);
+            hCell.Value = headers[i];
+            hCell.Style.Font.Bold = true;
+            hCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+            hCell.Style.Font.FontColor = XLColor.White;
+            hCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        }
+
+        ws.SheetView.FreezeRows(6);
+
+        // ── Data rows ─────────────────────────────────────────────────────────
+        int row = 7;
+        string? lastEpic = null;
+
+        foreach (var issue in issues)
+        {
+            var epicDesc   = string.IsNullOrEmpty(issue.EpicName) || issue.EpicName == "No Epic"
+                ? (string.IsNullOrEmpty(issue.EpicKey) ? "No Epic" : issue.EpicKey)
+                : issue.EpicName;
+            var epicKey    = string.IsNullOrEmpty(issue.EpicKey) ? "No Epic" : issue.EpicKey;
+            var labelDesc  = issue.Labels.Count > 0 ? string.Join(", ", issue.Labels) : "";
+            var hoursLogged  = Math.Round(issue.Worklogs.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
+            var hoursPlanned = Math.Round(issue.OriginalEstimateSeconds / 3600.0, 2);
+
+            // Alternate shading per epic group
+            bool newEpic = lastEpic != null && lastEpic != epicKey;
+            bool shade = newEpic ? !((row - 7) % 2 == 0) : (row - 7) % 2 == 0;
+            if (shade)
+                ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f0f4ff");
+            lastEpic = epicKey;
+
+            int col = 1;
+            ws.Cell(row, col++).Value = epicKey;
+            ws.Cell(row, col++).Value = epicDesc;
+            ws.Cell(row, col++).Value = issue.Key;
+            ws.Cell(row, col++).Value = issue.Summary;
+            ws.Cell(row, col++).Value = issue.Status;
+            ws.Cell(row, col++).Value = labelDesc;
+            ws.Cell(row, col++).Value = issue.Assignee;
+            ws.Cell(row, col++).Value = hoursLogged;
+            ws.Cell(row, col++).Value = hoursPlanned;
+
+            // Highlight over-budget rows
+            if (hoursPlanned > 0 && hoursLogged > hoursPlanned)
+            {
+                ws.Cell(row, 7).Style.Font.FontColor = XLColor.FromHtml("#58151c");
+                ws.Cell(row, 7).Style.Font.Bold = true;
+            }
+
+            row++;
+        }
+
+        // ── Totals row ────────────────────────────────────────────────────────
+        if (row > 7)
+        {
+            ws.Cell(row, 1).Value = "TOTAL";
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 7).Value = Math.Round(issues.Sum(i => i.Worklogs.Sum(w => w.TimeSpentSeconds)) / 3600.0, 2);
+            ws.Cell(row, 7).Style.Font.Bold = true;
+            ws.Cell(row, 8).Value = Math.Round(issues.Sum(i => i.OriginalEstimateSeconds) / 3600.0, 2);
+            ws.Cell(row, 8).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+        }
+
+        ws.Columns().AdjustToContents();
+        ws.Column(2).Width = Math.Min(ws.Column(2).Width, 50); // Epic Description
+        ws.Column(4).Width = Math.Min(ws.Column(4).Width, 60); // Task Description
+        ws.Row(6).Height = 22;
+    }
 }

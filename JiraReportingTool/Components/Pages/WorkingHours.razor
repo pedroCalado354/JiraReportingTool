@@ -1,0 +1,736 @@
+@page "/working-hours"
+@rendermode InteractiveServer
+@inject JiraService JiraService
+@inject IJSRuntime JS
+@using JiraReportingTool.Models
+@using ClosedXML.Excel
+
+<PageTitle>Working Hours</PageTitle>
+
+<h1 class="mb-3">Working Hours</h1>
+
+<!-- ── Load form ─────────────────────────────────────────────────────────── -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <div class="row g-3 align-items-end">
+            <div class="col-auto">
+                <label class="form-label small text-muted mb-1">
+                    Sprint ID(s) <span class="fst-italic">(comma-separated for multi-sprint)</span>
+                </label>
+                <input class="form-control" style="width:340px"
+                       @bind="SprintIdsInput" @onkeyup="HandleKeyUp"
+                       placeholder="e.g. 6690  or  6690, 6691, 6692" />
+            </div>
+            <div class="col-auto">
+                <button class="btn btn-primary" @onclick="LoadData" disabled="@IsLoading">
+                    @if (IsLoading)
+                    {
+                        <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                    }
+                    Load
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (ErrorMessage != null)
+{
+    <div class="alert alert-danger">@ErrorMessage</div>
+}
+
+@if (SprintReports.Count > 0)
+{
+    <!-- ── Filters + Export ───────────────────────────────────────────────── -->
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-body">
+            <div class="row g-3 align-items-start">
+
+                <!-- Team members multi-select -->
+                <div class="col-lg-3">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="small fw-semibold">Team Members</span>
+                        <div class="d-flex gap-2 small">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" @onclick="SelectAllMembers">All</button>
+                            <span class="text-muted">/</span>
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" @onclick="ClearMembersFilter">None</button>
+                        </div>
+                    </div>
+                    <div class="border rounded p-2" style="max-height:150px;overflow-y:auto">
+                        @foreach (var author in AllAuthors)
+                        {
+                            <div class="form-check mb-0">
+                                <input class="form-check-input" type="checkbox" id="wh_@author"
+                                       checked="@SelectedMembers.Contains(author)"
+                                       @onchange="e => ToggleMember(author, (bool)(e.Value ?? false))" />
+                                <label class="form-check-label small" for="wh_@author">@author</label>
+                            </div>
+                        }
+                    </div>
+                    <div class="text-muted small mt-1">@SelectedMembers.Count of @AllAuthors.Count selected</div>
+                </div>
+
+                <!-- Epics multi-select -->
+                <div class="col-lg-4">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="small fw-semibold">Epics</span>
+                        <div class="d-flex gap-2 small">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" @onclick="SelectAllEpics">All</button>
+                            <span class="text-muted">/</span>
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none" @onclick="ClearEpicsFilter">None</button>
+                        </div>
+                    </div>
+                    <div class="border rounded p-2" style="max-height:150px;overflow-y:auto">
+                        @foreach (var (key, name) in AllEpics)
+                        {
+                            <div class="form-check mb-0">
+                                <input class="form-check-input" type="checkbox" id="whe_@key"
+                                       checked="@SelectedEpics.Contains(key)"
+                                       @onchange="e => ToggleEpic(key, (bool)(e.Value ?? false))" />
+                                <label class="form-check-label small" for="whe_@key">
+                                    <span class="text-muted me-1" style="font-size:0.75rem">@key</span>@name
+                                </label>
+                            </div>
+                        }
+                    </div>
+                    <div class="text-muted small mt-1">@SelectedEpics.Count of @AllEpics.Count selected</div>
+                </div>
+
+                <!-- Date range -->
+                <div class="col-lg-auto">
+                    <span class="form-label small fw-semibold d-block mb-1">Worklog Date Range</span>
+                    <div class="d-flex gap-2 align-items-center flex-wrap">
+                        <input type="date" class="form-control form-control-sm" style="width:160px"
+                               @bind="DateFrom" @bind:after="OnFilterChanged" />
+                        <span class="text-muted small">–</span>
+                        <input type="date" class="form-control form-control-sm" style="width:160px"
+                               @bind="DateTo" @bind:after="OnFilterChanged" />
+                        @if (DateFrom.HasValue || DateTo.HasValue)
+                        {
+                            <button class="btn btn-sm btn-outline-secondary" @onclick="ClearDates">Clear</button>
+                        }
+                    </div>
+                </div>
+
+                <!-- Export -->
+                <div class="col-lg-auto ms-auto align-self-end">
+                    <button class="btn btn-outline-success" @onclick="ExportToExcel" disabled="@IsExporting">
+                        @if (IsExporting)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        else
+                        {
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1">
+                                <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                                <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                            </svg>
+                        }
+                        Export .xlsx
+                    </button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- ── KPI cards ─────────────────────────────────────────────────────── -->
+    <div class="row g-3 mb-4">
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold" style="color:#4361ee">@TotalHours.ToString("F1")</div>
+                    <div class="text-muted small">Total Hours Logged</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold">@ActiveMemberCount</div>
+                    <div class="text-muted small">Team Members</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold">@FilteredEntryCount</div>
+                    <div class="text-muted small">Worklog Entries</div>
+                </div>
+            </div>
+        </div>
+        <div class="col-6 col-md-3">
+            <div class="card border-0 shadow-sm text-center h-100">
+                <div class="card-body py-3">
+                    <div class="fs-2 fw-bold">@AvgHoursPerMember.ToString("F1")</div>
+                    <div class="text-muted small">Avg Hours / Member</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Charts ────────────────────────────────────────────────────────── -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-5">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-transparent border-0 small text-muted text-uppercase fw-semibold">
+                    Hours per Team Member
+                </div>
+                <div class="card-body p-3">
+                    <div style="height:@(Math.Max(180, AllAuthors.Count * 34))px">
+                        <canvas id="chart-hours-member"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="col-md-7">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-header bg-transparent border-0 small text-muted text-uppercase fw-semibold">
+                    Hours per Day
+                </div>
+                <div class="card-body p-3">
+                    <div style="height:@(Math.Max(180, AllAuthors.Count * 34))px">
+                        <canvas id="chart-hours-day"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Worklog table ──────────────────────────────────────────────────── -->
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-transparent border-0 d-flex justify-content-between align-items-center">
+            <span class="fw-semibold">Worklog Entries</span>
+            <span class="text-muted small">@FilteredEntryCount entries · @TotalHours.ToString("F1") h total</span>
+        </div>
+        <div class="table-responsive" style="max-height:500px;overflow-y:auto">
+            <table class="table table-sm table-hover align-middle small mb-0">
+                <thead class="table-light" style="position:sticky;top:0;z-index:1">
+                    <tr>
+                        <th>Date</th>
+                        <th>Day</th>
+                        <th>Team Member</th>
+                        <th class="text-end">Hours</th>
+                        <th>Task</th>
+                        <th>Summary</th>
+                        <th>Epic</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var wl in FilteredWorklogs)
+                    {
+                        <tr>
+                            <td class="text-nowrap text-muted">@wl.Date.ToString("yyyy-MM-dd")</td>
+                            <td class="text-muted">@wl.Date.ToString("ddd")</td>
+                            <td class="fw-semibold">@wl.Author</td>
+                            <td class="text-end fw-semibold">@((wl.TimeSpentSeconds / 3600.0).ToString("F2"))</td>
+                            <td class="text-nowrap">
+                                <span class="badge bg-light text-dark border">@wl.IssueKey</span>
+                            </td>
+                            <td>
+                                <span class="text-truncate d-inline-block" style="max-width:240px"
+                                      title="@wl.IssueSummary">@wl.IssueSummary</span>
+                            </td>
+                            <td class="text-muted small text-nowrap">
+                                @(string.IsNullOrEmpty(wl.EpicKey) ? "—" : wl.EpicKey)
+                                @if (!string.IsNullOrEmpty(wl.EpicName) && wl.EpicName != "No Epic" && !string.IsNullOrEmpty(wl.EpicKey))
+                                {
+                                    <span class="text-muted ms-1" style="font-size:0.7rem">@wl.EpicName</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                    @if (FilteredEntryCount == 0)
+                    {
+                        <tr><td colspan="7" class="text-center text-muted py-4">No worklogs match the selected filters.</td></tr>
+                    }
+                </tbody>
+                @if (FilteredEntryCount > 0)
+                {
+                    <tfoot class="table-light fw-semibold">
+                        <tr>
+                            <td colspan="3">Total</td>
+                            <td class="text-end">@TotalHours.ToString("F2")</td>
+                            <td colspan="3"></td>
+                        </tr>
+                    </tfoot>
+                }
+            </table>
+        </div>
+    </div>
+}
+
+@code {
+    private string SprintIdsInput = "";
+    private bool IsLoading;
+    private bool IsExporting;
+    private string? ErrorMessage;
+    private bool _renderCharts;
+
+    private List<int> ParsedSprintIds = [];
+    private List<SprintReport> SprintReports = [];
+
+    // ── Filters ───────────────────────────────────────────────────────────────
+    private HashSet<string> SelectedMembers = [];
+    private HashSet<string> SelectedEpics   = [];
+    private DateTime? DateFrom;
+    private DateTime? DateTo;
+
+    // ── Derived data ──────────────────────────────────────────────────────────
+    private List<string> AllAuthors => SprintReports
+        .SelectMany(r => r.Issues)
+        .SelectMany(i => i.Worklogs)
+        .Select(w => w.Author)
+        .Where(a => !string.IsNullOrEmpty(a))
+        .Distinct()
+        .Order()
+        .ToList();
+
+    private List<(string Key, string Name)> AllEpics => SprintReports
+        .SelectMany(r => r.Issues)
+        .Where(i => !string.IsNullOrEmpty(i.EpicKey))
+        .Select(i => (i.EpicKey, string.IsNullOrEmpty(i.EpicName) || i.EpicName == "No Epic" ? i.EpicKey : i.EpicName))
+        .DistinctBy(e => e.EpicKey)
+        .OrderBy(e => e.EpicKey)
+        .ToList();
+
+    private sealed record WorklogRow(
+        DateTime Date,
+        string Author,
+        int TimeSpentSeconds,
+        string IssueKey,
+        string IssueSummary,
+        string IssueType,
+        string EpicKey,
+        string EpicName
+    );
+
+    private List<WorklogRow> AllWorklogs => SprintReports
+        .SelectMany(r => r.Issues)
+        .SelectMany(i => i.Worklogs.Select(w => new WorklogRow(
+            w.Started.Date,
+            w.Author,
+            w.TimeSpentSeconds,
+            i.Key,
+            i.Summary,
+            i.IssueType,
+            i.EpicKey,
+            i.EpicName
+        )))
+        .OrderByDescending(w => w.Date)
+        .ThenBy(w => w.Author)
+        .ToList();
+
+    private List<WorklogRow> FilteredWorklogs => AllWorklogs
+        .Where(w =>
+            !string.IsNullOrEmpty(w.Author) &&
+            (SelectedMembers.Count == 0 || SelectedMembers.Contains(w.Author)) &&
+            (SelectedEpics.Count == 0   || SelectedEpics.Contains(w.EpicKey)) &&
+            (!DateFrom.HasValue || w.Date >= DateFrom.Value.Date) &&
+            (!DateTo.HasValue   || w.Date <= DateTo.Value.Date))
+        .ToList();
+
+    private double TotalHours       => FilteredWorklogs.Sum(w => w.TimeSpentSeconds) / 3600.0;
+    private int    ActiveMemberCount => FilteredWorklogs.Select(w => w.Author).Distinct().Count();
+    private int    FilteredEntryCount => FilteredWorklogs.Count;
+    private double AvgHoursPerMember  => ActiveMemberCount > 0 ? TotalHours / ActiveMemberCount : 0;
+
+    // ── Load ──────────────────────────────────────────────────────────────────
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var ids = SprintIdsInput
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s.Trim(), out var n) ? (int?)n : null)
+            .Where(n => n.HasValue)
+            .Select(n => n!.Value)
+            .Distinct()
+            .ToList();
+
+        if (ids.Count == 0)
+        {
+            ErrorMessage = "Enter at least one sprint ID.";
+            return;
+        }
+
+        IsLoading = true;
+        ErrorMessage = null;
+        SprintReports.Clear();
+        SelectedMembers.Clear();
+        DateFrom = null;
+        DateTo = null;
+        StateHasChanged();
+
+        try
+        {
+            var tasks = ids.Select(id => JiraService.GetDeliveryDataAsync(id));
+            var results = await Task.WhenAll(tasks);
+            ParsedSprintIds = ids;
+            SprintReports = [.. results];
+            SelectedMembers = new HashSet<string>(AllAuthors);
+            SelectedEpics   = new HashSet<string>(AllEpics.Select(e => e.Key));
+            _renderCharts = true;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load sprint data: {ex.Message}";
+        }
+        finally
+        {
+            IsLoading = false;
+        }
+    }
+
+    // ── Filter actions ────────────────────────────────────────────────────────
+    private void SelectAllMembers()   { SelectedMembers = new HashSet<string>(AllAuthors); OnFilterChanged(); }
+    private void ClearMembersFilter()  { SelectedMembers.Clear(); OnFilterChanged(); }
+
+    private void ToggleMember(string author, bool selected)
+    {
+        if (selected) SelectedMembers.Add(author);
+        else          SelectedMembers.Remove(author);
+        OnFilterChanged();
+    }
+
+    private void SelectAllEpics()  { SelectedEpics = new HashSet<string>(AllEpics.Select(e => e.Key)); OnFilterChanged(); }
+    private void ClearEpicsFilter() { SelectedEpics.Clear(); OnFilterChanged(); }
+
+    private void ToggleEpic(string key, bool selected)
+    {
+        if (selected) SelectedEpics.Add(key);
+        else          SelectedEpics.Remove(key);
+        OnFilterChanged();
+    }
+
+    private void ClearDates()
+    {
+        DateFrom = null;
+        DateTo = null;
+        OnFilterChanged();
+    }
+
+    private void OnFilterChanged()
+    {
+        _renderCharts = true;
+        StateHasChanged();
+    }
+
+    // ── Charts ────────────────────────────────────────────────────────────────
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_renderCharts && SprintReports.Count > 0)
+        {
+            _renderCharts = false;
+            var filtered = FilteredWorklogs;
+            await RenderMemberChart(filtered);
+            await RenderDayChart(filtered);
+        }
+    }
+
+    private async Task RenderMemberChart(List<WorklogRow> filtered)
+    {
+        var byMember = filtered
+            .GroupBy(w => w.Author)
+            .Select(g => new { Name = g.Key, Hours = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1) })
+            .OrderByDescending(m => m.Hours)
+            .ToList();
+
+        if (byMember.Count == 0) return;
+
+        await JS.InvokeVoidAsync("renderChart", "chart-hours-member", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = byMember.Select(m => m.Name).ToArray(),
+                datasets = new[]
+                {
+                    new
+                    {
+                        label = "Hours Logged",
+                        data  = byMember.Select(m => m.Hours).ToArray(),
+                        backgroundColor = byMember.Select((_, i) => ChartColor(i, 0.75)).ToArray(),
+                        borderColor     = byMember.Select((_, i) => ChartColor(i, 1.0)).ToArray(),
+                        borderWidth = 1
+                    }
+                }
+            },
+            options = new
+            {
+                indexAxis = "y",
+                responsive = true,
+                maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales = new
+                {
+                    x = new { beginAtZero = true, title = new { display = true, text = "Hours" } }
+                }
+            }
+        });
+    }
+
+    private async Task RenderDayChart(List<WorklogRow> filtered)
+    {
+        var byDay = filtered
+            .GroupBy(w => w.Date)
+            .Select(g => new { Date = g.Key, Hours = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1) })
+            .OrderBy(d => d.Date)
+            .ToList();
+
+        if (byDay.Count == 0) return;
+
+        await JS.InvokeVoidAsync("renderChart", "chart-hours-day", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = byDay.Select(d => d.Date.ToString("MMM d")).ToArray(),
+                datasets = new[]
+                {
+                    new
+                    {
+                        label           = "Hours Logged",
+                        data            = byDay.Select(d => d.Hours).ToArray(),
+                        backgroundColor = "rgba(67,97,238,0.75)",
+                        borderColor     = "rgba(67,97,238,1)",
+                        borderWidth     = 1
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true,
+                maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales = new
+                {
+                    x = new { title = new { display = true, text = "Date" } },
+                    y = new { beginAtZero = true, title = new { display = true, text = "Hours" } }
+                }
+            }
+        });
+    }
+
+    private static string ChartColor(int index, double alpha)
+    {
+        string[] palette =
+        [
+            $"rgba(67,97,238,{alpha:F2})",
+            $"rgba(6,214,160,{alpha:F2})",
+            $"rgba(251,133,0,{alpha:F2})",
+            $"rgba(155,93,229,{alpha:F2})",
+            $"rgba(239,35,60,{alpha:F2})",
+            $"rgba(56,176,0,{alpha:F2})",
+            $"rgba(255,183,3,{alpha:F2})",
+            $"rgba(17,138,178,{alpha:F2})",
+            $"rgba(233,104,36,{alpha:F2})",
+            $"rgba(0,169,165,{alpha:F2})",
+        ];
+        return palette[index % palette.Length];
+    }
+
+    // ── Export ────────────────────────────────────────────────────────────────
+    private async Task ExportToExcel()
+    {
+        var filtered = FilteredWorklogs;
+        if (filtered.Count == 0) return;
+
+        IsExporting = true;
+        StateHasChanged();
+
+        try
+        {
+            using var wb = new XLWorkbook();
+            var ws = wb.Worksheets.Add("Working Hours");
+
+            // Meta block
+            void Meta(int row, string label, string value)
+            {
+                ws.Cell(row, 1).Value = label;
+                ws.Cell(row, 1).Style.Font.Bold = true;
+                ws.Cell(row, 1).Style.Font.FontColor = XLColor.FromHtml("#6c757d");
+                ws.Cell(row, 2).Value = value;
+            }
+
+            var sprintNames = SprintReports
+                .Where(r => !string.IsNullOrEmpty(r.SprintName))
+                .Select(r => r.SprintName)
+                .Distinct();
+            var sprintLabel = sprintNames.Any()
+                ? string.Join(", ", sprintNames)
+                : string.Join(", ", ParsedSprintIds);
+
+            Meta(1, "Sprint(s)",   sprintLabel);
+            Meta(2, "Members",     string.Join(", ", SelectedMembers.Order()));
+            Meta(3, "Date Range",
+                DateFrom.HasValue || DateTo.HasValue
+                    ? $"{(DateFrom.HasValue ? DateFrom.Value.ToString("yyyy-MM-dd") : "—")} → {(DateTo.HasValue ? DateTo.Value.ToString("yyyy-MM-dd") : "—")}"
+                    : "All dates");
+            Meta(4, "Exported", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+
+            // Headers (row 6)
+            var headers = new[] { "Date", "Day of the Week", "Team Member", "Logged Hours" };
+            for (int i = 0; i < headers.Length; i++)
+            {
+                var hCell = ws.Cell(6, i + 1);
+                hCell.Value = headers[i];
+                hCell.Style.Font.Bold = true;
+                hCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+                hCell.Style.Font.FontColor = XLColor.White;
+                hCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            ws.SheetView.FreezeRows(6);
+
+            // Data rows (chronological order for the export)
+            var sorted = filtered
+                .OrderBy(w => w.Date)
+                .ThenBy(w => w.Author)
+                .ToList();
+
+            int row = 7;
+            foreach (var wl in sorted)
+            {
+                if (row % 2 == 0)
+                    ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+
+                ws.Cell(row, 1).Value = wl.Date.ToString("yyyy-MM-dd");
+                ws.Cell(row, 2).Value = wl.Date.ToString("dddd");   // full day name
+                ws.Cell(row, 3).Value = wl.Author;
+                ws.Cell(row, 4).Value = Math.Round(wl.TimeSpentSeconds / 3600.0, 2);
+                ws.Cell(row, 4).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                row++;
+            }
+
+            // Totals row
+            ws.Cell(row, 1).Value = "TOTAL";
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 4).Value = Math.Round(sorted.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
+            ws.Cell(row, 4).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+
+            ws.Columns().AdjustToContents();
+            ws.Row(6).Height = 22;
+
+            // ── Summary sheet: Members × Weekdays ────────────────────────────
+            var wsSummary = wb.Worksheets.Add("Summary by Member");
+
+            void MetaS(int r, string label, string value)
+            {
+                wsSummary.Cell(r, 1).Value = label;
+                wsSummary.Cell(r, 1).Style.Font.Bold = true;
+                wsSummary.Cell(r, 1).Style.Font.FontColor = XLColor.FromHtml("#6c757d");
+                wsSummary.Cell(r, 2).Value = value;
+            }
+            MetaS(1, "Sprint(s)", sprintLabel);
+            MetaS(2, "Exported",  DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+            MetaS(2, "Exported Date From",  DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+
+            // Build lookup data
+            var members = filtered.Select(w => w.Author).Distinct().Order().ToList();
+            var dayMap = filtered
+                .GroupBy(w => w.Author)
+                .ToDictionary(
+                    g => g.Key,
+                    g => g.GroupBy(w => w.Date.DayOfWeek)
+                           .ToDictionary(d => d.Key, d => d.Sum(w => w.TimeSpentSeconds) / 3600.0)
+                );
+
+            DayOfWeek[] orderedDays = [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
+                                       DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
+
+            // Headers: Day | <member1> | <member2> | ... | Total
+            wsSummary.Cell(4, 1).Value = "Day";
+            wsSummary.Cell(4, 1).Style.Font.Bold = true;
+            wsSummary.Cell(4, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+            wsSummary.Cell(4, 1).Style.Font.FontColor = XLColor.White;
+            for (int m = 0; m < members.Count; m++)
+            {
+                var hc = wsSummary.Cell(4, m + 2);
+                hc.Value = members[m];
+                hc.Style.Font.Bold = true;
+                hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+                hc.Style.Font.FontColor = XLColor.White;
+                hc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            var totalHc = wsSummary.Cell(4, members.Count + 2);
+            totalHc.Value = "Total";
+            totalHc.Style.Font.Bold = true;
+            totalHc.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+            totalHc.Style.Font.FontColor = XLColor.White;
+            totalHc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            wsSummary.SheetView.FreezeRows(4);
+
+            // Data rows: one per weekday
+            int sRow = 5;
+            foreach (var day in orderedDays)
+            {
+                if (sRow % 2 == 0)
+                    wsSummary.Row(sRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+
+                wsSummary.Cell(sRow, 1).Value = day.ToString();
+                wsSummary.Cell(sRow, 1).Style.Font.Bold = true;
+                double rowTotal = 0;
+                for (int m = 0; m < members.Count; m++)
+                {
+                    double hours = dayMap.TryGetValue(members[m], out var daysForMember)
+                                   && daysForMember.TryGetValue(day, out var h) ? h : 0;
+                    rowTotal += hours;
+                    if (hours > 0)
+                    {
+                        var dc = wsSummary.Cell(sRow, m + 2);
+                        dc.Value = Math.Round(hours, 2);
+                        dc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                    }
+                }
+                var rtc = wsSummary.Cell(sRow, members.Count + 2);
+                rtc.Value = Math.Round(rowTotal, 2);
+                rtc.Style.Font.Bold = true;
+                rtc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                sRow++;
+            }
+
+            // Totals row
+            wsSummary.Cell(sRow, 1).Value = "TOTAL";
+            wsSummary.Cell(sRow, 1).Style.Font.Bold = true;
+            wsSummary.Row(sRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+            for (int m = 0; m < members.Count; m++)
+            {
+                double memberTotal = dayMap.TryGetValue(members[m], out var dm)
+                    ? dm.Values.Sum() : 0;
+                var tc = wsSummary.Cell(sRow, m + 2);
+                tc.Value = Math.Round(memberTotal, 2);
+                tc.Style.Font.Bold = true;
+                tc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            var grandTotal = wsSummary.Cell(sRow, members.Count + 2);
+            grandTotal.Value = Math.Round(filtered.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
+            grandTotal.Style.Font.Bold = true;
+            grandTotal.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            wsSummary.Columns().AdjustToContents();
+            wsSummary.Row(4).Height = 22;
+
+            using var ms = new MemoryStream();
+            wb.SaveAs(ms);
+            var base64   = Convert.ToBase64String(ms.ToArray());
+            var fileLabel = sprintLabel.Replace(" ", "_").Replace("/", "-").Replace(",", "");
+            var fileName  = $"WorkingHours_{fileLabel}_{DateTime.Today:yyyyMMdd}.xlsx";
+            const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+            await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            IsExporting = false;
+        }
+    }
+}

@@ -162,6 +162,7 @@ public class SprintIssue
     public string EpicKey { get; set; } = "";
     public string EpicName { get; set; } = "No Epic";
     public List<WorklogEntry> Worklogs { get; set; } = new();
+    public List<string> Labels { get; set; } = new();
     public bool IsExpanded { get; set; }
     public DateTime? Created { get; set; }
     public DateTime? ResolutionDate { get; set; }

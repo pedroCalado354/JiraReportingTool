@@ -309,7 +309,7 @@ public class JiraService
     // Shared delivery fetch: paginate → parse → enrich epic names
     private async Task<SprintReport> FetchDeliveryReportAsync(string encodedJql)
     {
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent,created,resolutiondate";
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent,created,resolutiondate,labels";
 
         var json = await FetchAllPagesAsync(encodedJql, fields);
         var (report, truncated) = ParseSprintReport(json, "");
@@ -434,6 +434,13 @@ public class JiraService
             if (fields.TryGetProperty("resolutiondate", out var resProp) && resProp.ValueKind != JsonValueKind.Null &&
                 DateTime.TryParse(resProp.GetString(), out var resolvedDt))
                 issue.ResolutionDate = resolvedDt;
+
+            // Labels
+            if (fields.TryGetProperty("labels", out var labelsEl) && labelsEl.ValueKind == JsonValueKind.Array)
+                issue.Labels = labelsEl.EnumerateArray()
+                    .Select(l => l.GetString() ?? "")
+                    .Where(l => !string.IsNullOrEmpty(l))
+                    .ToList();
 
             // Sprint metadata from first active sprint in customfield_10020
             if (report.SprintName == "" &&
