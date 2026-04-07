@@ -1,0 +1,225 @@
+@rendermode InteractiveServer
+@inject ChatService ChatService
+@inject NavigationManager Nav
+@using Markdig
+
+@* Don't render the widget on the full /chat page *@
+@if (!_isOnChatPage)
+{
+    <!-- Floating Chat Widget -->
+    <div class="chat-widget-container">
+        @if (_isOpen)
+        {
+            <div class="chat-widget-panel shadow-lg">
+                <!-- Header -->
+                <div class="chat-widget-header d-flex align-items-center justify-content-between px-3 py-2">
+                    <div class="d-flex align-items-center gap-2">
+                        <span style="font-size:1.1rem;">🤖</span>
+                        <span class="fw-semibold text-white">Jira Assistant</span>
+                    </div>
+                    <div class="d-flex align-items-center gap-1">
+                        <button class="btn btn-sm btn-link text-white p-0 me-1" title="Clear chat" @onclick="ClearChat" style="opacity:.8;font-size:.75rem;">Clear</button>
+                        <button class="btn btn-sm btn-link text-white p-0" @onclick="Close" title="Close" style="font-size:1.1rem;line-height:1;">✕</button>
+                    </div>
+                </div>
+
+                <!-- Sprint ID row -->
+                <div class="px-3 py-1 border-bottom d-flex align-items-center gap-2" style="background:#f8f9fa;">
+                    <label class="form-label mb-0 small text-nowrap text-muted">Sprint ID:</label>
+                    <input class="form-control form-control-sm" style="width:90px"
+                           type="number" @bind="_sprintId" @bind:event="oninput" placeholder="e.g. 42" />
+                </div>
+
+                <!-- Messages -->
+                <div class="chat-widget-messages p-2" @ref="_scrollContainer">
+                    @if (_messages.Count == 0)
+                    {
+                        <div class="text-muted small text-center mt-3 px-2">
+                            Ask me anything about your sprints and team!
+                        </div>
+                    }
+
+                    @foreach (var msg in _messages)
+                    {
+                        @if (msg.IsUser)
+                        {
+                            <div class="d-flex justify-content-end mb-2">
+                                <div class="chat-bubble-user rounded-3 px-2 py-1 small text-white"
+                                     style="max-width:85%;white-space:pre-wrap;">@msg.Text</div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="d-flex justify-content-start mb-2">
+                                <div class="chat-bubble-ai rounded-3 px-2 py-1 small border bg-white"
+                                     style="max-width:90%;">
+                                    @if (msg.IsMarkdown)
+                                    {
+                                        @((MarkupString)RenderMarkdown(msg.Text))
+                                    }
+                                    else
+                                    {
+                                        <span style="white-space:pre-wrap;">@msg.Text</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+
+                    @if (_thinking)
+                    {
+                        <div class="d-flex justify-content-start mb-2">
+                            <div class="rounded-3 px-2 py-1 small border bg-white text-muted fst-italic">
+                                <span class="spinner-border spinner-border-sm me-1" role="status" style="width:.7rem;height:.7rem;"></span>
+                                @_statusText
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <!-- Input -->
+                <div class="chat-widget-input d-flex gap-1 p-2 border-top">
+                    <input class="form-control form-control-sm"
+                           @bind="_input"
+                           @bind:event="oninput"
+                           @onkeydown="OnKeyDown"
+                           placeholder="Ask about your sprint…"
+                           disabled="@_thinking" />
+                    <button class="btn btn-primary btn-sm px-2"
+                            @onclick="SendAsync"
+                            disabled="@(_thinking || string.IsNullOrWhiteSpace(_input))"
+                            title="Send">
+                        @if (_thinking)
+                        {
+                            <span class="spinner-border spinner-border-sm" role="status" style="width:.7rem;height:.7rem;"></span>
+                        }
+                        else
+                        {
+                            <span>➤</span>
+                        }
+                    </button>
+                </div>
+            </div>
+        }
+
+        <!-- Toggle button -->
+        <button class="chat-widget-fab shadow" @onclick="ToggleOpen" title="Jira Assistant">
+            @if (_isOpen)
+            {
+                <span style="font-size:1.4rem;line-height:1;">✕</span>
+            }
+            else
+            {
+                <span style="font-size:1.5rem;line-height:1;">💬</span>
+                @if (_unreadCount > 0)
+                {
+                    <span class="chat-badge">@_unreadCount</span>
+                }
+            }
+        </button>
+    </div>
+}
+
+@code {
+    private bool _isOpen;
+    private bool _isOnChatPage;
+    private readonly List<ChatMessage> _history = [];
+    private readonly List<ChatMessage> _messages = [];
+    private string _input = "";
+    private int? _sprintId;
+    private bool _thinking;
+    private string _statusText = "Thinking…";
+    private int _unreadCount;
+    private ElementReference _scrollContainer;
+
+    protected override void OnInitialized()
+    {
+        CheckPage();
+        Nav.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs e)
+    {
+        CheckPage();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void CheckPage()
+    {
+        _isOnChatPage = Nav.Uri.TrimEnd('/').EndsWith("/chat", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void ToggleOpen()
+    {
+        _isOpen = !_isOpen;
+        if (_isOpen) _unreadCount = 0;
+    }
+
+    private void Close() => _isOpen = false;
+
+    private async Task SendAsync()
+    {
+        var text = _input.Trim();
+        if (string.IsNullOrEmpty(text)) return;
+
+        var userText = _sprintId.HasValue ? $"[Sprint ID context: {_sprintId}]\n{text}" : text;
+
+        _messages.Add(new ChatMessage(text, IsUser: true));
+        _history.Add(new ChatMessage(userText, IsUser: true));
+        _input = "";
+        _thinking = true;
+        _statusText = "Thinking…";
+        StateHasChanged();
+
+        try
+        {
+            var reply = await ChatService.SendAsync(
+                _history,
+                userText,
+                status =>
+                {
+                    _statusText = status;
+                    InvokeAsync(StateHasChanged);
+                });
+
+            _messages.Add(new ChatMessage(reply, IsUser: false, IsMarkdown: true));
+            _history.Add(new ChatMessage(reply, IsUser: false));
+
+            if (!_isOpen) _unreadCount++;
+        }
+        catch (Exception ex)
+        {
+            _messages.Add(new ChatMessage($"**Error:** {ex.Message}", IsUser: false, IsMarkdown: true));
+        }
+        finally
+        {
+            _thinking = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+            await SendAsync();
+    }
+
+    private void ClearChat()
+    {
+        _history.Clear();
+        _messages.Clear();
+        _input = "";
+        _unreadCount = 0;
+    }
+
+    private static string RenderMarkdown(string markdown)
+    {
+        var pipeline = new MarkdownPipelineBuilder().UseAdvancedExtensions().Build();
+        return Markdown.ToHtml(markdown, pipeline);
+    }
+
+    public void Dispose()
+    {
+        Nav.LocationChanged -= OnLocationChanged;
+    }
+}

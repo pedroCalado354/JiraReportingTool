@@ -1379,6 +1379,7 @@
 
             using var wb = new XLWorkbook();
             BuildRemainingWorkSheet(wb.Worksheets.Add("Remaining Work"), issues);
+            BuildStatusReportSheet(wb.Worksheets.Add("Status Report"), issues);
 
             using var ms = new MemoryStream();
             wb.SaveAs(ms);
@@ -1420,9 +1421,9 @@
         // ── Headers (row 6) ───────────────────────────────────────────────────
         var headers = new[]
         {
-            "Epic Key", "Epic Description", 
-            "Task Key", "Task Description","Task Status", "Label Description",
-            "Team Member", "Hours Logged", "Hours Planned"
+            "Epic Key", "Epic Description",
+            "Task Key", "Task Description", "Task Status", "Label Description",
+            "Team Member", "Hours Logged", "Hours Planned", "% of Done", "Is Done"
         };
 
         for (int i = 0; i < headers.Length; i++)
@@ -1468,6 +1469,10 @@
             ws.Cell(row, col++).Value = issue.Assignee;
             ws.Cell(row, col++).Value = hoursLogged;
             ws.Cell(row, col++).Value = hoursPlanned;
+            // % of Done (hours-based)
+            ws.Cell(row, col++).Value = hoursLogged == 0 || hoursPlanned == 0 ? 0 : Math.Round(hoursLogged * 100 / hoursPlanned, 2, MidpointRounding.AwayFromZero);
+            // Is Done (0/1 — used by SUMIF formulas in the Status Report sheet)
+            ws.Cell(row, col++).Value = issue.StatusCategoryKey == "done" ? 1 : 0;
 
             // Highlight over-budget rows
             if (hoursPlanned > 0 && hoursLogged > hoursPlanned)
@@ -1488,6 +1493,8 @@
             ws.Cell(row, 7).Style.Font.Bold = true;
             ws.Cell(row, 8).Value = Math.Round(issues.Sum(i => i.OriginalEstimateSeconds) / 3600.0, 2);
             ws.Cell(row, 8).Style.Font.Bold = true;
+            ws.Cell(row, 11).Value = issues.Count(i => i.StatusCategoryKey == "done");
+            ws.Cell(row, 11).Style.Font.Bold = true;
             ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
         }
 
@@ -1495,5 +1502,192 @@
         ws.Column(2).Width = Math.Min(ws.Column(2).Width, 50); // Epic Description
         ws.Column(4).Width = Math.Min(ws.Column(4).Width, 60); // Task Description
         ws.Row(6).Height = 22;
+    }
+
+    private void BuildStatusReportSheet(IXLWorksheet ws, List<SprintIssue> issues)
+    {
+        // ── Group by epic ─────────────────────────────────────────────────────
+        var epicGroups = issues
+            .GroupBy(i => string.IsNullOrEmpty(i.EpicKey) ? "No Epic" : i.EpicKey)
+            .Select(g =>
+            {
+                var epicName = g.FirstOrDefault(x => !string.IsNullOrEmpty(x.EpicName) && x.EpicName != "No Epic")?.EpicName ?? g.Key;
+                var displayName = epicName == g.Key ? g.Key : $"{g.Key} – {epicName}";
+                return (EpicKey: g.Key, DisplayName: displayName);
+            })
+            .OrderBy(g => g.EpicKey)
+            .ToList();
+
+        // ── Header row ────────────────────────────────────────────────────────
+        // Column layout:
+        //  A(1)  Epic / Workstream
+        //  B(2)  Target Date
+        //  C(3)  BE %
+        //  D(4)  FE %
+        //  E(5)  QA %
+        //  F(6)  Percentage
+        //  G(7)  Status
+        //  H(8)  Went Well (This Week)
+        //  I(9)  Went Bad / Issues (This Week)
+        //  J(10) Blockers / Risks
+        //  K(11) Next Week Plan
+        //  L(12) Owner (TL)
+        //  M(13) [hidden] Epic Key — anchor for COUNTIFS/SUMIF formulas
+
+        string[] headers =
+        [
+            "Epic / Workstream", "Target Date",
+            "BE %", "FE %", "QA %",
+            "Percentage", "Status",
+            "Went Well (This Week)", "Went Bad / Issues (This Week)",
+            "Blockers / Risks", "Next Week Plan", "Owner (TL)"
+        ];
+
+        for (int i = 0; i < headers.Length; i++)
+        {
+            var hCell = ws.Cell(1, i + 1);
+            hCell.Value = headers[i];
+            hCell.Style.Font.Bold = true;
+            hCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+            hCell.Style.Font.FontColor = XLColor.White;
+            hCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            hCell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            hCell.Style.Alignment.WrapText = true;
+        }
+
+        ws.Row(1).Height = 32;
+        ws.SheetView.FreezeRows(1);
+
+        // ── Formula range anchors (Remaining Work sheet) ──────────────────────
+        // Remaining Work layout (header at row 6, data from row 7):
+        //   A = Epic Key   F = Label Description   K = Is Done (0/1)
+        int rwLastRow    = 6 + issues.Count;
+        string rwEpic    = $"'Remaining Work'!$A$7:$A${rwLastRow}";
+        string rwLabel   = $"'Remaining Work'!$F$7:$F${rwLastRow}";
+        string rwIsDone  = $"'Remaining Work'!$K$7:$K${rwLastRow}";
+
+        // ── Data rows ─────────────────────────────────────────────────────────
+        int row = 2;
+        foreach (var epic in epicGroups)
+        {
+            // Base alternating shading (CF rules for pct/status cols override this)
+            if (row % 2 == 0)
+                ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f0f4ff");
+
+            // A – Epic / Workstream (display name)
+            ws.Cell(row, 1).Value = epic.DisplayName;
+            ws.Cell(row, 1).Style.Font.Bold = true;
+
+            // B – Target Date (blank; date-formatted for manual entry)
+            ws.Cell(row, 2).Style.NumberFormat.Format = "dd/mm/yyyy";
+
+            // C – BE %: tasks with label containing "BE" / total tasks for this epic
+            ws.Cell(row, 3).FormulaA1 =
+                $"=IFERROR(COUNTIFS({rwEpic},M{row},{rwLabel},\"*BE*\")" +
+                $"/COUNTIF({rwEpic},M{row}),\"\")";
+            ws.Cell(row, 3).Style.NumberFormat.Format = "0%";
+            ws.Cell(row, 3).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            // D – FE %
+            ws.Cell(row, 4).FormulaA1 =
+                $"=IFERROR(COUNTIFS({rwEpic},M{row},{rwLabel},\"*FE*\")" +
+                $"/COUNTIF({rwEpic},M{row}),\"\")";
+            ws.Cell(row, 4).Style.NumberFormat.Format = "0%";
+            ws.Cell(row, 4).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            // E – QA %
+            ws.Cell(row, 5).FormulaA1 =
+                $"=IFERROR(COUNTIFS({rwEpic},M{row},{rwLabel},\"*QA*\")" +
+                $"/COUNTIF({rwEpic},M{row}),\"\")";
+            ws.Cell(row, 5).Style.NumberFormat.Format = "0%";
+            ws.Cell(row, 5).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+
+            // F – Overall completion % (done tasks / total tasks)
+            ws.Cell(row, 6).FormulaA1 =
+                $"=IFERROR(SUMIF({rwEpic},M{row},{rwIsDone})" +
+                $"/COUNTIF({rwEpic},M{row}),\"\")";
+            ws.Cell(row, 6).Style.NumberFormat.Format = "0%";
+            ws.Cell(row, 6).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            ws.Cell(row, 6).Style.Font.Bold = true;
+
+            // G – Status (formula driven by Percentage in col F)
+            ws.Cell(row, 7).FormulaA1 =
+                $"=IFERROR(IF(F{row}>=1,\"Completed\",IF(F{row}>=0.6,\"On Track\",\"At Risk\")),\"—\")";
+            ws.Cell(row, 7).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            ws.Cell(row, 7).Style.Font.Bold = true;
+
+            // H–L – free-text narrative columns (blank; ready for manual entry)
+            for (int c = 8; c <= 12; c++)
+            {
+                ws.Cell(row, c).Style.Alignment.WrapText = true;
+                ws.Cell(row, c).Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+            }
+
+            // M (hidden) – raw epic key used as lookup value in formulas above
+            ws.Cell(row, 13).Value = epic.EpicKey;
+
+            ws.Row(row).Height = 40;
+            row++;
+        }
+
+        int lastDataRow = row - 1;
+
+        if (lastDataRow >= 2)
+        {
+            // ── Conditional formatting: percentage columns C–F ────────────────
+            // Rules are evaluated top-to-bottom; first match wins.
+            var pctRange = ws.Range(2, 3, lastDataRow, 6);
+            pctRange.AddConditionalFormat().WhenEqualOrGreaterThan("0.8")
+                .Fill.SetBackgroundColor(XLColor.FromHtml("#c6efce"));  // green ≥ 80 %
+            pctRange.AddConditionalFormat().WhenEqualOrGreaterThan("0.6")
+                .Fill.SetBackgroundColor(XLColor.FromHtml("#ffeb9c"));  // yellow ≥ 60 %
+            pctRange.AddConditionalFormat().WhenEqualOrGreaterThan("0.4")
+                .Fill.SetBackgroundColor(XLColor.FromHtml("#fce4d6"));  // orange ≥ 40 %
+            pctRange.AddConditionalFormat().WhenLessThan("0.4")
+                .Fill.SetBackgroundColor(XLColor.FromHtml("#ffc7ce"));  // red   < 40 %
+
+            // ── Conditional formatting: Status column G ───────────────────────
+            // WhenIsTrue formula is relative — anchored to the first cell (G2)
+            // and shifts down automatically for each row in the range.
+            var statusRange = ws.Range(2, 7, lastDataRow, 7);
+
+            var cfCompleted = statusRange.AddConditionalFormat().WhenIsTrue("G2=\"Completed\"");
+            cfCompleted.Fill.SetBackgroundColor(XLColor.FromHtml("#c6efce"));
+            cfCompleted.Font.SetFontColor(XLColor.FromHtml("#276221"));
+
+            var cfOnTrack = statusRange.AddConditionalFormat().WhenIsTrue("G2=\"On Track\"");
+            cfOnTrack.Fill.SetBackgroundColor(XLColor.FromHtml("#d1ecf1"));
+            cfOnTrack.Font.SetFontColor(XLColor.FromHtml("#0c5460"));
+
+            var cfAtRisk = statusRange.AddConditionalFormat().WhenIsTrue("G2=\"At Risk\"");
+            cfAtRisk.Fill.SetBackgroundColor(XLColor.FromHtml("#ffc7ce"));
+            cfAtRisk.Font.SetFontColor(XLColor.FromHtml("#842029"));
+
+            var cfPostponed = statusRange.AddConditionalFormat().WhenIsTrue("G2=\"Postponed\"");
+            cfPostponed.Fill.SetBackgroundColor(XLColor.FromHtml("#e2e3e5"));
+            cfPostponed.Font.SetFontColor(XLColor.FromHtml("#41464b"));
+
+            // ── Table border ──────────────────────────────────────────────────
+            var tableRange = ws.Range(1, 1, lastDataRow, 12);
+            tableRange.Style.Border.OutsideBorder = XLBorderStyleValues.Medium;
+            tableRange.Style.Border.OutsideBorderColor = XLColor.FromHtml("#1e3a5f");
+            tableRange.Style.Border.InsideBorder = XLBorderStyleValues.Thin;
+            tableRange.Style.Border.InsideBorderColor = XLColor.FromHtml("#dee2e6");
+        }
+
+        // ── Column widths ─────────────────────────────────────────────────────
+        ws.Column(1).Width  = 45; // Epic / Workstream
+        ws.Column(2).Width  = 14; // Target Date
+        ws.Column(3).Width  = 10; // BE %
+        ws.Column(4).Width  = 10; // FE %
+        ws.Column(5).Width  = 10; // QA %
+        ws.Column(6).Width  = 14; // Percentage
+        ws.Column(7).Width  = 14; // Status
+        ws.Column(8).Width  = 32; // Went Well
+        ws.Column(9).Width  = 32; // Went Bad / Issues
+        ws.Column(10).Width = 32; // Blockers / Risks
+        ws.Column(11).Width = 32; // Next Week Plan
+        ws.Column(12).Width = 20; // Owner (TL)
+        ws.Column(13).Hide();     // Epic Key lookup helper (hidden)
     }
 }
