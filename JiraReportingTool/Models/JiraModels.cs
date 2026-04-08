@@ -42,6 +42,7 @@ public class JiraIssueModel
     public string RemainingEstimate { get; set; } = "-";
     public List<WorklogEntry> Worklogs { get; set; } = new();
 
+    public List<string> Labels { get; set; } = new();
     [NotMapped] public bool IsExpanded { get; set; }
 }
 

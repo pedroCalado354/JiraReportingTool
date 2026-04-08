@@ -37,7 +37,7 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
         if (_useCache)
         {
             var cached = await repo.GetEpicReportAsync(epicKey);
-            if (cached is not null && IsFresh(cached.SyncedAt)) return cached;
+            if (cached is not null && cached.Issues.Any() && IsFresh(cached.SyncedAt)) return cached;
         }
 
         var report = await api.GetEpicReportAsync(epicKey);

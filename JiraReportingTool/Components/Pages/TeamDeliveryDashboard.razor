@@ -315,6 +315,7 @@
                                 <th>Task</th>
                                 <th>Assignee</th>
                                 <th style="width:80px">Status</th>
+                                <th style="width:80px">Type</th>
                                 <th style="width:75px">Est.</th>
                                 <th style="width:75px">Logged</th>
                                 <th style="width:75px">Remaining</th>
@@ -333,6 +334,7 @@
                                         <td>@issue.Summary</td>
                                         <td class="text-nowrap">@issue.Assignee</td>
                                         <td><span class="badge @StatusBadge(issue.Status, issue.StatusCategoryKey)">@issue.Status</span></td>
+                                        <td><span class="badge @IssueTypeBadge(issue.IssueType)">@issue.IssueType</span></td>
                                         <td class="text-nowrap">@(issue.OriginalEstimate == "-" ? "—" : issue.OriginalEstimate)</td>
                                         <td class="text-nowrap">@(FilteredSpentSeconds(issue) > 0 ? FmtH(FilteredSpentSeconds(issue)) : "—")</td>
                                         <td class="text-nowrap @(issue.RemainingEstimateSeconds > EffectiveDaysRemaining * 6 * 3600 && issue.RemainingEstimateSeconds > 0 ? "text-danger fw-semibold" : "")">
@@ -613,6 +615,7 @@
                                                     <th>Key</th>
                                                     <th>Summary</th>
                                                     <th>Status</th>
+                                                    <th>Type</th>
                                                     <th>My Logged</th>
                                                     <th>Remaining</th>
                                                     <th>Progress</th>
@@ -635,6 +638,9 @@
                                                             {
                                                                 <span class="badge bg-warning text-dark ms-1">@issue.DaysSinceLastWorklog d idle</span>
                                                             }
+                                                        </td>
+                                                        <td>
+                                                            <span class="badge @IssueTypeBadge(issue.IssueType)">@issue.Status</span>
                                                         </td>
                                                         <td class="text-nowrap">@(myLogged > 0 ? FmtH(myLogged) : "—")</td>
                                                         <td class="text-nowrap">@(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)</td>
@@ -707,6 +713,7 @@
                                     <th>Summary</th>
                                     <th>Assignee</th>
                                     <th>Status</th>
+                                    <th>Type</th>
                                     <th>Risk Reason</th>
                                     <th>Idle (days)</th>
                                     <th>Remaining</th>
@@ -726,6 +733,9 @@
                                             {
                                                 <span class="badge @RiskBadgeColor(reason) me-1">@reason</span>
                                             }
+                                        </td>
+                                        <td>
+                                            <span class="badge @IssueTypeBadge(ri.Issue.IssueType)">@ri.Issue.Status</span>
                                         </td>
                                         <td class="text-center">@(ri.Issue.DaysSinceLastWorklog < 999 ? ri.Issue.DaysSinceLastWorklog.ToString() : "—")</td>
                                         <td class="text-nowrap">@(ri.Issue.RemainingEstimate == "-" ? "—" : ri.Issue.RemainingEstimate)</td>
@@ -1283,6 +1293,13 @@
             "indeterminate" => "bg-primary",
             _               => "bg-secondary"
         }
+    };
+
+    private static string IssueTypeBadge(string issueType) => issueType switch
+    {
+        "Task" => "bg-info text-dark",
+        "Bug" => "bg-danger text-dark",
+        _ => "bg-secondary"
     };
 
     private static string StatusBadgeFromPct(int pct) =>

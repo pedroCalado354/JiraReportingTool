@@ -1,155 +1,420 @@
-﻿@page "/jira"
+@page "/supportIssues"
 @rendermode InteractiveServer
 @inject IJiraService JiraService
+@inject IConfiguration Config
+@inject IJSRuntime JS
+@using ClosedXML.Excel
 
-<PageTitle>Jira Search</PageTitle>
+<PageTitle>Support Issues Search</PageTitle>
 
-<h1 class="mb-4">Jira Search</h1>
+<h1 class="mb-3">Support Issues Search</h1>
 
-<div class="search-container">
-    <input class="form-control"
-           @bind="IssueKey"
-           placeholder="Enter issue key (e.g. JM-11755)" />
+<!-- ── Search form ────────────────────────────────────────────────────────── -->
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-body">
+        <label class="form-label small text-muted mb-1">
+            Issue Keys — enter one per line, or comma-separated
+        </label>
+        <textarea class="form-control font-monospace"
+                  rows="3"
+                  @bind="_rawInput"
+                  placeholder="JM-11755&#10;JM-11756, JM-11757"
+                  style="resize:vertical"></textarea>
 
-    <button class="btn btn-primary mt-2" @onclick="GetIssue">
-        Get Issue
-    </button>
+        <div class="d-flex gap-2 mt-2 align-items-center">
+            <button class="btn btn-primary" @onclick="SearchAsync"
+                    disabled="@(_loading || string.IsNullOrWhiteSpace(_rawInput))">
+                @if (_loading)
+                {
+                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                }
+                Search
+            </button>
+            @if (_issues.Count > 0)
+            {
+                <button class="btn btn-outline-secondary" @onclick="Clear">Clear</button>
+                <button class="btn btn-outline-success ms-auto" @onclick="ExportToXlsx"
+                        title="Export remaining tasks grouped by organisation">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
+                         viewBox="0 0 16 16" class="me-1">
+                        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                        <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                    </svg>
+                    Export .xlsx
+                </button>
+            }
+        </div>
+
+        @if (_errors.Count > 0)
+        {
+            <div class="mt-2">
+                @foreach (var e in _errors)
+                {
+                    <div class="alert alert-warning py-1 px-2 small mb-1">@e</div>
+                }
+            </div>
+        }
+    </div>
 </div>
 
-@if (IsLoading)
+<!-- ── Results grouped by Organisation ───────────────────────────────────── -->
+@if (_issues.Count > 0)
 {
-    <p class="mt-3 text-info">Loading...</p>
-}
+    var groups = _issues
+        .GroupBy(i => string.IsNullOrEmpty(i.Organisation) ? "No Organisation" : i.Organisation)
+        .OrderBy(g => g.Key);
 
-@if (Issue != null)
-{
-    <div class="card mt-4 shadow-sm">
-        <div class="card-header bg-dark text-white">
-            @Issue.Key - @Issue.Summary
-        </div>
-
-        <div class="card-body">
-            <table class="table table-striped">
-                <tbody>
-                    <tr>
-                        <th>Status</th>
-                        <td>@Issue.Status</td>
-                    </tr>
-                    <tr>
-                        <th>Assignee</th>
-                        <td>@Issue.Assignee</td>
-                    </tr>
-                    <tr>
-                        <th>Created</th>
-                        <td>@Issue.Created</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
+    <div class="mb-2 d-flex align-items-center gap-3">
+        <span class="text-muted small">@_issues.Count issue(s) found across @groups.Count() organisation(s)</span>
     </div>
 
-    @if (Issue?.Worklogs?.Any() == true)
+    @foreach (var group in groups)
     {
-        <div class="card mt-4 shadow-sm">
-            <div class="card-header bg-secondary text-white">
-                Worklogs (@Issue.Worklogs.Count)
+        <div class="card border-0 shadow-sm mb-3">
+            <div class="card-header d-flex align-items-center gap-2 py-2"
+                 style="background:#1e3a5f; color:white;">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
+                     viewBox="0 0 16 16">
+                    <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002A.274.274 0 0 1 15 13H7.022zM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM6.936 9.28a5.88 5.88 0 0 0-1.23-.247A7.35 7.35 0 0 0 5 9c-4 0-5 3-5 4 0 .667.333 1 1 1h4.216A2.238 2.238 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816zM4.92 10A5.493 5.493 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275zM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0zm3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
+                </svg>
+                <span class="fw-semibold">@group.Key</span>
+                <span class="badge bg-light text-dark ms-1">@group.Count()</span>
             </div>
-
-            <div class="card-body">
-                <table class="table table-hover">
-                    <thead>
-                        <tr>
-                            <th>Author</th>
-                            <th>Time Spent</th>
-                            <th>Started</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var wl in Issue.Worklogs)
-                        {
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle small mb-0">
+                        <thead class="table-light">
                             <tr>
-                                <td>@wl.Author</td>
-                                <td>@wl.TimeSpent</td>
-                                <td>@FormatDate(wl.Started)</td>
+                                <th style="width:110px">Key</th>
+                                <th>Summary</th>
+                                <th style="width:130px">Status</th>
+                                <th style="width:160px">Assignee</th>
+                                <th style="width:130px">Created</th>
                             </tr>
-                        }
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            @foreach (var issue in group.OrderBy(i => i.Key))
+                            {
+                                <tr>
+                                    <td class="fw-semibold text-nowrap">
+                                        <a href="@issue.Url" target="_blank" rel="noopener"
+                                           class="text-decoration-none">
+                                            @issue.Key
+                                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"
+                                                 fill="currentColor" viewBox="0 0 16 16" class="ms-1 text-muted">
+                                                <path d="M6.354 5.5H4a3 3 0 0 0 0 6h3a3 3 0 0 0 2.83-4H9c-.086 0-.17.01-.25.031A2 2 0 0 1 7 9.5H4a2 2 0 1 1 0-4h1.535c.218-.376.495-.714.82-1z"/>
+                                                <path d="M9 5.5a3 3 0 0 0-2.83 4h1.098A2 2 0 0 1 9 6.5h3a2 2 0 1 1 0 4h-1.535a4.02 4.02 0 0 1-.82 1H12a3 3 0 1 0 0-6H9z"/>
+                                            </svg>
+                                        </a>
+                                    </td>
+                                    <td>@issue.Summary</td>
+                                    <td>
+                                        <span class="badge @StatusBadge(issue.StatusCategoryKey)">
+                                            @issue.Status
+                                        </span>
+                                    </td>
+                                    <td class="text-nowrap">@issue.Assignee</td>
+                                    <td class="text-nowrap text-muted">@FormatDate(issue.Created)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
             </div>
         </div>
     }
 }
 
 @code {
-    private string IssueKey;
-    private bool IsLoading = false;
+    private string _rawInput = "";
+    private bool _loading;
+    private readonly List<JiraIssueViewModel> _issues = [];
+    private readonly List<string> _errors = [];
 
-    private JiraIssueViewModel? Issue;
+    private string _baseUrl => Config["Jira:BaseUrl"]?.TrimEnd('/') ?? "";
 
-    private async Task GetIssue()
+    // ── Search ───────────────────────────────────────────────────────────────
+
+    private async Task SearchAsync()
     {
-        if (string.IsNullOrWhiteSpace(IssueKey))
-            return;
+        var keys = _rawInput
+            .Split(['\n', '\r', ',', ';'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(k => k.Trim().ToUpperInvariant())
+            .Where(k => !string.IsNullOrEmpty(k))
+            .Distinct()
+            .ToList();
 
-        IsLoading = true;
+        if (keys.Count == 0) return;
 
-        var json = await JiraService.GetIssue(IssueKey);
+        _loading = true;
+        _errors.Clear();
+        _issues.Clear();
+        StateHasChanged();
 
-        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        var tasks = keys.Select(FetchIssueAsync).ToList();
+        var results = await Task.WhenAll(tasks);
 
-        var root = doc.RootElement;
-
-        Issue = new JiraIssueViewModel
+        foreach (var (issue, error) in results)
         {
-            Key = root.GetProperty("key").GetString(),
-            Summary = root.GetProperty("fields").GetProperty("summary").GetString(),
-            Status = root.GetProperty("fields").GetProperty("status").GetProperty("name").GetString(),
-            Assignee = root.GetProperty("fields").GetProperty("assignee").GetProperty("displayName").GetString(),
-            Created = root.GetProperty("fields").GetProperty("created").GetString()
-        };
+            if (issue != null)
+                _issues.Add(issue);
+            else if (error != null)
+                _errors.Add(error);
+        }
 
-        var fields = root.GetProperty("fields");
+        _loading = false;
+    }
 
-        if (fields.TryGetProperty("worklog", out var worklog))
+    private async Task<(JiraIssueViewModel? issue, string? error)> FetchIssueAsync(string key)
+    {
+        try
         {
-            var worklogsArray = worklog.GetProperty("worklogs");
+            var json = await JiraService.GetIssue(key);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var fields = root.GetProperty("fields");
 
-            foreach (var wl in worklogsArray.EnumerateArray())
+            var issue = new JiraIssueViewModel
             {
-                Issue.Worklogs.Add(new WorklogItem
+                Key     = root.GetProperty("key").GetString() ?? key,
+                Summary = fields.TryGetProperty("summary", out var s) ? s.GetString() ?? "" : "",
+                Url     = $"{_baseUrl}/browse/{key}"
+            };
+
+            // Status
+            if (fields.TryGetProperty("status", out var st))
+            {
+                issue.Status = st.TryGetProperty("name", out var sn) ? sn.GetString() ?? "" : "";
+                if (st.TryGetProperty("statusCategory", out var sc) &&
+                    sc.TryGetProperty("key", out var sck))
+                    issue.StatusCategoryKey = sck.GetString() ?? "";
+            }
+
+            // Assignee
+            if (fields.TryGetProperty("assignee", out var asgn) &&
+                asgn.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                asgn.TryGetProperty("displayName", out var dn))
+                issue.Assignee = dn.GetString() ?? "Unassigned";
+
+            // Created
+            if (fields.TryGetProperty("created", out var cr))
+                issue.Created = cr.GetString() ?? "";
+
+            // Organisation — JSM customfield_10002 (array of {id, name})
+            if (fields.TryGetProperty("customfield_10002", out var orgs) &&
+                orgs.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                var names = orgs.EnumerateArray()
+                    .Where(o => o.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                                o.TryGetProperty("name", out _))
+                    .Select(o => o.GetProperty("name").GetString() ?? "")
+                    .Where(n => !string.IsNullOrEmpty(n))
+                    .ToList();
+                issue.Organisation = string.Join(", ", names);
+            }
+
+            // Worklogs
+            if (fields.TryGetProperty("worklog", out var worklog) &&
+                worklog.TryGetProperty("worklogs", out var wlArray))
+            {
+                foreach (var wl in wlArray.EnumerateArray())
                 {
-                    Author = wl.GetProperty("author").GetProperty("displayName").GetString(),
-                    TimeSpent = wl.GetProperty("timeSpent").GetString(),
-                    Started = wl.GetProperty("started").GetString()
-                });
+                    issue.Worklogs.Add(new WorklogItem
+                    {
+                        Author    = wl.TryGetProperty("author",    out var a)  ? a.GetProperty("displayName").GetString()  ?? "" : "",
+                        TimeSpent = wl.TryGetProperty("timeSpent", out var ts) ? ts.GetString() ?? "" : "",
+                        Started   = wl.TryGetProperty("started",   out var st2) ? st2.GetString() ?? "" : ""
+                    });
+                }
+            }
+
+            return (issue, null);
+        }
+        catch (Exception ex)
+        {
+            return (null, $"{key}: {ex.Message}");
+        }
+    }
+
+    private void Clear()
+    {
+        _issues.Clear();
+        _errors.Clear();
+        _rawInput = "";
+    }
+
+    // ── Export ───────────────────────────────────────────────────────────────
+
+    private async Task ExportToXlsx()
+    {
+        // "Remaining" = not done
+        var remaining = _issues
+            .Where(i => !string.Equals(i.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        using var wb = new XLWorkbook();
+        BuildOrgSheet(wb.Worksheets.Add("Remaining Tasks"), remaining);
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        var b64  = Convert.ToBase64String(ms.ToArray());
+        const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        await JS.InvokeVoidAsync("downloadBase64File", b64,
+            $"JiraSearch_{DateTime.Today:yyyyMMdd}.xlsx", mime);
+    }
+
+    private void BuildOrgSheet(IXLWorksheet ws, List<JiraIssueViewModel> issues)
+    {
+        string[] headers = ["Organisation", "Key", "Summary", "Status", "URL"];
+
+        // Style helpers
+        static void StyleHeader(IXLCell c, bool isGroup = false)
+        {
+            c.Style.Font.Bold = true;
+            c.Style.Font.FontColor = XLColor.White;
+            c.Style.Fill.BackgroundColor = isGroup
+                ? XLColor.FromHtml("#3a0647")
+                : XLColor.FromHtml("#1e3a5f");
+            c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            c.Style.Alignment.Vertical   = XLAlignmentVerticalValues.Center;
+        }
+
+        // ── Column header row ─────────────────────────────────────────────────
+        for (int i = 0; i < headers.Length; i++)
+            StyleHeader(ws.Cell(1, i + 1));
+
+        for (int i = 0; i < headers.Length; i++)
+            ws.Cell(1, i + 1).Value = headers[i];
+
+        ws.Row(1).Height = 22;
+        ws.SheetView.FreezeRows(1);
+
+        // ── Data rows grouped by organisation ─────────────────────────────────
+        var groups = issues
+            .GroupBy(i => string.IsNullOrEmpty(i.Organisation) ? "No Organisation" : i.Organisation)
+            .OrderBy(g => g.Key)
+            .ToList();
+
+        int row = 2;
+        bool shade = false;
+
+        foreach (var group in groups)
+        {
+            // Organisation separator row
+            var sepRange = ws.Range(row, 1, row, headers.Length);
+            sepRange.Merge();
+            sepRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#e8e0f0");
+            sepRange.Style.Font.Bold = true;
+            sepRange.Style.Font.FontColor = XLColor.FromHtml("#3a0647");
+            sepRange.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+            sepRange.Style.Border.BottomBorderColor = XLColor.FromHtml("#3a0647");
+            ws.Cell(row, 1).Value = $"  {group.Key}  ({group.Count()} remaining)";
+            ws.Row(row).Height = 20;
+            row++;
+            shade = false;
+
+            foreach (var issue in group.OrderBy(i => i.Key))
+            {
+                var bg = shade ? XLColor.FromHtml("#f5f0ff") : XLColor.White;
+                ws.Row(row).Style.Fill.BackgroundColor = bg;
+
+                int col = 1;
+                ws.Cell(row, col++).Value = group.Key == "No Organisation" ? "" : group.Key;
+                ws.Cell(row, col++).Value = issue.Key;
+                ws.Cell(row, col++).Value = issue.Summary;
+                ws.Cell(row, col++).Value = issue.Status;
+                // ws.Cell(row, col++).Value = issue.Assignee;
+
+                // // Created date formatted
+                // if (DateTime.TryParse(issue.Created, out var dt))
+                //     ws.Cell(row, col++).Value = dt.ToString("dd/MM/yyyy");
+                // else
+                //     ws.Cell(row, col++).Value = issue.Created;
+
+                // URL as hyperlink
+                var urlCell = ws.Cell(row, col++);
+                if (!string.IsNullOrEmpty(issue.Url))
+                {
+                    urlCell.Value = issue.Url;
+                    urlCell.SetHyperlink(new XLHyperlink(issue.Url));
+                    urlCell.Style.Font.FontColor = XLColor.FromHtml("#0d6efd");
+                    urlCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+                }
+
+                // Status conditional formatting (static fill since it's a single cell)
+                var statusCell = ws.Cell(row, 4);
+                statusCell.Style.Fill.BackgroundColor = issue.StatusCategoryKey switch
+                {
+                    "indeterminate" => XLColor.FromHtml("#d1ecf1"),
+                    "new"           => XLColor.FromHtml("#fff3cd"),
+                    _               => bg
+                };
+
+                shade = !shade;
+                row++;
             }
         }
 
-        IsLoading = false;
+        // ── Totals row ────────────────────────────────────────────────────────
+        if (row > 2)
+        {
+            var totRange = ws.Range(row, 1, row, headers.Length);
+            totRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+            totRange.Style.Font.Bold = true;
+            ws.Cell(row, 1).Value = "TOTAL REMAINING";
+            ws.Cell(row, 2).Value = issues.Count;
+            ws.Row(row).Height = 18;
+        }
+
+        // ── Table outer border ────────────────────────────────────────────────
+        ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorder = XLBorderStyleValues.Medium;
+        ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorderColor = XLColor.FromHtml("#1e3a5f");
+
+        // ── Column widths ─────────────────────────────────────────────────────
+        ws.Column(1).Width = 28; // Organisation
+        ws.Column(2).Width = 12; // Key
+        ws.Column(3).Width = 55; // Summary
+        ws.Column(4).Width = 18; // Status
+        ws.Column(5).Width = 22; // Assignee
+        ws.Column(6).Width = 14; // Created
+        ws.Column(7).Width = 55; // URL
     }
-    private string FormatDate(string date)
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private static string StatusBadge(string categoryKey) => categoryKey switch
+    {
+        "done"          => "bg-success",
+        "indeterminate" => "bg-primary",
+        _               => "bg-secondary"
+    };
+
+    private static string FormatDate(string date)
     {
         if (DateTime.TryParse(date, out var dt))
-            return dt.ToString("dd MMM yyyy HH:mm");
-
+            return dt.ToString("dd MMM yyyy");
         return date;
     }
 
+    // ── Models ───────────────────────────────────────────────────────────────
+
     public class JiraIssueViewModel
     {
-        public string Key { get; set; }
-        public string Summary { get; set; }
-        public string Status { get; set; }
-        public string Assignee { get; set; }
-        public string Created { get; set; }
-
-        public List<WorklogItem> Worklogs { get; set; } = new();
+        public string Key             { get; set; } = "";
+        public string Summary         { get; set; } = "";
+        public string Status          { get; set; } = "";
+        public string StatusCategoryKey { get; set; } = "";
+        public string Assignee        { get; set; } = "Unassigned";
+        public string Created         { get; set; } = "";
+        public string Organisation    { get; set; } = "";
+        public string Url             { get; set; } = "";
+        public List<WorklogItem> Worklogs { get; set; } = [];
     }
 
     public class WorklogItem
     {
-        public string Author { get; set; }
-        public string TimeSpent { get; set; }
-        public string Started { get; set; }
+        public string Author    { get; set; } = "";
+        public string TimeSpent { get; set; } = "";
+        public string Started   { get; set; } = "";
     }
 }

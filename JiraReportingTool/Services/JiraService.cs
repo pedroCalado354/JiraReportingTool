@@ -86,7 +86,7 @@ public class JiraService : IJiraService
         // Fetch child issues using the modern "parent" field (Jira Cloud deprecated "Epic Link" — returns 410)
         var jql = Uri.EscapeDataString(
             $"issueType != Epic AND parent = \"{epicKey}\" ORDER BY created ASC");
-        var fields = "summary,status,assignee,issuetype,timetracking,worklog";
+        var fields = "summary,status,assignee,issuetype,timetracking,worklog,labels";
 
         var searchJson = await FetchAllPagesAsync(jql, fields);
         report.Issues = ParseIssues(searchJson);
@@ -143,6 +143,13 @@ public class JiraService : IJiraService
                 if (status.TryGetProperty("statusCategory", out var sc))
                     issue.StatusCategoryKey = sc.GetProperty("key").GetString() ?? "";
             }
+
+            // Labels
+            if (fields.TryGetProperty("labels", out var labelsEl) && labelsEl.ValueKind == JsonValueKind.Array)
+                issue.Labels = labelsEl.EnumerateArray()
+                    .Select(l => l.GetString() ?? "")
+                    .Where(l => !string.IsNullOrEmpty(l))
+                    .ToList();
 
             if (fields.TryGetProperty("timetracking", out var tt) && tt.ValueKind != JsonValueKind.Null)
             {

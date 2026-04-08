@@ -121,38 +121,44 @@
     <!-- ── Assignee filter ──────────────────────────────────────────────────── -->
     <div class="card border-0 shadow-sm mb-3">
         <div class="card-body py-2">
-            <div class="d-flex align-items-center gap-3 flex-wrap">
-                <label class="form-label small text-muted mb-0">Assignee</label>
-                <div style="width:210px">
+            <div class="d-flex align-items-start gap-3 flex-wrap">
+                <div style="width:260px">
+                    <div class="d-flex justify-content-between align-items-center mb-1">
+                        <span class="small fw-semibold">Assignee</span>
+                        <div class="d-flex gap-2 small">
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none"
+                                    @onclick="SelectAllAssignees">
+                                All
+                            </button>
+                            <span class="text-muted">/</span>
+                            <button class="btn btn-link btn-sm p-0 text-decoration-none"
+                                    @onclick="ClearAssigneesFilter">
+                                None
+                            </button>
+                        </div>
+                    </div>
                     <input class="form-control form-control-sm mb-1" placeholder="Search member…"
                            @bind="AssigneeSearch" @bind:event="oninput" />
-                    <select class="form-select form-select-sm" multiple style="min-height:100px"
-                            @onchange="OnAssigneeChanged">
+                    <div class="border rounded p-2" style="max-height:140px;overflow-y:auto">
                         @foreach (var a in AssigneeOptions)
                         {
-                            <option value="@a" selected="@FilterAssignees.Contains(a)">@a</option>
-                        }
-                    </select>
-                    <div class="text-muted small mt-1">
-                        @if (FilterAssignees.Any())
-                        {
-                            <span>@FilterAssignees.Count selected</span>
-                        }
-                        else
-                        {
-                            <span>All @MemberSummaries.Count members shown (Ctrl+click to select)</span>
+                            <div class="form-check mb-0">
+                                <input class="form-check-input" type="checkbox"
+                                       id="assignee_@a.Replace(" ", "_")"
+                                       checked="@FilterAssignees.Contains(a)"
+                                       @onchange="e => ToggleAssignee(a, (bool)(e.Value ?? false))" />
+                                <label class="form-check-label small"
+                                       for="assignee_@a.Replace(" ", "_")">@a</label>
+                            </div>
                         }
                     </div>
+                    <div class="text-muted small mt-1">
+                        @FilterAssignees.Count of @AllAssigneeOptions.Count() selected
+                    </div>
                 </div>
-                @if (FilterAssignees.Any())
-                {
-                    <button class="btn btn-sm btn-outline-secondary"
-                            @onclick='() => { FilterAssignees.Clear(); AssigneeSearch = ""; }'>
-                        Clear
-                    </button>
-                }
+
                 <!-- Legend -->
-                <div class="ms-auto d-flex gap-3 small text-muted">
+                <div class="ms-auto d-flex gap-3 small text-muted align-self-center">
                     <span><span class="badge bg-success me-1">On Track</span>≤ 85% capacity</span>
                     <span><span class="badge bg-warning text-dark me-1">At Risk</span>85–100%</span>
                     <span><span class="badge bg-danger me-1">Over Capacity</span>&gt; 100%</span>
@@ -334,13 +340,6 @@
     private HashSet<string> FilterAssignees = new(StringComparer.OrdinalIgnoreCase);
     private string AssigneeSearch = "";
 
-    private void OnAssigneeChanged(ChangeEventArgs e)
-    {
-        FilterAssignees.Clear();
-        if (e.Value is string[] values)
-            foreach (var v in values)
-                FilterAssignees.Add(v);
-    }
 
     // ── Capacity per person ───────────────────────────────────────────────────
     private int PersonCapacitySeconds => (int)(WorkingDays * HoursPerDay * 3600);
@@ -388,11 +387,6 @@
                 .ToList();
         }
     }
-
-    private IEnumerable<string> AssigneeOptions => Report?.Issues
-        .Select(i => i.Assignee).Distinct().Order()
-        .Where(a => string.IsNullOrEmpty(AssigneeSearch) || a.Contains(AssigneeSearch, StringComparison.OrdinalIgnoreCase))
-        ?? Enumerable.Empty<string>();
 
     private List<MemberSummary> FilteredSummaries => !FilterAssignees.Any()
         ? MemberSummaries
@@ -457,4 +451,40 @@
             _               => "bg-secondary"
         }
     };
+    // All assignees (unfiltered by search) — for "X of Y" count
+    private IEnumerable<string> AllAssigneeOptions => Report?.Issues
+        .Select(i => i.Assignee).Distinct().Order()
+        ?? Enumerable.Empty<string>();
+
+    // Assignees filtered by search text — drives the checkbox list
+    private IEnumerable<string> AssigneeOptions => AllAssigneeOptions
+        .Where(a => string.IsNullOrEmpty(AssigneeSearch)
+            || a.Contains(AssigneeSearch, StringComparison.OrdinalIgnoreCase));
+
+    private void ToggleAssignee(string assignee, bool isChecked)
+    {
+        if (isChecked)
+        {
+            if (!FilterAssignees.Contains(assignee))
+                FilterAssignees.Add(assignee);
+        }
+        else
+        {
+            FilterAssignees.Remove(assignee);
+        }
+    }
+
+    private void SelectAllAssignees()
+    {
+        FilterAssignees.Clear();
+        foreach (var a in AllAssigneeOptions)
+            FilterAssignees.Add(a);
+        AssigneeSearch = "";
+    }
+
+    private void ClearAssigneesFilter()
+    {
+        FilterAssignees.Clear();
+        AssigneeSearch = "";
+    }
 }

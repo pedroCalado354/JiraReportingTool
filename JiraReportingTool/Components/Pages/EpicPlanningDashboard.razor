@@ -1,0 +1,1704 @@
+﻿@page "/epic-planning"
+@using System.Globalization
+@rendermode InteractiveServer
+@using JiraReportingTool.Models
+@using System.Text.RegularExpressions
+@inject IJiraService JiraService
+@inject IJSRuntime JS
+@using ClosedXML.Excel
+
+<h3>Epic Planning Dashboard</h3>
+
+<div class="toolbar">
+    <div class="toolbar-group">
+        <label>From</label>
+        <InputDate @bind-Value="FromDateTime" class="input" />
+    </div>
+
+    <div class="toolbar-group">
+        <label>To</label>
+        <InputDate @bind-Value="ToDateTime" class="input" />
+    </div>
+
+    <div class="toolbar-group">
+        <button class="btn" @onclick="ApplyDateRange">Apply Range</button>
+    </div>
+
+    <div class="toolbar-group epic-box">
+        <label>Epic</label>
+        <input class="input" placeholder="e.g. JM-15977"
+               @bind="EpicKey" @bind:event="oninput" />
+        <button class="btn primary" @onclick="LoadEpicTasks">Load Tasks</button>
+    </div>
+
+    <div class="toolbar-group epic-box">
+        <button class="btn btn-outline-success" @onclick="ExportToExcel"
+                disabled="@(Report == null)"
+                title="Export remaining work to Excel">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" viewBox="0 0 16 16" class="me-1">
+                <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z" />
+                <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z" />
+            </svg>
+            Export .xlsx
+        </button>
+    </div>
+</div>
+
+@if (!string.IsNullOrWhiteSpace(InfoMessage))
+{
+    <div class="info">@InfoMessage</div>
+}
+
+@if (!string.IsNullOrWhiteSpace(ErrorMessage))
+{
+    <div class="error">@ErrorMessage</div>
+}
+
+<div class="layout">
+    <!-- LEFT: Task list -->
+    <div class="panel">
+        <div class="panel-header">
+            <strong>Tasks in Epic: </strong> @(!string.IsNullOrWhiteSpace(EpicKey) ? EpicKey : "(none)")
+        </div>
+
+        <div class="panel-body">
+            @if (AvailableTasks.Count == 0)
+            {
+                <div class="muted">Load an epic to list tasks.</div>
+            }
+            else
+            {
+                <ul class="task-list">
+                    @foreach (var t in AvailableTasks)
+                    {
+                        var isSelected = SelectedTask?.Id == t.Id;
+                        var assignmentInfo = GetTaskAssignmentInfo(t.Id);
+                        var isAssigned = assignmentInfo.Count > 0;
+
+                        <li class="task-item @(isSelected ? "selected" : "") @(isAssigned ? "assigned" : "")"
+                            @onclick="() => SelectTask(t)">
+                            <div class="task-header">
+                                <div class="task-title">@t.Key - @t.Summary</div>
+                                @if (isAssigned)
+                                {
+                                    <span class="task-assigned-badge">
+                                        ✓ Assigned
+                                    </span>
+                                }
+                            </div>
+                            <div class="task-meta">
+                                <span>@t.IssueType</span>
+                                <span>•</span>
+                                <span>@t.Status</span>
+                                <span>•</span>
+                                <span>@t.Assignee</span>
+                                <span>•</span>
+                                <span><strong>Est:</strong> @FormatEstimateHours(t.OriginalEstimate)</span>
+                            </div>
+                            @if (isAssigned)
+                            {
+                                <div class="task-assignments">
+                                    @foreach (var info in assignmentInfo)
+                                    {
+                                        <div class="task-assignment-chip">
+                                            <span class="chip-team">@info.Team</span>
+                                            <span class="chip-name">@info.MemberName</span>
+                                            <span class="chip-dates">@info.From.ToString("dd-MMM") → @info.To.ToString("dd-MMM")</span>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+
+        <div class="panel-footer">
+            <div class="muted">
+                <strong>How to schedule:</strong>
+                Select a task → click a cell to set start → click another cell in the same row to set end.
+            </div>
+        </div>
+    </div>
+
+    <!-- RIGHT: Calendar -->
+    <div class="calendar-container">
+        <div class="calendar-help">
+            <strong>Selected Task:</strong>
+            <span class="pill">
+                @((SelectedTask is null)
+                    ? "None"
+                    : $"{SelectedTask.Key} - {SelectedTask.Summary} (Est: {SelectedTask.OriginalEstimate})")
+            </span>
+
+            @if (PendingPlacement is not null)
+            {
+                <span class="pill warn">
+                    Placing for: @TeamMembers.First(x => x.Id == PendingPlacement.TeamMemberId).Name
+                    | Start: @PendingPlacement.Start.ToString("dd-MMM")
+                    (click an end date)
+                </span>
+                <button class="btn small" @onclick="CancelPlacement">Cancel</button>
+            }
+        </div>
+
+        <div class="calendar-scroll">
+            <table class="calendar">
+                <thead>
+                    <tr>
+                        <th class="sticky-col">Team Member</th>
+                        @foreach (var d in VisibleDates)
+                        {
+                            <th class="date-col @(IsWeekend(d) ? "weekend-col" : "")">
+                                @d.ToString("dd-MMM", CultureInfo.InvariantCulture)
+                            </th>
+                        }
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var teamGroup in TeamMembers.GroupBy(m => m.Team))
+                    {
+                        <tr class="team-group-row">
+                            <td class="sticky-col team-group-label" colspan="@(VisibleDates.Count + 1)">
+                                @teamGroup.Key
+                            </td>
+                        </tr>
+
+                        @foreach (var member in teamGroup)
+                        {
+                            var lanedAssignments = GetLanedAssignments(member.Id);
+                            var maxLanes = GetMaxLanes(member.Id);
+                            var rowHeight = Math.Max(70, maxLanes * 34 + 30);
+
+                            <tr style="height: @(rowHeight)px;">
+                                <!-- AFTER -->
+                                <td class="sticky-col member-col">
+                                    <div class="member-info">
+                                        <span class="member-name">@member.Name</span>
+                                        <span class="member-hours">@GetMemberTotalEstimateHours(member.Id)</span>
+                                    </div>
+                                </td>
+                                @for (int i = 0; i < VisibleDates.Count; i++)
+                                {
+                                    var currentDate = VisibleDates[i];
+                                    var cellAssignments = lanedAssignments
+                                    .Where(la =>
+                                    {
+                                        var clampedFrom = la.Assignment.From < FromDate ? FromDate : la.Assignment.From;
+                                        return clampedFrom == currentDate;
+                                    })
+                                    .ToList();
+
+                                    var allocated = GetAllocatedHours(member.Id, currentDate);
+                                    var remaining = GetRemainingHours(member.Id, currentDate);
+                                    var usagePercent = MaxHoursPerDay > 0 ? (allocated / MaxHoursPerDay) * 100m : 0m;
+                                    var weekendClass = IsWeekend(currentDate) ? " weekend-cell" : "";
+                                    var cellClass = (allocated == 0m ? "cell stacked-cell"
+                                    : allocated >= MaxHoursPerDay ? "cell stacked-cell cell-full"
+                                    : "cell stacked-cell cell-partial") + weekendClass;
+
+                                    <td class="@cellClass"
+                                        title="@($"{allocated:0.#}h / {MaxHoursPerDay}h ({remaining:0.#}h remaining)")"
+                                        @onclick="() => OnCalendarCellClicked(member.Id, currentDate)">
+
+                                        @* Background usage bar *@
+                                        @if (allocated > 0)
+                                        {
+                                            <div class="cell-usage-bar" style="height: @(usagePercent)%;"></div>
+                                        }
+
+                                        @* Hours label *@
+                                        @if (allocated > 0)
+                                        {
+                                            <div class="cell-hours-label @(allocated >= MaxHoursPerDay ? "full" : "")">
+                                                @($"{allocated:0.#}h")
+                                            </div>
+                                        }
+
+                                        @foreach (var (assignment, lane) in cellAssignments)
+                                        {
+                                            var span = GetVisibleSpan(assignment);
+                                            var topOffset = lane * 34 + 22; // shifted down to make room for hours label
+                                            var widthPercent = span * 100;
+                                            var taskForBlock = AvailableTasks.FirstOrDefault(x => x.Id == assignment.TaskId);
+                                            var taskEst = taskForBlock is not null ? ParseJiraDurationToHours(taskForBlock.OriginalEstimate) : 0m;
+                                            var blockDays = assignment.To.DayNumber - assignment.From.DayNumber + 1;
+                                            var blockHPerDay = blockDays > 0 ? Math.Min(taskEst / blockDays, MaxHoursPerDay) : 0m;
+
+                                            <div class="stacked-block"
+                                                 style="top: @(topOffset)px; width: calc(@(widthPercent)% - 6px);"
+                                                 title="@($"{GetTaskLabel(assignment.TaskId)} — {blockHPerDay:0.#}h/day")"
+                                                 @onclick:stopPropagation="true">
+                                                <div class="stacked-block-content">
+                                                    <span class="stacked-block-title">
+                                                        @GetTaskLabel(assignment.TaskId)
+                                                    </span>
+                                                    <span class="stacked-block-range">
+                                                        @($"{blockHPerDay:0.#}h/d")
+                                                    </span>
+                                                </div>
+                                                <button class="btn-remove"
+                                                        title="Remove"
+                                                        @onclick="() => RemoveAssignment(assignment)"
+                                                        @onclick:stopPropagation="true">
+                                                    ✕
+                                                </button>
+                                            </div>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code
+{
+    // -----------------------------
+    // Minimal DTOs (replace with yours)
+    // -----------------------------
+    public record TeamMemberDto(Guid Id, string Name, string Team);
+
+    public class CalendarAssignment
+    {
+        public Guid AssignmentId { get; set; } = Guid.NewGuid();
+        public int TaskId { get; set; }
+        public Guid TeamMemberId { get; set; }
+        public DateOnly From { get; set; }
+        public DateOnly To { get; set; }
+    }
+
+    private class PendingPlacementState
+    {
+        public Guid TeamMemberId { get; set; }
+        public DateOnly Start { get; set; }
+    }
+
+    // -----------------------------
+    // UI State
+    // -----------------------------
+    private DateTime? FromDateTime { get; set; } = DateTime.Today.AddDays(-3);
+    private DateTime? ToDateTime { get; set; } = DateTime.Today.AddDays(7);
+
+    private DateOnly FromDate { get; set; }
+    private DateOnly ToDate { get; set; }
+
+    private string EpicKey { get; set; } = "";
+    private List<JiraIssueModel> AvailableTasks { get; set; } = new();
+    private JiraIssueModel? SelectedTask { get; set; }
+
+    private List<TeamMemberDto> TeamMembers { get; set; } = new();
+    private List<CalendarAssignment> Assignments { get; set; } = new();
+
+    private List<DateOnly> VisibleDates { get; set; } = new();
+
+    private PendingPlacementState? PendingPlacement { get; set; }
+
+    private string? ErrorMessage { get; set; }
+    private string? InfoMessage { get; set; }
+
+    // Toggle: prevent overlaps per member
+    private bool PreventOverlaps { get; set; } = true;
+
+    protected override void OnInitialized()
+    {
+        // Setup initial date range
+        ApplyDateRange();
+
+        // Demo team members (replace with your data)
+        TeamMembers = new()
+    {
+        // Backend
+        new TeamMemberDto(Guid.NewGuid(), "Duarte", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Freire", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Amado", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Rosa", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Patrick", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Rui", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Mateus", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Dasa", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Shashank", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Sangram", "Backend"),
+        new TeamMemberDto(Guid.NewGuid(), "Ranjit", "Backend"),
+
+        // Frontend
+        new TeamMemberDto(Guid.NewGuid(), "Bruno", "Frontend"),
+        new TeamMemberDto(Guid.NewGuid(), "Samuel", "Frontend"),
+        new TeamMemberDto(Guid.NewGuid(), "Murilo", "Frontend"),
+        new TeamMemberDto(Guid.NewGuid(), "Omar", "Frontend"),
+        new TeamMemberDto(Guid.NewGuid(), "Vinicius", "Frontend"),
+        new TeamMemberDto(Guid.NewGuid(), "Ronit", "Frontend"),
+        new TeamMemberDto(Guid.NewGuid(), "Tanaya", "Frontend"),
+        new TeamMemberDto(Guid.NewGuid(), "Vijay", "Frontend"),
+        new TeamMemberDto(Guid.NewGuid(), "Bhavini", "Frontend"),
+
+        // QA
+        new TeamMemberDto(Guid.NewGuid(), "Daria", "QA"),
+        new TeamMemberDto(Guid.NewGuid(), "Daniel", "QA"),
+        new TeamMemberDto(Guid.NewGuid(), "Jessica", "QA"),
+        new TeamMemberDto(Guid.NewGuid(), "Katarina", "QA"),
+        new TeamMemberDto(Guid.NewGuid(), "Tejaswini", "QA"),
+        new TeamMemberDto(Guid.NewGuid(), "Anushka", "QA"),
+        new TeamMemberDto(Guid.NewGuid(), "Muskan", "QA"),
+    };
+    }
+
+    // -----------------------------
+    // Date Range
+    // -----------------------------
+    private void ApplyDateRange()
+    {
+        ErrorMessage = null;
+        InfoMessage = null;
+
+        var from = FromDateTime?.Date ?? DateTime.Today;
+        var to = ToDateTime?.Date ?? DateTime.Today;
+
+        if (to < from)
+        {
+            ErrorMessage = "Invalid date range: 'To' must be after 'From'.";
+            return;
+        }
+
+        FromDate = DateOnly.FromDateTime(from);
+        ToDate = DateOnly.FromDateTime(to);
+
+        VisibleDates = Enumerable.Range(0, ToDate.DayNumber - FromDate.DayNumber + 1)
+            .Select(i => FromDate.AddDays(i))
+            .ToList();
+    }
+
+    // -----------------------------
+    // Epic & Tasks
+    // -----------------------------
+    private JiraEpicReport? Report;
+
+    private async Task LoadEpicTasks()
+    {
+        ErrorMessage = null;
+        InfoMessage = null;
+
+        if (string.IsNullOrWhiteSpace(EpicKey))
+        {
+            ErrorMessage = "Please enter an Epic key (e.g., JM-15977).";
+            return;
+        }
+
+        var epic = EpicKey.Trim().ToUpperInvariant();
+
+        Report = await JiraService.GetEpicReportAsync(epic);
+
+        // Bind real issues from the report
+        AvailableTasks = Report?.Issues?
+            .OrderBy(i => i.Key) // optional sorting
+            .ToList()
+            ?? new List<JiraIssueModel>();
+
+        SelectedTask = null;
+        PendingPlacement = null;
+
+        InfoMessage = $"Loaded {AvailableTasks.Count} issues for epic {epic}.";
+    }
+
+    private void SelectTask(JiraIssueModel task)
+    {
+        ErrorMessage = null;
+        InfoMessage = null;
+
+        SelectedTask = task;
+        PendingPlacement = null;
+    }
+
+    // -----------------------------
+    // Calendar interactions
+    // -----------------------------
+    private void CancelPlacement()
+    {
+        PendingPlacement = null;
+        InfoMessage = "Placement cancelled.";
+    }// -----------------------------
+     // Capacity constants
+     // -----------------------------
+    private const decimal MaxHoursPerDay = 6m;
+
+    // -----------------------------
+    // Per-cell allocated hours for a member on a specific date
+    // -----------------------------
+    private decimal GetAllocatedHours(Guid memberId, DateOnly date)
+    {
+        return Assignments
+            .Where(a => a.TeamMemberId == memberId && a.From <= date && a.To >= date)
+            .Sum(a =>
+            {
+                var task = AvailableTasks.FirstOrDefault(x => x.Id == a.TaskId);
+                if (task is null) return 0m;
+
+                var totalEstimate = ParseJiraDurationToHours(task.OriginalEstimate);
+                var assignmentDays = a.To.DayNumber - a.From.DayNumber + 1;
+
+                // Spread the estimate evenly across the assignment days
+                // Cap per-day at 6h
+                var perDay = assignmentDays > 0
+                    ? Math.Min(totalEstimate / assignmentDays, MaxHoursPerDay)
+                    : 0m;
+
+                return perDay;
+            });
+    }
+
+    private decimal GetRemainingHours(Guid memberId, DateOnly date)
+    {
+        return Math.Max(0m, MaxHoursPerDay - GetAllocatedHours(memberId, date));
+    }
+
+    // -----------------------------
+    // Validation: can a new assignment fit?
+    // Returns null if OK, or an error message if it doesn't fit.
+    // -----------------------------
+    private string? ValidateAssignment(int taskId, Guid memberId, DateOnly from, DateOnly to)
+    {
+        var task = AvailableTasks.FirstOrDefault(x => x.Id == taskId);
+        if (task is null) return "Task not found.";
+
+        var totalEstimate = ParseJiraDurationToHours(task.OriginalEstimate);
+        var days = to.DayNumber - from.DayNumber + 1;
+
+        if (days <= 0) return "Invalid date range.";
+
+        var hoursPerDay = Math.Min(totalEstimate / days, MaxHoursPerDay);
+
+        // Check each day in the range
+        for (var d = from; d <= to; d = d.AddDays(1))
+        {
+            var currentlyAllocated = GetAllocatedHours(memberId, d);
+            if (currentlyAllocated + hoursPerDay > MaxHoursPerDay)
+            {
+                var remaining = Math.Max(0, MaxHoursPerDay - currentlyAllocated);
+                var memberName = TeamMembers.FirstOrDefault(x => x.Id == memberId)?.Name ?? "member";
+                return $"Cannot assign: {memberName} on {d:dd-MMM} already has {currentlyAllocated:0.#}h allocated " +
+                       $"({remaining:0.#}h remaining), but this task needs {hoursPerDay:0.#}h/day.";
+            }
+        }
+
+        // Also warn if the estimate exceeds the total capacity of the date range
+        var totalCapacity = days * MaxHoursPerDay;
+        if (totalEstimate > totalCapacity)
+        {
+            return $"Task estimate ({totalEstimate:0.#}h) exceeds the capacity of {days} day(s) × {MaxHoursPerDay}h = {totalCapacity:0.#}h. " +
+                   $"Extend the date range or split the task.";
+        }
+
+        return null; // All good
+    }
+    private void OnCalendarCellClicked(Guid memberId, DateOnly date)
+    {
+        ErrorMessage = null;
+        InfoMessage = null;
+
+        if (SelectedTask is null)
+        {
+            ErrorMessage = "Select a task first.";
+            return;
+        }
+
+        // First click: set start
+        if (PendingPlacement is null)
+        {
+            PendingPlacement = new PendingPlacementState
+            {
+                TeamMemberId = memberId,
+                Start = date
+            };
+            return;
+        }
+
+        // Second click: must be same row (same team member)
+        if (PendingPlacement.TeamMemberId != memberId)
+        {
+            ErrorMessage = "End date must be selected on the same team member row.";
+            return;
+        }
+
+        var start = PendingPlacement.Start;
+        var end = date;
+
+        if (end < start)
+            (start, end) = (end, start);
+
+        // ── Validate capacity before assigning ──
+        var validationError = ValidateAssignment(SelectedTask.Id, memberId, start, end);
+        if (validationError is not null)
+        {
+            ErrorMessage = validationError;
+            PendingPlacement = null;
+            return;
+        }
+
+        // Create assignment
+        Assignments.Add(new CalendarAssignment
+        {
+            TaskId = SelectedTask.Id,
+            TeamMemberId = memberId,
+            From = start,
+            To = end
+        });
+
+        var taskEstimate = ParseJiraDurationToHours(SelectedTask.OriginalEstimate);
+        var totalDays = end.DayNumber - start.DayNumber + 1;
+        var hPerDay = Math.Min(taskEstimate / totalDays, MaxHoursPerDay);
+
+        InfoMessage =
+            $"Assigned {SelectedTask.Key} to {TeamMembers.First(x => x.Id == memberId).Name} " +
+            $"from {start:dd-MMM} to {end:dd-MMM} ({taskEstimate:0.#}h over {totalDays}d = {hPerDay:0.#}h/day).";
+
+        SelectedTask = null;
+        PendingPlacement = null;
+    }
+    // -----------------------------
+    // Total allocated hours per member (across all dates)
+    // -----------------------------
+    private string GetMemberTotalEstimateHours(Guid memberId)
+    {
+        var memberAssignments = Assignments.Where(a => a.TeamMemberId == memberId).ToList();
+        if (memberAssignments.Count == 0) return "0h";
+
+        decimal totalHours = 0m;
+        foreach (var assignment in memberAssignments)
+        {
+            var task = AvailableTasks.FirstOrDefault(x => x.Id == assignment.TaskId);
+            if (task is not null)
+                totalHours += ParseJiraDurationToHours(task.OriginalEstimate);
+        }
+
+        var rounded = (totalHours % 1m == 0m)
+            ? decimal.Round(totalHours, 0)
+            : decimal.Round(totalHours, 1);
+
+        return $"{rounded.ToString(CultureInfo.InvariantCulture)}h";
+    }
+
+    private void RemoveAssignment(CalendarAssignment assignment)
+    {
+        Assignments.RemoveAll(a => a.AssignmentId == assignment.AssignmentId);
+        InfoMessage = "Assignment removed.";
+    }
+
+    // -----------------------------
+    // Helpers
+    // -----------------------------
+    private int GetSpanDays(CalendarAssignment a)
+    {
+        var span = a.To.DayNumber - a.From.DayNumber + 1;
+
+        // Clamp to visible range (optional)
+        if (a.From < FromDate) span -= (FromDate.DayNumber - a.From.DayNumber);
+        if (a.To > ToDate) span -= (a.To.DayNumber - ToDate.DayNumber);
+
+        return Math.Max(1, span);
+    }
+
+    private string GetTaskLabel(int taskId)
+    {
+        var t = AvailableTasks.FirstOrDefault(x => x.Id == taskId);
+        return t is null
+            ? taskId.ToString()
+            : $"{t.Key} - {t.Summary} (Est: {t.OriginalEstimate})";
+    }
+
+    private static bool RangesOverlap(DateOnly aFrom, DateOnly aTo, DateOnly bFrom, DateOnly bTo)
+        => aFrom <= bTo && bFrom <= aTo;
+
+    private RenderFragment RenderCellHint(Guid memberId, DateOnly date) => builder =>
+    {
+        // Show a subtle hint if placement is pending on this row
+        if (PendingPlacement is not null && PendingPlacement.TeamMemberId == memberId)
+        {
+            if (date == PendingPlacement.Start)
+            {
+                builder.AddContent(0, "Start");
+            }
+            else
+            {
+                builder.AddContent(1, "•");
+            }
+        }
+    };
+
+    // -----------------------------
+    // Estimate formatting (Jira -> Hours)
+    // Rule: 1d = 6h
+    // Optional: 1w = 5d (so 1w = 30h)
+    // -----------------------------
+    private const decimal HoursPerDay = 6m;
+    private const decimal DaysPerWeek = 5m;
+
+    private static string FormatEstimateHours(string? jiraEstimate)
+    {
+        var hours = ParseJiraDurationToHours(jiraEstimate);
+
+        if (hours <= 0m) return "-";
+
+        // If it's effectively whole hours, show without decimals; otherwise show 1 decimal.
+        var rounded = (hours % 1m == 0m)
+            ? decimal.Round(hours, 0)
+            : decimal.Round(hours, 1);
+
+        return $"{rounded.ToString(CultureInfo.InvariantCulture)}h";
+    }
+
+    private static decimal ParseJiraDurationToHours(string? input)
+    {
+        if (string.IsNullOrWhiteSpace(input) || input.Trim() == "-")
+            return 0m;
+
+        // Jira strings commonly look like: "1w 2d 3h 30m" (sometimes without spaces)
+        // We'll support units: w, d, h, m
+        var matches = Regex.Matches(input, @"(\d+(?:[.,]\d+)?)\s*([wdhm])", RegexOptions.IgnoreCase);
+
+        if (matches.Count == 0)
+            return 0m;
+
+        decimal totalHours = 0m;
+
+        foreach (Match m in matches)
+        {
+            // Accept "1,5h" or "1.5h"
+            var numberRaw = m.Groups[1].Value.Replace(',', '.');
+            if (!decimal.TryParse(numberRaw, NumberStyles.Number, CultureInfo.InvariantCulture, out var value))
+                continue;
+
+            var unit = char.ToLowerInvariant(m.Groups[2].Value[0]);
+
+            switch (unit)
+            {
+                case 'w':
+                    totalHours += value * DaysPerWeek * HoursPerDay;
+                    break;
+                case 'd':
+                    totalHours += value * HoursPerDay;
+                    break;
+                case 'h':
+                    totalHours += value;
+                    break;
+                case 'm':
+                    totalHours += value / 60m;
+                    break;
+            }
+        }
+
+        return totalHours;
+    }
+    // -----------------------------
+    // Excel Export
+    // -----------------------------
+    private async Task ExportToExcel()
+    {
+        ErrorMessage = null;
+        InfoMessage = null;
+
+        try
+        {
+            using var workbook = new ClosedXML.Excel.XLWorkbook();
+
+            // ── Sheet 1: Tasks ──
+            var tasksSheet = workbook.Worksheets.Add("Tasks");
+
+            // Header row
+            var taskHeaders = new[] { "Key", "Summary", "Issue Type", "Status", "Assignee", "Estimate (hours)" };
+            for (int col = 0; col < taskHeaders.Length; col++)
+            {
+                var cell = tasksSheet.Cell(1, col + 1);
+                cell.Value = taskHeaders[col];
+                cell.Style.Font.Bold = true;
+                cell.Style.Fill.BackgroundColor = ClosedXML.Excel.XLColor.FromHtml("#EEF2FF");
+                cell.Style.Font.FontColor = ClosedXML.Excel.XLColor.FromHtml("#4338CA");
+                cell.Style.Border.BottomBorder = ClosedXML.Excel.XLBorderStyleValues.Thin;
+                cell.Style.Border.BottomBorderColor = ClosedXML.Excel.XLColor.FromHtml("#D1D5DB");
+            }
+
+            for (int i = 0; i < AvailableTasks.Count; i++)
+            {
+                var t = AvailableTasks[i];
+                var row = i + 2;
+                tasksSheet.Cell(row, 1).Value = t.Key;
+                tasksSheet.Cell(row, 2).Value = t.Summary;
+                tasksSheet.Cell(row, 3).Value = t.IssueType;
+                tasksSheet.Cell(row, 4).Value = t.Status;
+                tasksSheet.Cell(row, 5).Value = t.Assignee;
+                tasksSheet.Cell(row, 6).Value = FormatEstimateHours(t.OriginalEstimate);
+            }
+
+            tasksSheet.Columns().AdjustToContents();
+            tasksSheet.Column(2).Width = 50; // Summary column wider
+
+            // ── Sheet 2: Planning Calendar ──
+            var planSheet = workbook.Worksheets.Add("Planning");
+
+            // Header row: "Team" | "Team Member" | dates...
+            planSheet.Cell(1, 1).Value = "Team";
+            planSheet.Cell(1, 2).Value = "Team Member";
+            for (int col = 0; col < VisibleDates.Count; col++)
+            {
+                planSheet.Cell(1, col + 3).Value = VisibleDates[col].ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
+            }
+
+            // Style header row
+            for (int col = 1; col <= VisibleDates.Count + 2; col++)
+            {
+                var cell = planSheet.Cell(1, col);
+                cell.Style.Font.Bold = true;
+                cell.Style.Fill.BackgroundColor = ClosedXML.Excel.XLColor.FromHtml("#EEF2FF");
+                cell.Style.Font.FontColor = ClosedXML.Excel.XLColor.FromHtml("#4338CA");
+                cell.Style.Border.BottomBorder = ClosedXML.Excel.XLBorderStyleValues.Thin;
+                cell.Style.Border.BottomBorderColor = ClosedXML.Excel.XLColor.FromHtml("#D1D5DB");
+                cell.Style.Alignment.Horizontal = ClosedXML.Excel.XLAlignmentHorizontalValues.Center;
+            }
+            var excelRow = 2;
+            foreach (var teamGroup in TeamMembers.GroupBy(m => m.Team))
+            {
+                foreach (var member in teamGroup)
+                {
+                    var lanedAssignments = GetLanedAssignments(member.Id);
+                    var maxLanes = GetMaxLanes(member.Id);
+
+                    // One Excel row per lane
+                    for (int lane = 0; lane < maxLanes; lane++)
+                    {
+                        planSheet.Cell(excelRow, 1).Value = teamGroup.Key;
+                        planSheet.Cell(excelRow, 2).Value = lane == 0 ? member.Name : "";
+
+                        planSheet.Cell(excelRow, 1).Style.Font.Bold = true;
+                        planSheet.Cell(excelRow, 1).Style.Font.FontColor = ClosedXML.Excel.XLColor.FromHtml("#4338CA");
+
+                        if (lane == 0)
+                        {
+                            planSheet.Cell(excelRow, 2).Style.Font.Bold = true;
+                        }
+
+                        var laneAssignments = lanedAssignments
+                            .Where(la => la.Lane == lane)
+                            .Select(la => la.Assignment)
+                            .OrderBy(a => a.From)
+                            .ToList();
+
+                        foreach (var assignment in laneAssignments)
+                        {
+                            var task = AvailableTasks.FirstOrDefault(x => x.Id == assignment.TaskId);
+                            var label = task is not null
+                                ? $"{task.Key} - {task.Summary}"
+                                : assignment.TaskId.ToString();
+
+                            var startCol = GetVisibleStartCol(assignment);
+                            var spanCount = GetVisibleSpan(assignment);
+
+                            if (startCol < 0) continue;
+
+                            var startCell = planSheet.Cell(excelRow, startCol + 3);
+                            startCell.Value = label;
+
+                            if (spanCount > 1)
+                            {
+                                var endCell = planSheet.Cell(excelRow, startCol + 3 + spanCount - 1);
+                                planSheet.Range(startCell, endCell).Merge();
+                            }
+
+                            var mergedEnd = planSheet.Cell(excelRow, startCol + 3 + spanCount - 1);
+                            var mergedRange = planSheet.Range(startCell, mergedEnd);
+
+                            mergedRange.Style.Fill.BackgroundColor = ClosedXML.Excel.XLColor.FromHtml("#3B82F6");
+                            mergedRange.Style.Font.FontColor = ClosedXML.Excel.XLColor.White;
+                            mergedRange.Style.Font.Bold = true;
+                            mergedRange.Style.Font.FontSize = 10;
+                            mergedRange.Style.Alignment.Horizontal = ClosedXML.Excel.XLAlignmentHorizontalValues.Center;
+                            mergedRange.Style.Alignment.Vertical = ClosedXML.Excel.XLAlignmentVerticalValues.Center;
+                        }
+
+                        excelRow++;
+                    }
+                }
+            }
+
+            planSheet.Columns().AdjustToContents();
+            planSheet.Column(1).Width = 12;
+            planSheet.Column(2).Width = 18;
+
+            // ── Sheet 3: Assignments Summary ──
+            var summarySheet = workbook.Worksheets.Add("Assignments");
+
+            var summaryHeaders = new[] { "Task Key", "Task Summary", "Team", "Assigned To", "From", "To", "Days", "Estimate (hours)" };
+            for (int col = 0; col < summaryHeaders.Length; col++)
+            {
+                var cell = summarySheet.Cell(1, col + 1);
+                cell.Value = summaryHeaders[col];
+                cell.Style.Font.Bold = true;
+                cell.Style.Fill.BackgroundColor = ClosedXML.Excel.XLColor.FromHtml("#EEF2FF");
+                cell.Style.Font.FontColor = ClosedXML.Excel.XLColor.FromHtml("#4338CA");
+                cell.Style.Border.BottomBorder = ClosedXML.Excel.XLBorderStyleValues.Thin;
+                cell.Style.Border.BottomBorderColor = ClosedXML.Excel.XLColor.FromHtml("#D1D5DB");
+            }
+
+            var sortedAssignments = Assignments
+                .OrderBy(a =>
+                {
+                    var m = TeamMembers.FirstOrDefault(x => x.Id == a.TeamMemberId);
+                    return m?.Team ?? "";
+                })
+                .ThenBy(a =>
+                {
+                    var m = TeamMembers.FirstOrDefault(x => x.Id == a.TeamMemberId);
+                    return m?.Name ?? "";
+                })
+                .ThenBy(a => a.From)
+                .ToList();
+
+            for (int i = 0; i < sortedAssignments.Count; i++)
+            {
+                var a = sortedAssignments[i];
+                var row = i + 2;
+                var task = AvailableTasks.FirstOrDefault(x => x.Id == a.TaskId);
+                var member = TeamMembers.FirstOrDefault(x => x.Id == a.TeamMemberId);
+                var days = a.To.DayNumber - a.From.DayNumber + 1;
+
+                summarySheet.Cell(row, 1).Value = task?.Key ?? "-";
+                summarySheet.Cell(row, 2).Value = task?.Summary ?? "-";
+                summarySheet.Cell(row, 3).Value = member?.Team ?? "-";
+                summarySheet.Cell(row, 4).Value = member?.Name ?? "-";
+                summarySheet.Cell(row, 5).Value = a.From.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
+                summarySheet.Cell(row, 6).Value = a.To.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
+                summarySheet.Cell(row, 7).Value = days;
+                summarySheet.Cell(row, 8).Value = task is not null ? FormatEstimateHours(task.OriginalEstimate) : "-";
+            }
+
+            summarySheet.Columns().AdjustToContents();
+            summarySheet.Column(2).Width = 50;
+
+            // ── Generate file bytes and trigger download ──
+            using var stream = new System.IO.MemoryStream();
+            workbook.SaveAs(stream);
+            var fileBytes = stream.ToArray();
+            var base64 = Convert.ToBase64String(fileBytes);
+
+            var fileName = $"EpicPlanning_{(!string.IsNullOrWhiteSpace(EpicKey) ? EpicKey.Trim() : "Export")}_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx";
+            const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+            await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
+
+            InfoMessage = $"Exported {AvailableTasks.Count} tasks and {Assignments.Count} assignments to {fileName}.";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Export failed: {ex.Message}";
+        }
+    }
+    // -----------------------------
+    // Stacked assignment layout helpers
+    // -----------------------------
+
+    /// <summary>
+    /// Assigns a "lane" (vertical row index) to each assignment for a member,
+    /// so overlapping tasks stack without collision.
+    /// Returns assignments paired with their lane index, sorted.
+    /// </summary>
+    private List<(CalendarAssignment Assignment, int Lane)> GetLanedAssignments(Guid memberId)
+    {
+        var memberAssignments = Assignments
+            .Where(a => a.TeamMemberId == memberId)
+            .OrderBy(a => a.From)
+            .ThenBy(a => a.To)
+            .ToList();
+
+        var result = new List<(CalendarAssignment, int)>();
+        // Each lane tracks the last "To" date used
+        var laneEnds = new List<DateOnly>();
+
+        foreach (var a in memberAssignments)
+        {
+            // Find the first lane where this assignment fits (no overlap)
+            int lane = -1;
+            for (int i = 0; i < laneEnds.Count; i++)
+            {
+                if (a.From > laneEnds[i])
+                {
+                    lane = i;
+                    laneEnds[i] = a.To;
+                    break;
+                }
+            }
+
+            if (lane == -1)
+            {
+                lane = laneEnds.Count;
+                laneEnds.Add(a.To);
+            }
+
+            result.Add((a, lane));
+        }
+
+        return result;
+    }
+
+    private int GetMaxLanes(Guid memberId)
+    {
+        var laned = GetLanedAssignments(memberId);
+        return laned.Count == 0 ? 1 : laned.Max(x => x.Lane) + 1;
+    }
+
+    private int GetDateColumnIndex(DateOnly date)
+    {
+        return VisibleDates.IndexOf(date);
+    }
+
+    private int GetVisibleSpan(CalendarAssignment a)
+    {
+        var clampedFrom = a.From < FromDate ? FromDate : a.From;
+        var clampedTo = a.To > ToDate ? ToDate : a.To;
+        return Math.Max(1, clampedTo.DayNumber - clampedFrom.DayNumber + 1);
+    }
+
+    private int GetVisibleStartCol(CalendarAssignment a)
+    {
+        var clampedFrom = a.From < FromDate ? FromDate : a.From;
+        return GetDateColumnIndex(clampedFrom);
+    }
+    // -----------------------------
+    // Task assignment hints
+    // -----------------------------
+    private List<(string MemberName, string Team, DateOnly From, DateOnly To)> GetTaskAssignmentInfo(int taskId)
+    {
+        return Assignments
+            .Where(a => a.TaskId == taskId)
+            .Select(a =>
+            {
+                var member = TeamMembers.FirstOrDefault(m => m.Id == a.TeamMemberId);
+                return (
+                    MemberName: member?.Name ?? "Unknown",
+                    Team: member?.Team ?? "",
+                    From: a.From,
+                    To: a.To
+                );
+            })
+            .OrderBy(x => x.From)
+            .ToList();
+    }
+    private static bool IsWeekend(DateOnly date)
+    {
+        return date.DayOfWeek == DayOfWeek.Saturday || date.DayOfWeek == DayOfWeek.Sunday;
+    }
+}
+<style>
+    /* ─── Base ─── */
+    * {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    h3 {
+        font-weight: 700;
+        font-size: 22px;
+        color: #111827;
+        margin-bottom: 16px;
+    }
+
+    /* ─── Toolbar ─── */
+    .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 14px;
+        align-items: end;
+        margin-bottom: 16px;
+        padding: 16px 20px;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        background: #ffffff;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+    }
+
+    .toolbar-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 140px;
+    }
+
+    .epic-box {
+        min-width: 320px;
+    }
+
+    label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    .input {
+        padding: 9px 12px;
+        border-radius: 8px;
+        border: 1px solid #d1d5db;
+        background: #f9fafb;
+        color: #111827;
+        font-size: 14px;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+        .input:focus {
+            outline: none;
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+            background: #ffffff;
+        }
+
+    /* ─── Buttons ─── */
+    .btn {
+        padding: 9px 16px;
+        border-radius: 8px;
+        border: 1px solid #d1d5db;
+        background: #f9fafb;
+        color: #374151;
+        font-size: 13px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+        .btn:hover {
+            background: #f3f4f6;
+            border-color: #9ca3af;
+        }
+
+        .btn.primary {
+            border-color: #3b82f6;
+            background: #3b82f6;
+            color: #ffffff;
+        }
+
+            .btn.primary:hover {
+                background: #2563eb;
+                border-color: #2563eb;
+            }
+
+        .btn.small {
+            padding: 4px 10px;
+            font-size: 12px;
+            border-radius: 6px;
+        }
+
+        .btn.danger {
+            border-color: #fca5a5;
+            background: #fef2f2;
+            color: #dc2626;
+        }
+
+            .btn.danger:hover {
+                background: #fee2e2;
+                border-color: #f87171;
+            }
+
+    /* ─── Layout ─── */
+    .layout {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 16px;
+        align-items: start;
+    }
+
+    /* ─── Panel (Task List) ─── */
+    .panel {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        background: #ffffff;
+        overflow: hidden;
+        height: 78vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+    }
+
+    .panel-header {
+        padding: 14px 16px;
+        border-bottom: 1px solid #f3f4f6;
+        background: #fafbfc;
+        color: #1f2937;
+        font-size: 14px;
+    }
+
+    .panel-body {
+        padding: 10px 12px;
+        overflow: auto;
+        flex: 1;
+        background: #fafbfc;
+    }
+
+    .panel-footer {
+        padding: 12px 16px;
+        border-top: 1px solid #f3f4f6;
+        background: #fafbfc;
+    }
+
+    .task-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+        display: grid;
+        gap: 8px;
+    }
+
+    .task-item {
+        border: 1px solid #e5e7eb;
+        border-left: 3px solid transparent;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #ffffff;
+        cursor: pointer;
+        transition: all 0.15s ease;
+    }
+
+        .task-item:hover {
+            border-color: #bfdbfe;
+            box-shadow: 0 2px 6px rgba(59,130,246,0.08);
+        }
+
+        .task-item.selected {
+            border-color: #93c5fd;
+            border-left-color: #3b82f6;
+            background: #eff6ff;
+            box-shadow: 0 2px 8px rgba(59,130,246,0.10);
+        }
+
+    .task-title {
+        font-weight: 600;
+        font-size: 13px;
+        color: #1f2937;
+        line-height: 1.4;
+    }
+
+    .task-meta {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 4px;
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    /* ─── Calendar Container ─── */
+    .calendar-container {
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        background: #ffffff;
+        overflow: hidden;
+        height: 78vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04), 0 1px 2px rgba(0,0,0,0.02);
+    }
+
+    .calendar-help {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 12px 16px;
+        border-bottom: 1px solid #f3f4f6;
+        background: #fafbfc;
+        flex-wrap: wrap;
+        font-size: 13px;
+        color: #374151;
+    }
+
+    .pill {
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: #f3f4f6;
+        border: 1px solid #e5e7eb;
+        font-size: 12px;
+        color: #374151;
+        font-weight: 500;
+    }
+
+        .pill.warn {
+            border-color: #fbbf24;
+            background: #fffbeb;
+            color: #92400e;
+        }
+
+    .calendar-scroll {
+        overflow: auto;
+        flex: 1;
+    }
+
+    /* ─── Calendar Table ─── */
+    .calendar {
+        border-collapse: collapse;
+        width: max-content;
+        min-width: 100%;
+        font-size: 12px;
+    }
+
+        .calendar thead th {
+            border: 1px solid #e5e7eb;
+            padding: 10px 8px;
+            text-align: center;
+            background: #f9fafb;
+            color: #6b7280;
+            font-weight: 600;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            white-space: nowrap;
+        }
+
+        .calendar td {
+            border: 1px solid #e5e7eb;
+            padding: 6px;
+            text-align: center;
+            background: #ffffff;
+            color: #374151;
+            white-space: nowrap;
+        }
+
+    .date-col {
+        min-width: 88px;
+    }
+
+    .sticky-col {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        background: #f9fafb !important;
+        text-align: left !important;
+        min-width: 160px;
+        border-right: 2px solid #e5e7eb !important;
+    }
+
+    .member-col {
+        font-weight: 600;
+        color: #1f2937;
+        font-size: 13px;
+    }
+
+    /* ─── Calendar Cells ─── */
+    .cell {
+        cursor: pointer;
+        background: #ffffff;
+        transition: background 0.12s ease;
+        position: relative;
+        overflow: visible;
+    }
+
+        .cell:hover {
+            background: #eff6ff;
+        }
+
+    .block-cell {
+        padding: 0;
+    }
+
+    /* ─── Assignment Block ─── */
+    .block {
+        height: 56px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 3px;
+        padding: 8px 10px;
+        background: linear-gradient(135deg, #3b82f6, #6366f1);
+        border-radius: 8px;
+        margin: 3px;
+        position: relative;
+        box-shadow: 0 2px 6px rgba(59,130,246,0.20);
+        transition: box-shadow 0.15s ease;
+    }
+
+        .block:hover {
+            box-shadow: 0 4px 12px rgba(59,130,246,0.30);
+        }
+
+    .block-title {
+        font-weight: 700;
+        font-size: 12px;
+        text-align: left;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #ffffff;
+    }
+
+    .block-range {
+        text-align: left;
+        font-size: 11px;
+        color: rgba(255,255,255,0.80);
+    }
+
+    .block-actions {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+    }
+
+        .block-actions .btn.danger {
+            background: rgba(255,255,255,0.15);
+            border-color: rgba(255,255,255,0.30);
+            color: #ffffff;
+            backdrop-filter: blur(4px);
+        }
+
+            .block-actions .btn.danger:hover {
+                background: rgba(220,38,38,0.70);
+                border-color: rgba(220,38,38,0.80);
+            }
+
+    /* ─── Info / Error Messages ─── */
+    .info {
+        margin: 10px 0;
+        padding: 12px 16px;
+        border-radius: 10px;
+        border: 1px solid #86efac;
+        background: #f0fdf4;
+        color: #166534;
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    .error {
+        margin: 10px 0;
+        padding: 12px 16px;
+        border-radius: 10px;
+        border: 1px solid #fca5a5;
+        background: #fef2f2;
+        color: #991b1b;
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    .muted {
+        color: #9ca3af;
+        font-size: 12px;
+        line-height: 1.5;
+    }
+
+    /* ─── Responsive ─── */
+    @@media (max-width: 1100px) {
+        .layout {
+            grid-template-columns: 1fr;
+        }
+
+        .panel {
+            height: auto;
+        }
+
+        .calendar-container {
+            height: 70vh;
+        }
+    }
+    /* ─── Team Group Header ─── */
+    .team-group-row td {
+        background: #eef2ff !important;
+        border: 1px solid #e5e7eb;
+        padding: 0;
+    }
+
+    .team-group-label {
+        font-weight: 700;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #4338ca;
+        padding: 8px 16px !important;
+        text-align: left !important;
+    }
+    /* ─── Stacked Cell (replaces old block-cell) ─── */
+    .stacked-cell {
+        position: relative;
+        vertical-align: top;
+        padding: 0 !important;
+        min-width: 88px;
+        overflow: visible;
+    }
+
+    /* ─── Stacked Assignment Block ─── */
+    .stacked-block {
+        position: absolute;
+        left: 3px;
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+        padding: 0 8px;
+        background: linear-gradient(135deg, #3b82f6, #6366f1);
+        border-radius: 6px;
+        box-shadow: 0 1px 4px rgba(59,130,246,0.25);
+        z-index: 3;
+        cursor: default;
+        overflow: hidden;
+        white-space: nowrap;
+        transition: box-shadow 0.15s ease;
+    }
+
+        .stacked-block:hover {
+            box-shadow: 0 3px 10px rgba(59,130,246,0.35);
+            z-index: 4;
+        }
+
+        /* Alternate colors for different lanes */
+        .stacked-block:nth-child(2) {
+            background: linear-gradient(135deg, #8b5cf6, #7c3aed);
+        }
+
+        .stacked-block:nth-child(3) {
+            background: linear-gradient(135deg, #06b6d4, #0891b2);
+        }
+
+        .stacked-block:nth-child(4) {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+        }
+
+        .stacked-block:nth-child(5) {
+            background: linear-gradient(135deg, #10b981, #059669);
+        }
+
+    .stacked-block-content {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        overflow: hidden;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .stacked-block-title {
+        font-weight: 700;
+        font-size: 11px;
+        color: #ffffff;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .stacked-block-range {
+        font-size: 10px;
+        color: rgba(255,255,255,0.75);
+        white-space: nowrap;
+        flex-shrink: 0;
+    }
+
+    /* ─── Remove Button (inside stacked block) ─── */
+    .btn-remove {
+        background: rgba(255,255,255,0.15);
+        border: 1px solid rgba(255,255,255,0.25);
+        color: #ffffff;
+        border-radius: 4px;
+        padding: 2px 5px;
+        font-size: 10px;
+        cursor: pointer;
+        flex-shrink: 0;
+        line-height: 1;
+        transition: background 0.15s ease;
+        backdrop-filter: blur(4px);
+    }
+
+        .btn-remove:hover {
+            background: rgba(220,38,38,0.70);
+            border-color: rgba(220,38,38,0.80);
+        }
+    /* ─── Task Header (title + badge row) ─── */
+    .task-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+    }
+
+    /* ─── Assigned Task Card ─── */
+    .task-item.assigned {
+        border-left-color: #10b981;
+    }
+
+        .task-item.assigned:not(.selected) {
+            background: #f0fdf9;
+        }
+
+        .task-item.assigned.selected {
+            border-left-color: #059669;
+        }
+
+    /* ─── AssignedBadge ─── */
+    .task-assigned-badge {
+        flex-shrink: 0;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #ecfdf5;
+        border: 1px solid #86efac;
+        color: #166534;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+    }
+
+    /* ─── Assignment Chips (under meta) ─── */
+    .task-assignments {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-top: 6px;
+    }
+
+    .task-assignment-chip {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 8px;
+        border-radius: 6px;
+        background: #f0f9ff;
+        border: 1px solid #bae6fd;
+        font-size: 11px;
+        color: #0c4a6e;
+    }
+
+    .chip-team {
+        padding: 1px 5px;
+        border-radius: 4px;
+        background: #e0e7ff;
+        color: #4338ca;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+    }
+
+    .chip-name {
+        font-weight: 600;
+        color: #1e3a5f;
+    }
+
+    .chip-dates {
+        color: #64748b;
+        font-size: 10px;
+        margin-left: auto;
+    }
+    /* ─── Member Info (name + hours) ─── */
+    .member-info {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 2px 0;
+    }
+
+    .member-name {
+        font-weight: 600;
+        color: #1f2937;
+        font-size: 13px;
+    }
+
+    .member-hours {
+        flex-shrink: 0;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        color: #1d4ed8;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+    }
+    /* ─── Member Info (name + total hours) ─── */
+    .member-info {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 2px 0;
+    }
+
+    .member-name {
+        font-weight: 600;
+        color: #1f2937;
+        font-size: 13px;
+    }
+
+    .member-hours {
+        flex-shrink: 0;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        color: #1d4ed8;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    /* ─── Cell capacity states ─── */
+    .cell-partial {
+        background: #f0fdf4 !important;
+    }
+
+    .cell-full {
+        background: #fef2f2 !important;
+        cursor: not-allowed;
+    }
+
+    /* ─── Usage bar (fills from bottom) ─── */
+    .cell-usage-bar {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: rgba(59, 130, 246, 0.08);
+        border-radius: 0 0 4px 4px;
+        transition: height 0.2s ease;
+        pointer-events: none;
+        z-index: 0;
+    }
+
+    .cell-full .cell-usage-bar {
+        background: rgba(239, 68, 68, 0.08);
+    }
+
+    /* ─── Hours label in cell ─── */
+    .cell-hours-label {
+        position: absolute;
+        top: 2px;
+        right: 4px;
+        font-size: 9px;
+        font-weight: 700;
+        color: #3b82f6;
+        z-index: 1;
+        pointer-events: none;
+        letter-spacing: 0.02em;
+    }
+
+        .cell-hours-label.full {
+            color: #dc2626;
+        }
+    /* ─── Weekend styling ─── */
+    .weekend-col {
+        background: #f3f4f6 !important;
+        color: #9ca3af !important;
+    }
+
+    .weekend-cell {
+        background: #f3f4f6 !important;
+    }
+
+        .weekend-cell:hover {
+            background: #e5e7eb !important;
+        }
+
+        /* Override partial/full colors on weekends to keep the grey tone */
+        .weekend-cell.cell-partial {
+            background: #e5e7eb !important;
+        }
+
+        .weekend-cell.cell-full {
+            background: #ddd6d6 !important;
+        }
+</style>

@@ -188,9 +188,8 @@
                             style="cursor: pointer;"
                             @onclick="() => issue.IsExpanded = !issue.IsExpanded">
                             <td class="fw-semibold text-nowrap">@issue.Key</td>
-                            <td>
-                                <span class="badge bg-light text-dark border">@issue.IssueType</span>
-                            </td>
+
+                            <td><span class="badge @IssueTypeBadge(issue.IssueType)">@issue.IssueType</span></td>
                             <td>@issue.Summary</td>
                             <td>
                                 <span class="badge @StatusBadge(issue.StatusCategoryKey)">@issue.Status</span>
@@ -350,6 +349,13 @@
         "done"          => "bg-success",
         "indeterminate" => "bg-primary",
         _               => "bg-secondary"
+    };
+
+    private static string IssueTypeBadge(string issueType) => issueType switch
+    {
+        "Task" => "bg-info text-dark",
+        "Bug" => "bg-danger text-dark",
+        _ => "bg-secondary"
     };
 
     private static int Pct(int count, int total) =>
