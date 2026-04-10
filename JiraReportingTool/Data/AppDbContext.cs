@@ -13,6 +13,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<JiraFilter> JiraFilters => Set<JiraFilter>();
     public DbSet<EpicSummary> EpicSummaries => Set<EpicSummary>();
 
+    // ── Sprint Plan CRUD ──────────────────────────────────────────────────────
+    public DbSet<SprintPlanHeader>     SprintPlans           => Set<SprintPlanHeader>();
+    public DbSet<SprintPlanAllocation> SprintPlanAllocations => Set<SprintPlanAllocation>();
+    public DbSet<SprintPlanCustomTask> SprintPlanCustomTasks => Set<SprintPlanCustomTask>();
+    public DbSet<SprintPlanHoliday>    SprintPlanHolidays    => Set<SprintPlanHoliday>();
+    public DbSet<SprintPlanTimeOff>    SprintPlanTimeOffs    => Set<SprintPlanTimeOff>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         // ── JiraEpicReport → JiraIssueModel (1-to-many, cascade) ────────────
@@ -69,5 +76,37 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         // ── EpicSummary: standalone lookup table (Issues are [NotMapped]) ────
         modelBuilder.Entity<EpicSummary>()
             .HasIndex(e => e.Key);
+
+        // ── SprintPlanHeader → children (cascade delete) ─────────────────────
+        modelBuilder.Entity<SprintPlanAllocation>()
+            .HasOne<SprintPlanHeader>()
+            .WithMany(p => p.Allocations)
+            .HasForeignKey(a => a.SprintPlanId)
+            .OnDelete(DeleteBehavior.Cascade);
+        modelBuilder.Entity<SprintPlanAllocation>()
+            .Property(a => a.HoursAllocated)
+            .HasPrecision(6, 2);
+
+        modelBuilder.Entity<SprintPlanCustomTask>()
+            .Property(t => t.Hours)
+            .HasPrecision(6, 2);
+
+        modelBuilder.Entity<SprintPlanCustomTask>()
+            .HasOne<SprintPlanHeader>()
+            .WithMany(p => p.CustomTasks)
+            .HasForeignKey(t => t.SprintPlanId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<SprintPlanHoliday>()
+            .HasOne<SprintPlanHeader>()
+            .WithMany(p => p.Holidays)
+            .HasForeignKey(h => h.SprintPlanId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<SprintPlanTimeOff>()
+            .HasOne<SprintPlanHeader>()
+            .WithMany(p => p.TimeOffs)
+            .HasForeignKey(t => t.SprintPlanId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

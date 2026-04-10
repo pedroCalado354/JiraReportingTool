@@ -5,6 +5,7 @@
 @using System.Text.RegularExpressions
 @inject IJiraService JiraService
 @inject IJSRuntime JS
+@inject ISprintPlanService PlanService
 @using ClosedXML.Excel
 
 <div class="spd-root">
@@ -115,6 +116,47 @@
         </div>
     </div>
 
+    <!-- ═══ PLAN CRUD BAR ═══════════════════════════════════════════════ -->
+    <div class="spd-plan-bar">
+        <div class="plan-bar-left">
+            <span class="plan-bar-label">Plan:</span>
+            @if (_currentPlanId.HasValue)
+            {
+                <span class="plan-current-badge">
+                    #@_currentPlanId — @SprintName
+                </span>
+            }
+            else
+            {
+                <span class="plan-unsaved-badge">Unsaved</span>
+            }
+        </div>
+        <div class="plan-bar-right">
+            @if (_savedPlans.Count > 0)
+            {
+                <select class="input input-sm plan-select" @bind="_loadPlanId">
+                    <option value="0">— Load a plan —</option>
+                    @foreach (var p in _savedPlans)
+                    {
+                        <option value="@p.Id">@p.Name (@p.SprintStart.ToString("dd-MMM") → @p.SprintEnd.ToString("dd-MMM"))</option>
+                    }
+                </select>
+                <button class="btn small" @onclick="LoadSelectedPlanAsync" disabled="@(_loadPlanId == 0 || _isSaving)">
+                    Load
+                </button>
+            }
+            <button class="btn primary small" @onclick="SavePlanAsync" disabled="@_isSaving">
+                @(_isSaving ? "Saving…" : (_currentPlanId.HasValue ? "💾 Update" : "💾 Save"))
+            </button>
+            @if (_currentPlanId.HasValue)
+            {
+                <button class="btn danger small" @onclick="DeletePlanAsync" disabled="@_isSaving">
+                    🗑 Delete
+                </button>
+            }
+        </div>
+    </div>
+
     <!-- ═══ TEAM FILTER + ACTIONS ══════════════════════════════════════ -->
     <div class="spd-actions-bar">
         <div class="team-filters">
@@ -212,12 +254,14 @@
                                                 {
                                                     <span class="badge-assigned">✓</span>
                                                 }
-                                                <span class="task-est-label">@FormatEstimateHours(task.OriginalEstimate)</span>
+                                                <span class="task-est-label">@FormatTaskHours(task)</span>
                                             </div>
                                             <div class="task-summary-text">@task.Summary</div>
                                             <div class="task-meta-row">
                                                 <span class="meta-chip meta-type">@task.IssueType</span>
-                                                <span class="meta-chip meta-status">@task.Status</span>
+                                                <span class="meta-chip meta-status @GetStatusClass(task.Status)">
+                                                    @task.Status
+                                                </span>
                                             </div>
                                         </li>
                                     }
@@ -573,7 +617,13 @@
 
     private List<TeamMemberDto> TeamMembers { get; set; } = new();
     private string? ErrorMessage { get; set; }
-    private string? InfoMessage { get; set; }
+    private string? InfoMessage  { get; set; }
+
+    // ── Plan CRUD ──
+    private int?                  _currentPlanId;
+    private List<SprintPlanHeader> _savedPlans = new();
+    private bool                  _isSaving   = false;
+    private int                   _loadPlanId = 0;
 
     private const decimal MaxHoursPerDay = 6m;
     private const decimal HoursPerDay = 6m;
@@ -591,7 +641,7 @@
     private int TotalTaskCount => LoadedEpics.Values.Sum(e => e.Tasks.Count);
     private int AssignedCount => GetAllTasks().Count(t => IsTaskAssigned(t.Id));
     private int UnassignedCount => TotalTaskCount - AssignedCount;
-    private decimal TotalScopeHours => GetAllTasks().Sum(t => ParseJiraDurationToHours(t.OriginalEstimate));
+    private decimal TotalScopeHours => GetAllTasks().Sum(t => GetTaskHours(t));
     private decimal TotalAllocatedHours => Allocations
         .Where(a => a.Date >= SprintStart && a.Date <= SprintEnd)
         .Sum(a => a.HoursAllocated);
@@ -606,45 +656,52 @@
     // ───────────────────────────────────────────────────────────
     // Initialisation
     // ───────────────────────────────────────────────────────────
-    protected override void OnInitialized()
+    // Stable, deterministic Guid from member name+team — ensures DB round-trip fidelity.
+    private static Guid MemberId(string name, string team) =>
+        new Guid(System.Security.Cryptography.MD5.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{name}:{team}")));
+
+    protected override async Task OnInitializedAsync()
     {
         SprintStartDateTime = DateTime.Today;
-        SprintEndDateTime = DateTime.Today.AddDays(13);
+        SprintEndDateTime   = DateTime.Today.AddDays(13);
         ApplySprintRange();
 
         TeamMembers = new()
         {
             // Backend
-            new TeamMemberDto(Guid.NewGuid(), "Duarte",   "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Freire",   "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Amado",    "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Rosa",     "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Patrick",  "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Rui",      "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Mateus",   "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Dasa",     "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Shashank", "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Sangram",  "Backend"),
-            new TeamMemberDto(Guid.NewGuid(), "Ranjit",   "Backend"),
+            new TeamMemberDto(MemberId("Duarte",   "Backend"), "Duarte",   "Backend"),
+            new TeamMemberDto(MemberId("Freire",   "Backend"), "Freire",   "Backend"),
+            new TeamMemberDto(MemberId("Amado",    "Backend"), "Amado",    "Backend"),
+            new TeamMemberDto(MemberId("Rosa",     "Backend"), "Rosa",     "Backend"),
+            new TeamMemberDto(MemberId("Patrick",  "Backend"), "Patrick",  "Backend"),
+            new TeamMemberDto(MemberId("Rui",      "Backend"), "Rui",      "Backend"),
+            new TeamMemberDto(MemberId("Mateus",   "Backend"), "Mateus",   "Backend"),
+            new TeamMemberDto(MemberId("Dasa",     "Backend"), "Dasa",     "Backend"),
+            new TeamMemberDto(MemberId("Shashank", "Backend"), "Shashank", "Backend"),
+            new TeamMemberDto(MemberId("Sangram",  "Backend"), "Sangram",  "Backend"),
+            new TeamMemberDto(MemberId("Ranjit",   "Backend"), "Ranjit",   "Backend"),
             // Frontend
-            new TeamMemberDto(Guid.NewGuid(), "Bruno",    "Frontend"),
-            new TeamMemberDto(Guid.NewGuid(), "Samuel",   "Frontend"),
-            new TeamMemberDto(Guid.NewGuid(), "Murilo",   "Frontend"),
-            new TeamMemberDto(Guid.NewGuid(), "Omar",     "Frontend"),
-            new TeamMemberDto(Guid.NewGuid(), "Vinicius", "Frontend"),
-            new TeamMemberDto(Guid.NewGuid(), "Ronit",    "Frontend"),
-            new TeamMemberDto(Guid.NewGuid(), "Tanaya",   "Frontend"),
-            new TeamMemberDto(Guid.NewGuid(), "Vijay",    "Frontend"),
-            new TeamMemberDto(Guid.NewGuid(), "Bhavini",  "Frontend"),
+            new TeamMemberDto(MemberId("Bruno",    "Frontend"), "Bruno",    "Frontend"),
+            new TeamMemberDto(MemberId("Samuel",   "Frontend"), "Samuel",   "Frontend"),
+            new TeamMemberDto(MemberId("Murilo",   "Frontend"), "Murilo",   "Frontend"),
+            new TeamMemberDto(MemberId("Omar",     "Frontend"), "Omar",     "Frontend"),
+            new TeamMemberDto(MemberId("Vinicius", "Frontend"), "Vinicius", "Frontend"),
+            new TeamMemberDto(MemberId("Ronit",    "Frontend"), "Ronit",    "Frontend"),
+            new TeamMemberDto(MemberId("Tanaya",   "Frontend"), "Tanaya",   "Frontend"),
+            new TeamMemberDto(MemberId("Vijay",    "Frontend"), "Vijay",    "Frontend"),
+            new TeamMemberDto(MemberId("Bhavini",  "Frontend"), "Bhavini",  "Frontend"),
             // QA
-            new TeamMemberDto(Guid.NewGuid(), "Daria",     "QA"),
-            new TeamMemberDto(Guid.NewGuid(), "Daniel",    "QA"),
-            new TeamMemberDto(Guid.NewGuid(), "Jessica",   "QA"),
-            new TeamMemberDto(Guid.NewGuid(), "Katarina",  "QA"),
-            new TeamMemberDto(Guid.NewGuid(), "Tejaswini", "QA"),
-            new TeamMemberDto(Guid.NewGuid(), "Anushka",   "QA"),
-            new TeamMemberDto(Guid.NewGuid(), "Muskan",    "QA"),
+            new TeamMemberDto(MemberId("Daria",     "QA"), "Daria",     "QA"),
+            new TeamMemberDto(MemberId("Daniel",    "QA"), "Daniel",    "QA"),
+            new TeamMemberDto(MemberId("Jessica",   "QA"), "Jessica",   "QA"),
+            new TeamMemberDto(MemberId("Katarina",  "QA"), "Katarina",  "QA"),
+            new TeamMemberDto(MemberId("Tejaswini", "QA"), "Tejaswini", "QA"),
+            new TeamMemberDto(MemberId("Anushka",   "QA"), "Anushka",   "QA"),
+            new TeamMemberDto(MemberId("Muskan",    "QA"), "Muskan",    "QA"),
         };
+
+        _savedPlans = await PlanService.GetAllAsync();
     }
 
     // ───────────────────────────────────────────────────────────
@@ -724,6 +781,167 @@
             epic.IsExpanded = !epic.IsExpanded;
     }
 
+    // Helper used by plan loading — load an epic by key without touching EpicKeyInput
+    private async Task LoadEpicByKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || LoadedEpics.ContainsKey(key)) return;
+        LoadedEpics[key] = new EpicLoadState { EpicKey = key, IsLoading = true };
+        var report = await JiraService.GetEpicReportAsync(key);
+        var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<JiraIssueModel>();
+        foreach (var t in tasks) _taskCache[t.Id] = t;
+        LoadedEpics[key].Tasks     = tasks;
+        LoadedEpics[key].IsLoading = false;
+    }
+
+    // ───────────────────────────────────────────────────────────
+    // Sprint Plan CRUD
+    // ───────────────────────────────────────────────────────────
+    private async Task SavePlanAsync()
+    {
+        _isSaving = true;
+        ErrorMessage = null;
+        try
+        {
+            var epicKeys = string.Join(",", LoadedEpics.Keys);
+            var plan = new SprintPlanHeader
+            {
+                Id            = _currentPlanId ?? 0,
+                Name          = string.IsNullOrWhiteSpace(SprintName) ? $"Sprint {DateTime.Today:yyyy-MM-dd}" : SprintName,
+                SprintStart   = SprintStart,
+                SprintEnd     = SprintEnd,
+                LoadedEpicKeys = epicKeys,
+                Allocations   = Allocations.Select(a => new SprintPlanAllocation
+                {
+                    SprintPlanId   = _currentPlanId ?? 0,
+                    TaskId         = a.TaskId,
+                    TaskLabel      = GetTaskLabel(a.TaskId),
+                    EpicKey        = LoadedEpics.Values.FirstOrDefault(e => e.Tasks.Any(t => t.Id == a.TaskId))?.EpicKey ?? "",
+                    MemberId       = a.TeamMemberId,
+                    MemberName     = TeamMembers.FirstOrDefault(m => m.Id == a.TeamMemberId)?.Name ?? "",
+                    Date           = a.Date,
+                    HoursAllocated = a.HoursAllocated,
+                    GroupId        = a.GroupId,
+                }).ToList(),
+                CustomTasks = _customTasks.Values.Select(ct => new SprintPlanCustomTask
+                {
+                    SprintPlanId = _currentPlanId ?? 0,
+                    LocalId      = ct.Id,
+                    Name         = ct.Name,
+                    Category     = ct.Category,
+                    Hours        = ct.Hours,
+                    Color        = ct.Color,
+                }).ToList(),
+                Holidays = Holidays.Select(d => new SprintPlanHoliday
+                {
+                    SprintPlanId = _currentPlanId ?? 0,
+                    Date         = d,
+                }).ToList(),
+                TimeOffs = MemberTimeOff.SelectMany(kvp => kvp.Value.Select(d => new SprintPlanTimeOff
+                {
+                    SprintPlanId = _currentPlanId ?? 0,
+                    MemberId     = kvp.Key,
+                    Date         = d,
+                })).ToList(),
+            };
+
+            var saved = await PlanService.SaveAsync(plan);
+            _currentPlanId = saved.Id;
+            _savedPlans    = await PlanService.GetAllAsync();
+            InfoMessage = $"Plan '{saved.Name}' saved (#{saved.Id}).";
+        }
+        catch (Exception ex) { ErrorMessage = $"Save failed: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
+    private async Task LoadSelectedPlanAsync()
+    {
+        if (_loadPlanId == 0) return;
+        await LoadPlanAsync(_loadPlanId);
+        _loadPlanId = 0;
+    }
+
+    private async Task LoadPlanAsync(int id)
+    {
+        _isSaving = true;
+        ErrorMessage = null;
+        try
+        {
+            var plan = await PlanService.GetAsync(id);
+            if (plan is null) { ErrorMessage = $"Plan #{id} not found."; return; }
+
+            // Restore sprint config
+            _currentPlanId      = plan.Id;
+            SprintName          = plan.Name;
+            SprintStartDateTime = plan.SprintStart.ToDateTime(TimeOnly.MinValue);
+            SprintEndDateTime   = plan.SprintEnd.ToDateTime(TimeOnly.MinValue);
+            ApplySprintRange();
+
+            // Reload epics from cache/Jira
+            LoadedEpics.Clear();
+            _taskCache.Clear();
+            var epicKeys = plan.LoadedEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
+            foreach (var key in epicKeys)
+                await LoadEpicByKey(key);
+
+            // Restore custom tasks
+            _customTasks.Clear();
+            foreach (var ct in plan.CustomTasks)
+                _customTasks[ct.LocalId] = new CustomTaskEntry
+                {
+                    Id = ct.LocalId, Name = ct.Name,
+                    Category = ct.Category, Hours = ct.Hours, Color = ct.Color
+                };
+            _nextCustomTaskId = _customTasks.Count > 0 ? _customTasks.Keys.Min() - 1 : -1;
+
+            // Restore allocations (match member by stable Guid, fallback to name lookup)
+            Allocations.Clear();
+            foreach (var a in plan.Allocations)
+            {
+                var memberId = TeamMembers.Any(m => m.Id == a.MemberId)
+                    ? a.MemberId
+                    : TeamMembers.FirstOrDefault(m => m.Name == a.MemberName)?.Id ?? a.MemberId;
+                Allocations.Add(new TaskAllocation
+                {
+                    TaskId = a.TaskId, TeamMemberId = memberId,
+                    Date = a.Date, HoursAllocated = a.HoursAllocated, GroupId = a.GroupId
+                });
+            }
+
+            // Restore holidays & time-off
+            Holidays = plan.Holidays.Select(h => h.Date).ToHashSet();
+            MemberTimeOff.Clear();
+            foreach (var to in plan.TimeOffs)
+            {
+                var memberId = TeamMembers.Any(m => m.Id == to.MemberId)
+                    ? to.MemberId
+                    : to.MemberId;
+                if (!MemberTimeOff.ContainsKey(memberId))
+                    MemberTimeOff[memberId] = new HashSet<DateOnly>();
+                MemberTimeOff[memberId].Add(to.Date);
+            }
+
+            InfoMessage = $"Plan '{plan.Name}' loaded — {plan.Allocations.Count} allocations.";
+        }
+        catch (Exception ex) { ErrorMessage = $"Load failed: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
+    private async Task DeletePlanAsync()
+    {
+        if (!_currentPlanId.HasValue) return;
+        _isSaving = true;
+        ErrorMessage = null;
+        try
+        {
+            await PlanService.DeleteAsync(_currentPlanId.Value);
+            InfoMessage    = $"Plan #{_currentPlanId} deleted.";
+            _currentPlanId = null;
+            _savedPlans    = await PlanService.GetAllAsync();
+        }
+        catch (Exception ex) { ErrorMessage = $"Delete failed: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
     // ───────────────────────────────────────────────────────────
     // Task selection
     // ───────────────────────────────────────────────────────────
@@ -734,7 +952,7 @@
         SelectedTask = task;
         SelectedCustomTaskId = null;
         PendingPlacement = null;
-        InfoMessage = $"Selected {task.Key} ({FormatEstimateHours(task.OriginalEstimate)}). Click a calendar cell to place.";
+        InfoMessage = $"Selected {task.Key} ({FormatTaskHours(task)}). Click a calendar cell to place.";
     }
 
     private void SelectCustomTask(int id)
@@ -804,7 +1022,7 @@
     private string GetActivePlacementLabel()
     {
         if (SelectedTask is not null)
-            return $"{SelectedTask.Key} — {SelectedTask.Summary} ({FormatEstimateHours(SelectedTask.OriginalEstimate)})";
+            return $"{SelectedTask.Key} — {SelectedTask.Summary} ({FormatTaskHours(SelectedTask)})";
         if (SelectedCustomTaskId.HasValue && _customTasks.TryGetValue(SelectedCustomTaskId.Value, out var ct))
             return $"{ct.Category}: {ct.Name} ({ct.Hours}h)";
         return "";
@@ -897,7 +1115,7 @@
 
         if (SelectedTask is not null)
         {
-            totalHoursResolved = ParseJiraDurationToHours(SelectedTask.OriginalEstimate);
+            totalHoursResolved = GetTaskHours(SelectedTask);
             taskLabel = SelectedTask.Key;
         }
         else if (SelectedCustomTaskId.HasValue && _customTasks.TryGetValue(SelectedCustomTaskId.Value, out var selCt))
@@ -998,7 +1216,7 @@
 
         var unassigned = GetAllTasks()
             .Where(t => !IsTaskAssigned(t.Id))
-            .Select(t => (Task: t, Hours: ParseJiraDurationToHours(t.OriginalEstimate)))
+            .Select(t => (Task: t, Hours: GetTaskHours(t)))
             .Where(x => x.Hours > 0m)
             .OrderByDescending(x => x.Hours)   // biggest tasks first
             .ToList();
@@ -1300,7 +1518,28 @@
         return $"{r.ToString(CultureInfo.InvariantCulture)}h";
     }
 
-    private static decimal ParseJiraDurationToHours(string? input)
+    /// <summary>
+    /// Dev Ready → use original estimate (task not started, full scope counts).
+    /// Any other status → use remaining effort (max(0, original − spent)).
+    /// </summary>
+    private static decimal GetTaskHours(JiraIssueModel t)
+    {
+        bool isDevReady = string.Equals(t.Status, "Dev Ready", StringComparison.OrdinalIgnoreCase);
+        if (isDevReady)
+            return ParseJiraDurationToHours(t.OriginalEstimate);
+        var remSec = Math.Max(0, t.OriginalEstimateSeconds - t.TimeSpentSeconds);
+        return remSec / 3600m;
+    }
+
+    private static string FormatTaskHours(JiraIssueModel t)
+    {
+        var h = GetTaskHours(t);
+        if (h <= 0m) return "-";
+        var r = h % 1m == 0m ? decimal.Round(h, 0) : decimal.Round(h, 1);
+        return $"{r.ToString(CultureInfo.InvariantCulture)}h";
+    }
+
+private static decimal ParseJiraDurationToHours(string? input)
     {
         if (string.IsNullOrWhiteSpace(input) || input.Trim() == "-") return 0m;
         var matches = Regex.Matches(input, @"(\d+(?:[.,]\d+)?)\s*([wdhm])", RegexOptions.IgnoreCase);
@@ -1391,6 +1630,81 @@
             sheet.Columns().AdjustToContents();
             sheet.Column(3).Width = 50;
 
+            // ── Sheet 3: Calendar ──
+            var cal = wb.Worksheets.Add("Calendar");
+
+            // Header row: "Member" + one column per visible date
+            cal.Cell(1, 1).Value = "Member";
+            cal.Cell(1, 1).Style.Font.Bold = true;
+            for (int d = 0; d < VisibleDates.Count; d++)
+            {
+                var hdr = cal.Cell(1, d + 2);
+                hdr.Value = VisibleDates[d].ToString("ddd dd-MMM");
+                hdr.Style.Font.Bold = true;
+                hdr.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                if (IsWeekend(VisibleDates[d]))
+                    hdr.Style.Fill.BackgroundColor = XLColor.LightGray;
+                else
+                    hdr.Style.Fill.BackgroundColor = XLColor.FromHtml("#EEF2FF");
+            }
+
+            // One row per team member
+            var calMembers = string.IsNullOrEmpty(ActiveTeamFilter)
+                ? TeamMembers
+                : TeamMembers.Where(m => m.Team == ActiveTeamFilter).ToList();
+
+            for (int r = 0; r < calMembers.Count; r++)
+            {
+                var member = calMembers[r];
+                var rowIdx = r + 2;
+                var nameCell = cal.Cell(rowIdx, 1);
+                nameCell.Value = $"{member.Name} ({member.Team})";
+                nameCell.Style.Font.Bold = true;
+
+                for (int d = 0; d < VisibleDates.Count; d++)
+                {
+                    var date = VisibleDates[d];
+                    var cell = cal.Cell(rowIdx, d + 2);
+
+                    if (IsMemberTimeOff(member.Id, date) || IsHoliday(date))
+                    {
+                        cell.Value = IsHoliday(date) ? "Holiday" : "Time Off";
+                        cell.Style.Fill.BackgroundColor = XLColor.LightYellow;
+                        cell.Style.Font.Italic = true;
+                        continue;
+                    }
+                    if (IsWeekend(date))
+                    {
+                        cell.Style.Fill.BackgroundColor = XLColor.LightGray;
+                        continue;
+                    }
+
+                    var dayAllocs = Allocations
+                        .Where(a => a.TeamMemberId == member.Id && a.Date == date)
+                        .ToList();
+
+                    if (dayAllocs.Count > 0)
+                    {
+                        var parts = dayAllocs
+                            .GroupBy(a => a.TaskId)
+                            .Select(g =>
+                            {
+                                var lbl = GetTaskShortLabel(g.Key);
+                                var hrs = g.Sum(a => a.HoursAllocated);
+                                return $"{lbl} ({hrs:0.#}h)";
+                            });
+                        cell.Value = string.Join(" | ", parts);
+                        cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#DBEAFE");
+                    }
+                }
+            }
+
+            cal.Row(1).Height = 30;
+            cal.Column(1).Width = 22;
+            for (int d = 0; d < VisibleDates.Count; d++)
+                cal.Column(d + 2).Width = 28;
+            cal.Rows().Style.Alignment.WrapText = false;
+
             // ── Stream to download ──
             using var ms     = new System.IO.MemoryStream();
             wb.SaveAs(ms);
@@ -1404,6 +1718,18 @@
         {
             ErrorMessage = $"Export failed: {ex.Message}";
         }
+    }
+    private static string GetStatusClass(string? status)
+    {
+        return status?.ToLowerInvariant() switch
+        {
+            "Dev ready" => "status-dev-ready",
+            "In Progress" => "status-in-progress",
+            "In Review" => "status-in-review",
+            "Qa Ready" => "status-qa-ready",
+            "Done" => "status-done",
+            _ => "status-default"
+        };
     }
 }
 
@@ -1479,6 +1805,27 @@
         }
 
     /* ─── Config Bar ─── */
+    /* ── Plan CRUD bar ── */
+    .spd-plan-bar {
+        display: flex; align-items: center; justify-content: space-between;
+        flex-wrap: wrap; gap: 8px;
+        padding: 8px 16px;
+        background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px;
+        font-size: 13px;
+    }
+    .plan-bar-left  { display: flex; align-items: center; gap: 10px; }
+    .plan-bar-right { display: flex; align-items: center; gap: 6px; }
+    .plan-bar-label { font-weight: 700; color: #6b7280; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .plan-current-badge {
+        background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe;
+        border-radius: 20px; padding: 2px 12px; font-size: 12px; font-weight: 600;
+    }
+    .plan-unsaved-badge {
+        background: #fef3c7; color: #92400e; border: 1px solid #fde68a;
+        border-radius: 20px; padding: 2px 12px; font-size: 12px; font-weight: 600;
+    }
+    .plan-select { width: 280px; }
+
     .spd-config-bar {
         display: flex;
         flex-wrap: wrap;
@@ -1896,9 +2243,45 @@
     }
 
     .meta-chip {
-        font-size: 10px;
-        border-radius: 4px;
-        padding: 1px 6px;
+        display: inline-flex;
+        align-items: center;
+        padding: 0.15rem 0.5rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        line-height: 1;
+    }
+
+    /* Status colors */
+
+    .status-dev-ready {
+        background-color: #e0f2fe; /* sky-100 */
+        color: #0369a1; /* sky-700 */
+    }
+
+    .status-in-progress {
+        background-color: #fef3c7; /* amber-100 */
+        color: #92400e; /* amber-700 */
+    }
+
+    .status-in-review {
+        background-color: #ede9fe; /* violet-100 */
+        color: #6d28d9; /* violet-700 */
+    }
+
+    .status-qa-ready {
+        background-color: #dcfce7; /* green-100 */
+        color: #166534; /* green-800 */
+    }
+
+    .status-done {
+        background-color: #d1fae5; /* emerald-100 */
+        color: #047857; /* emerald-700 */
+    }
+
+    .status-default {
+        background-color: #e5e7eb; /* gray-200 */
+        color: #374151;
     }
 
     .meta-type   { background: #e0e7ff; color: #3730a3; }
@@ -2380,4 +2763,6 @@
         color: #fff;
         opacity: 0.9;
     }
+
+
 </style>

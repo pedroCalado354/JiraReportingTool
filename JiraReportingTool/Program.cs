@@ -19,6 +19,7 @@ builder.Services.AddScoped<JiraDbRepository>();
 builder.Services.AddScoped<IJiraService, JiraCacheService>();
 builder.Services.AddScoped<DataSyncService>();
 builder.Services.AddScoped<ChatService>();
+builder.Services.AddScoped<ISprintPlanService, SprintPlanService>();
 
 var app = builder.Build();
 
