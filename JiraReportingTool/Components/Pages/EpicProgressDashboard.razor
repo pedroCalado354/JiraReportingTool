@@ -1,0 +1,1205 @@
+@page "/epic-progress"
+@using JiraReportingTool.Models
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+
+<div class="epd-root">
+
+    <!-- ═══ HEADER ═══════════════════════════════════════════════════════ -->
+    <div class="epd-header">
+        <div class="epd-title-block">
+            <h2 class="epd-title">Epic Progress Dashboard</h2>
+            @if (EpicData is not null)
+            {
+                <span class="epd-epic-badge">@EpicData.Key</span>
+                <span class="epd-epic-summary">@EpicData.Summary</span>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ CONFIG BAR ════════════════════════════════════════════════════ -->
+    <div class="epd-config-bar">
+        <div class="cfg-group">
+            <label>Epic Key</label>
+            <div class="cfg-row">
+                <input class="input" placeholder="e.g. JM-15977"
+                       @bind="EpicKeyInput" @bind:event="oninput"
+                       @onkeypress="OnEpicKeyPress" />
+                <button class="btn primary" @onclick="LoadEpicAsync" disabled="@IsLoading">
+                    @(IsLoadingEpic ? "Loading…" : "Load Epic")
+                </button>
+            </div>
+        </div>
+
+        <div class="cfg-divider"></div>
+
+        <div class="cfg-group">
+            <label>Sprint Filter <span class="cfg-hint">(optional — enter sprint ID)</span></label>
+            <div class="cfg-row">
+                <input class="input input-sm" type="number" placeholder="Sprint ID"
+                       @bind="SprintIdInput" @bind:event="oninput"
+                       disabled="@(EpicData is null)" />
+                <button class="btn" @onclick="ApplySprintFilterAsync"
+                        disabled="@(EpicData is null || IsLoadingSprint || string.IsNullOrWhiteSpace(SprintIdInput))">
+                    @(IsLoadingSprint ? "Filtering…" : "Apply")
+                </button>
+                @if (Metrics?.Sprint is not null)
+                {
+                    <button class="btn danger-light" @onclick="ClearSprintFilter">
+                        Clear Filter
+                    </button>
+                }
+            </div>
+        </div>
+
+        @if (EpicData is not null)
+        {
+            <div class="cfg-group cfg-status-group">
+                <span class="status-badge @GetEpicStatusClass(EpicData.StatusCategoryKey)">
+                    @EpicData.Status
+                </span>
+                @if (EpicData.Assignee is not null)
+                {
+                    <span class="cfg-assignee">@EpicData.Assignee</span>
+                }
+            </div>
+        }
+    </div>
+
+    <!-- ═══ MESSAGES ══════════════════════════════════════════════════════ -->
+    @if (!string.IsNullOrWhiteSpace(InfoMessage))
+    {
+        <div class="epd-info">@InfoMessage</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="epd-error">@ErrorMessage</div>
+    }
+    @if (IsLoading)
+    {
+        <div class="epd-loading">
+            <span class="loading-spinner"></span> Loading data from Jira…
+        </div>
+    }
+
+    <!-- ═══ CONTENT (only when metrics are ready) ═════════════════════════ -->
+    @if (Metrics is not null)
+    {
+        <!-- SPRINT CONTEXT BANNER -->
+        @if (Metrics.Sprint is not null)
+        {
+            var sp = Metrics.Sprint;
+            <div class="sprint-banner">
+                <span class="sprint-banner-label">Sprint Filter Active:</span>
+                <strong>@sp.SprintName</strong>
+                @if (sp.SprintStart.HasValue && sp.SprintEnd.HasValue)
+                {
+                    <span class="sprint-banner-dates">
+                        @sp.SprintStart.Value.ToString("dd MMM") → @sp.SprintEnd.Value.ToString("dd MMM yyyy")
+                    </span>
+                }
+                <span class="sprint-banner-scope">
+                    @sp.Total tasks in sprint · Epic-wide totals shown in grey
+                </span>
+            </div>
+        }
+
+        <!-- STATS STRIP — always epic-wide -->
+        <div class="epd-stats-strip">
+            <div class="stat-pill">
+                <span class="stat-pill-value">@Metrics.Delivery.Total</span>
+                <span class="stat-pill-label">Total Tasks</span>
+            </div>
+            <div class="stat-pill stat-green">
+                <span class="stat-pill-value">@Metrics.Delivery.Done</span>
+                <span class="stat-pill-label">Done</span>
+            </div>
+            <div class="stat-pill stat-blue">
+                <span class="stat-pill-value">@Metrics.Delivery.InProgress</span>
+                <span class="stat-pill-label">In Progress</span>
+            </div>
+            <div class="stat-pill stat-grey">
+                <span class="stat-pill-value">@Metrics.Delivery.ToDo</span>
+                <span class="stat-pill-label">To Do</span>
+            </div>
+            <div class="stat-pill @GetCompletionPillClass(Metrics.Delivery.CompletionPct)">
+                <span class="stat-pill-value">@EpicProgressCalculator.FormatPct(Metrics.Delivery.CompletionPct)</span>
+                <span class="stat-pill-label">Completion</span>
+            </div>
+            <div class="stat-pill">
+                <span class="stat-pill-value">@EpicProgressCalculator.FormatSeconds(Metrics.Effort.TotalEstimateSec)</span>
+                <span class="stat-pill-label">Estimated</span>
+            </div>
+            <div class="stat-pill stat-blue">
+                <span class="stat-pill-value">@EpicProgressCalculator.FormatSeconds(Metrics.Effort.SpentSec)</span>
+                <span class="stat-pill-label">Logged</span>
+            </div>
+            <div class="stat-pill @GetEffortPillClass(Metrics.Effort.EffortPct)">
+                <span class="stat-pill-value">@EpicProgressCalculator.FormatPct(Metrics.Effort.EffortPct)</span>
+                <span class="stat-pill-label">Effort %</span>
+            </div>
+        </div>
+
+        <!-- METRIC PANELS — 2×2 grid -->
+        <div class="epd-panels">
+
+            <!-- ── Delivery Panel ─────────────────────────────────────────── -->
+            <div class="metric-panel panel-delivery">
+                <div class="panel-head">
+                    <span class="panel-icon">📦</span>
+                    <span class="panel-title">Delivery</span>
+                    <span class="panel-scope">Epic-wide</span>
+                </div>
+                <div class="panel-body">
+                    <div class="progress-stacked">
+                        <div class="progress-seg seg-done"
+                             style="width:@BarPct(Metrics.Delivery.Done, Metrics.Delivery.Total)%"
+                             title="Done: @Metrics.Delivery.Done"></div>
+                        <div class="progress-seg seg-progress"
+                             style="width:@BarPct(Metrics.Delivery.InProgress, Metrics.Delivery.Total)%"
+                             title="In Progress: @Metrics.Delivery.InProgress"></div>
+                        <div class="progress-seg seg-todo"
+                             style="width:@BarPct(Metrics.Delivery.ToDo, Metrics.Delivery.Total)%"
+                             title="To Do: @Metrics.Delivery.ToDo"></div>
+                    </div>
+                    <div class="progress-legend">
+                        <span class="leg-item leg-done">Done @Metrics.Delivery.Done</span>
+                        <span class="leg-item leg-progress">In Progress @Metrics.Delivery.InProgress</span>
+                        <span class="leg-item leg-todo">To Do @Metrics.Delivery.ToDo</span>
+                    </div>
+                    <div class="metric-rows">
+                        <div class="metric-row">
+                            <span class="mr-label">Task completion</span>
+                            <span class="mr-value @GetCompletionClass(Metrics.Delivery.CompletionPct)">
+                                @EpicProgressCalculator.FormatPct(Metrics.Delivery.CompletionPct)
+                            </span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Remaining tasks</span>
+                            <span class="mr-value">@(Metrics.Delivery.InProgress + Metrics.Delivery.ToDo)</span>
+                        </div>
+                        @* Add remaning estimations and a progress bar *@
+
+                    </div>
+
+                    @if (Metrics.Sprint is not null)
+                    {
+                        var sp = Metrics.Sprint;
+                        <div class="panel-sprint-overlay">
+                            <div class="pso-title">Sprint scope</div>
+                            <div class="metric-row">
+                                <span class="mr-label">Tasks in sprint</span>
+                                <span class="mr-value">@sp.Total</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="mr-label">Done in sprint</span>
+                                <span class="mr-value @GetCompletionClass(sp.CompletionPct)">
+                                    @sp.Done (@EpicProgressCalculator.FormatPct(sp.CompletionPct))
+                                </span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="mr-label">Epic contribution</span>
+                                <span class="mr-value">@EpicProgressCalculator.FormatPct(sp.EpicContributionPct) of total</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- ── Effort Panel ───────────────────────────────────────────── -->
+            <div class="metric-panel panel-effort">
+                <div class="panel-head">
+                    <span class="panel-icon">⏱</span>
+                    <span class="panel-title">Effort</span>
+                    <span class="panel-scope">Epic-wide</span>
+                </div>
+                <div class="panel-body">
+                    <div class="effort-bar-wrap">
+                        <div class="effort-bar-fill @GetEffortBarClass(Metrics.Effort.EffortPct)"
+                             style="width:@(Math.Min(Metrics.Effort.EffortPct, 100).ToString("F1", System.Globalization.CultureInfo.InvariantCulture))%"></div>
+                    </div>
+                    <div class="effort-bar-label">
+                        @EpicProgressCalculator.FormatPct(Metrics.Effort.EffortPct) logged
+                        @if (Metrics.Effort.IsApproxRemaining)
+                        {
+                            <span class="approx-note" title="JiraIssueModel does not expose RemainingEstimateSeconds; value approximated as Estimate − Spent">≈ approx</span>
+                        }
+                    </div>
+                    <div class="metric-rows">
+                        <div class="metric-row">
+                            <span class="mr-label">Total estimated</span>
+                            <span class="mr-value">@EpicProgressCalculator.FormatSeconds(Metrics.Effort.TotalEstimateSec)</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Hours logged</span>
+                            <span class="mr-value">@EpicProgressCalculator.FormatSeconds(Metrics.Effort.SpentSec)</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Remaining est.</span>
+                            <span class="mr-value">@EpicProgressCalculator.FormatSeconds(Metrics.Effort.RemainingEstSec)</span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Effort logged</span>
+                            <span class="mr-value @GetEffortClass(Metrics.Effort.EffortPct)">
+                                @EpicProgressCalculator.FormatPct(Metrics.Effort.EffortPct)
+                            </span>
+                        </div>
+                    </div>
+
+                    @if (Metrics.Sprint is not null)
+                    {
+                        var sp = Metrics.Sprint;
+                        <div class="panel-sprint-overlay">
+                            <div class="pso-title">Sprint scope</div>
+                            <div class="metric-row">
+                                <span class="mr-label">Sprint estimated</span>
+                                <span class="mr-value">@EpicProgressCalculator.FormatSeconds(sp.EstimateSec)</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="mr-label">Sprint logged</span>
+                                <span class="mr-value">@EpicProgressCalculator.FormatSeconds(sp.SpentSec)</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="mr-label">Sprint remaining</span>
+                                <span class="mr-value">@EpicProgressCalculator.FormatSeconds(sp.RemainingEstSec)</span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="mr-label">Sprint effort %</span>
+                                <span class="mr-value @GetEffortClass(sp.EffortPct)">@EpicProgressCalculator.FormatPct(sp.EffortPct)</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- ── Risk Panel ─────────────────────────────────────────────── -->
+            <div class="metric-panel panel-risk">
+                <div class="panel-head">
+                    <span class="panel-icon">⚠</span>
+                    <span class="panel-title">Risk Indicators</span>
+                    <span class="panel-scope">Epic-wide</span>
+                </div>
+                <div class="panel-body">
+                    <div class="metric-rows">
+                        <div class="metric-row">
+                            <span class="mr-label">Tasks without estimate</span>
+                            <span class="mr-value @RiskClass(Metrics.Risk.Unestimated)">
+                                @Metrics.Risk.Unestimated
+                                @RiskLabel(Metrics.Risk.Unestimated, Metrics.Delivery.Total)
+                            </span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Unassigned tasks</span>
+                            <span class="mr-value @RiskClass(Metrics.Risk.Unassigned)">
+                                @Metrics.Risk.Unassigned
+                                @RiskLabel(Metrics.Risk.Unassigned, Metrics.Delivery.Total)
+                            </span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Over-logged tasks</span>
+                            <span class="mr-value @RiskClass(Metrics.Risk.Overlogged)"
+                                  title="TimeSpent > OriginalEstimate">
+                                @Metrics.Risk.Overlogged
+                                @RiskLabel(Metrics.Risk.Overlogged, Metrics.Delivery.Total)
+                            </span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Stale in progress</span>
+                            <span class="mr-value @RiskClass(Metrics.Risk.StaleInProgress)"
+                                  title="In Progress with no worklog in the last 2 days">
+                                @Metrics.Risk.StaleInProgress
+                                @RiskLabel(Metrics.Risk.StaleInProgress, Metrics.Delivery.InProgress)
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="risk-summary @GetOverallRiskClass()">
+                        @GetOverallRiskLabel()
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Sprint Snapshot Panel (or placeholder) ─────────────────── -->
+            @if (Metrics.Sprint is not null)
+            {
+                var sp = Metrics.Sprint;
+                <div class="metric-panel panel-sprint">
+                    <div class="panel-head">
+                        <span class="panel-icon">🏃</span>
+                        <span class="panel-title">Sprint Snapshot</span>
+                        <span class="panel-scope">@sp.SprintName</span>
+                    </div>
+                    <div class="panel-body">
+                        <div class="progress-stacked">
+                            <div class="progress-seg seg-done"
+                                 style="width:@BarPct(sp.Done, sp.Total)%"></div>
+                            <div class="progress-seg seg-progress"
+                                 style="width:@BarPct(sp.InProgress, sp.Total)%"></div>
+                            <div class="progress-seg seg-todo"
+                                 style="width:@BarPct(sp.ToDo, sp.Total)%"></div>
+                        </div>
+                        <div class="progress-legend">
+                            <span class="leg-item leg-done">Done @sp.Done</span>
+                            <span class="leg-item leg-progress">In Progress @sp.InProgress</span>
+                            <span class="leg-item leg-todo">To Do @sp.ToDo</span>
+                        </div>
+                        <div class="metric-rows">
+                            <div class="metric-row">
+                                <span class="mr-label">Sprint completion</span>
+                                <span class="mr-value @GetCompletionClass(sp.CompletionPct)">
+                                    @EpicProgressCalculator.FormatPct(sp.CompletionPct)
+                                </span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="mr-label">Effort logged</span>
+                                <span class="mr-value @GetEffortClass(sp.EffortPct)">
+                                    @EpicProgressCalculator.FormatPct(sp.EffortPct)
+                                </span>
+                            </div>
+                            <div class="metric-row">
+                                <span class="mr-label">Epic contribution</span>
+                                <span class="mr-value">@EpicProgressCalculator.FormatPct(sp.EpicContributionPct)</span>
+                            </div>
+                            @if (sp.SprintEnd.HasValue)
+                            {
+                                var daysLeft = (int)(sp.SprintEnd.Value - DateTime.Today).TotalDays;
+                                <div class="metric-row">
+                                    <span class="mr-label">Days remaining</span>
+                                    <span class="mr-value @(daysLeft < 0 ? "val-danger" : daysLeft <= 2 ? "val-warn" : "")">
+                                        @(daysLeft < 0 ? $"{Math.Abs(daysLeft)}d overdue" : $"{daysLeft}d")
+                                    </span>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <div class="metric-panel panel-sprint panel-empty">
+                    <div class="panel-head">
+                        <span class="panel-icon">🏃</span>
+                        <span class="panel-title">Sprint Snapshot</span>
+                    </div>
+                    <div class="panel-empty-body">
+                        <p>Enter a Sprint ID above to see sprint-scoped metrics.</p>
+                    </div>
+                </div>
+            }
+
+        </div><!-- /epd-panels -->
+
+        <!-- ═══ ISSUE TABLE ═══════════════════════════════════════════════════ -->
+        <div class="epd-table-section">
+            <div class="table-header-bar">
+                <div class="table-title">
+                    @if (SprintData is not null)
+                    {
+                        <span>Issues in Sprint</span>
+                        <span class="table-count">@FilteredSprintIssues.Count()</span>
+                    }
+                    else
+                    {
+                        <span>All Epic Issues</span>
+                        <span class="table-count">@FilteredEpicIssues.Count()</span>
+                    }
+                </div>
+                <div class="table-filters">
+                    <input class="input input-sm" placeholder="Search key / summary…"
+                           @bind="FilterText" @bind:event="oninput" />
+                    <select class="input input-sm" @bind="FilterStatus">
+                        <option value="">All Statuses</option>
+                        @foreach (var s in AllStatuses)
+                        {
+                            <option value="@s">@s</option>
+                        }
+                    </select>
+                    <select class="input input-sm" @bind="FilterType">
+                        <option value="">All Types</option>
+                        @foreach (var t in AllTypes)
+                        {
+                            <option value="@t">@t</option>
+                        }
+                    </select>
+                    <select class="input input-sm" @bind="FilterAssignee">
+                        <option value="">All Assignees</option>
+                        @foreach (var a in AllAssignees)
+                        {
+                            <option value="@a">@a</option>
+                        }
+                    </select>
+                    <button class="btn small" @onclick="ClearFilters">Clear</button>
+                </div>
+            </div>
+
+            @if (SprintData is not null)
+            {
+                <!-- Sprint Issues Table (SprintIssue — richer fields) -->
+                <div class="table-scroll">
+                    <table class="issues-table">
+                        <thead>
+                            <tr>
+                                <th>Key</th>
+                                <th>Summary</th>
+                                <th>Type</th>
+                                <th>Priority</th>
+                                <th>Status</th>
+                                <th>Assignee</th>
+                                <th>Estimate</th>
+                                <th>Logged</th>
+                                <th>Remaining</th>
+                                <th>Last Activity</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var issue in FilteredSprintIssues)
+                            {
+                                var si = issue;
+                                <tr class="issue-row @(si.StatusCategoryKey?.ToLower() == "done" ? "row-done" : "")">
+                                    <td><span class="issue-key">@si.Key</span></td>
+                                    <td class="td-summary" title="@si.Summary">@si.Summary</td>
+                                    <td><span class="type-badge">@si.IssueType</span></td>
+                                    <td><span class="priority-badge priority-@(si.Priority?.ToLower() ?? "medium")">@(si.Priority ?? "-")</span></td>
+                                    <td><span class="status-badge @GetStatusClass(si.StatusCategoryKey)">@si.Status</span></td>
+                                    <td class="td-assignee">@(si.Assignee ?? "—")</td>
+                                    <td class="td-num">@(si.OriginalEstimateSeconds > 0 ? EpicProgressCalculator.FormatSeconds(si.OriginalEstimateSeconds) : "—")</td>
+                                    <td class="td-num @(si.TimeSpentSeconds > si.OriginalEstimateSeconds && si.OriginalEstimateSeconds > 0 ? "val-danger" : "")">
+                                        @(si.TimeSpentSeconds > 0 ? EpicProgressCalculator.FormatSeconds(si.TimeSpentSeconds) : "—")
+                                    </td>
+                                    <td class="td-num">@(si.RemainingEstimateSeconds > 0 ? EpicProgressCalculator.FormatSeconds(si.RemainingEstimateSeconds) : "—")</td>
+                                    <td class="td-num @(si.DaysSinceLastWorklog > 2 && si.StatusCategoryKey?.ToLower() == "indeterminate" ? "val-warn" : "")">
+                                        @(si.DaysSinceLastWorklog > 0 ? $"{si.DaysSinceLastWorklog}d ago" : "Today")
+                                    </td>
+                                </tr>
+                            }
+                            @if (!FilteredSprintIssues.Any())
+                            {
+                                <tr><td colspan="10" class="td-empty">No issues match the current filters.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            else
+            {
+                <!-- Epic Issues Table (JiraIssueModel) -->
+                <div class="table-scroll">
+                    <table class="issues-table">
+                        <thead>
+                            <tr>
+                                <th></th>
+                                <th>Key</th>
+                                <th>Summary</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                                <th>Assignee</th>
+                                <th>Estimate</th>
+                                <th>Logged</th>
+                                <th>Remaining ≈</th>
+                                <th>Progress %</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var issue in FilteredEpicIssues)
+                            {
+                                var ei = issue;
+
+                                var original = (long)ei.OriginalEstimateSeconds;
+                                var spent = (long)ei.TimeSpentSeconds;
+
+                                var remaining = original - spent;
+
+                                var progressPercent = original > 0
+                                ? (int)Math.Round((double)spent / original * 100)
+                                    : 0;
+
+                                    <tr class="issue-row @(ei.StatusCategoryKey?.ToLower() == "done" ? "row-done" : "")"
+                                        @onclick="() => ToggleExpand(ei)">
+
+                                        <td class="td-expand">@(ei.IsExpanded ? "▾" : "▸")</td>
+                                        <td><span class="issue-key">@ei.Key</span></td>
+                                        <td class="td-summary" title="@ei.Summary">@ei.Summary</td>
+                                        <td><span class="type-badge">@ei.IssueType</span></td>
+                                        <td><span class="status-badge @GetStatusClass(ei.StatusCategoryKey)">@ei.Status</span></td>
+                                        <td class="td-assignee">
+                                            @(
+                                                                        string.IsNullOrWhiteSpace(ei.Assignee) ? "—" : ei.Assignee
+                                                                        )
+                                        </td>
+
+                                        <td class="td-num">
+                                            @(original > 0
+                                                                        ? EpicProgressCalculator.FormatSeconds(original)
+                                                                        : "—")
+                                        </td>
+
+                                        <td class="td-num @(spent > original && original > 0 ? "val-danger" : "")">
+                                            @(spent > 0
+                                                                        ? EpicProgressCalculator.FormatSeconds(spent)
+                                                                        : "—")
+                                        </td>
+
+                                        <td class="td-num">
+                                        @(EpicProgressCalculator.FormatSeconds(remaining))
+                                        </td>
+
+                                        <!-- ✅ Progress bar -->
+                                        <td class="td-progress">
+                                            @if (original > 0)
+                                            {
+                                                <div class="progress">
+                                                    <div class="progress-bars
+                                                         @(progressPercent > 100 ? "progress-bar-danger" : (progressPercent < 100 ? "progress-bar-in" : "progress-bar-ok"))"
+                                                         style="width:@progressPercent%">
+                                                    </div>
+                                                </div>
+                                                <span class="progress-text">@progressPercent%</span>
+                                            }
+                                            else
+                                            {
+                                                <span>—</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                @if (ei.IsExpanded && ei.Worklogs?.Count > 0)
+                                {
+                                    <tr class="worklog-row">
+                                        <td colspan="10">
+                                            <div class="worklog-list">
+                                                @foreach (var wl in ei.Worklogs.OrderByDescending(w => w.Started))
+                                                {
+                                                    <div class="worklog-entry">
+                                                        <span class="wl-author">@wl.Author</span>
+                                                        <span class="wl-time">@wl.TimeSpent</span>
+                                                        <span class="wl-date">@wl.Started.ToString("dd MMM yyyy")</span>
+                                                        @if (!string.IsNullOrWhiteSpace(wl.Comment))
+                                                        {
+                                                            <span class="wl-comment">@wl.Comment</span>
+                                                        }
+                                                    </div>
+                                                }
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                                @if (ei.IsExpanded && (ei.Worklogs is null || ei.Worklogs.Count == 0))
+                                {
+                                    <tr class="worklog-row">
+                                        <td colspan="9" class="td-empty">No worklogs recorded.</td>
+                                    </tr>
+                                }
+                            }
+                            @if (!FilteredEpicIssues.Any())
+                            {
+                                <tr><td colspan="9" class="td-empty">No issues match the current filters.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div><!-- /epd-table-section -->
+
+    } @* /Metrics is not null *@
+    else if (!IsLoading && EpicData is null)
+    {
+        <div class="epd-empty">
+            <div class="empty-icon">📊</div>
+            <p>Enter an epic key above to load progress metrics.</p>
+            <p class="empty-sub">Sprints can be filtered once the epic is loaded.</p>
+        </div>
+    }
+
+</div><!-- /epd-root -->
+
+@code {
+    // ───────────────────────────────────────────────────────────
+    // State
+    // ───────────────────────────────────────────────────────────
+    private JiraEpicReport? EpicData { get; set; }
+    private SprintReport?   SprintData { get; set; }
+    private EpicProgressResult? Metrics { get; set; }
+
+    private string EpicKeyInput  { get; set; } = "";
+    private string SprintIdInput { get; set; } = "";
+
+    private bool IsLoadingEpic   { get; set; }
+    private bool IsLoadingSprint { get; set; }
+    private bool IsLoading => IsLoadingEpic || IsLoadingSprint;
+
+    private string? InfoMessage  { get; set; }
+    private string? ErrorMessage { get; set; }
+
+    // Issue table filters
+    private string FilterText     { get; set; } = "";
+    private string FilterStatus   { get; set; } = "";
+    private string FilterType     { get; set; } = "";
+    private string FilterAssignee { get; set; } = "";
+
+    // ───────────────────────────────────────────────────────────
+    // Derived filter source lists
+    // ───────────────────────────────────────────────────────────
+    private IEnumerable<string> AllStatuses => SprintData is not null
+        ? SprintData.Issues.Select(i => i.Status).Where(s => !string.IsNullOrEmpty(s)).Distinct().OrderBy(s => s)
+        : (EpicData?.Issues.Select(i => i.Status).Where(s => !string.IsNullOrEmpty(s)).Distinct().OrderBy(s => s)
+           ?? Enumerable.Empty<string>());
+
+    private IEnumerable<string> AllTypes => SprintData is not null
+        ? SprintData.Issues.Select(i => i.IssueType).Where(t => !string.IsNullOrEmpty(t)).Distinct().OrderBy(t => t)
+        : (EpicData?.Issues.Select(i => i.IssueType).Where(t => !string.IsNullOrEmpty(t)).Distinct().OrderBy(t => t)
+           ?? Enumerable.Empty<string>());
+
+    private IEnumerable<string> AllAssignees => SprintData is not null
+        ? SprintData.Issues.Select(i => i.Assignee).Where(a => !string.IsNullOrEmpty(a)).Distinct().OrderBy(a => a)
+        : (EpicData?.Issues.Select(i => i.Assignee).Where(a => !string.IsNullOrEmpty(a)).Distinct().OrderBy(a => a)
+           ?? Enumerable.Empty<string>());
+
+    // ───────────────────────────────────────────────────────────
+    // Filtered issue collections
+    // ───────────────────────────────────────────────────────────
+    private IEnumerable<JiraIssueModel> FilteredEpicIssues =>
+        (EpicData?.Issues ?? Enumerable.Empty<JiraIssueModel>())
+        .Where(i => string.IsNullOrEmpty(FilterText)     || MatchesText(i.Key, i.Summary, FilterText))
+        .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status == FilterStatus)
+        .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
+        .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee);
+
+    private IEnumerable<SprintIssue> FilteredSprintIssues =>
+        (SprintData?.Issues ?? Enumerable.Empty<SprintIssue>())
+        .Where(i => string.IsNullOrEmpty(FilterText)     || MatchesText(i.Key, i.Summary, FilterText))
+        .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status == FilterStatus)
+        .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
+        .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee);
+
+    private static bool MatchesText(string key, string summary, string text) =>
+        key.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+        summary.Contains(text, StringComparison.OrdinalIgnoreCase);
+
+    // ───────────────────────────────────────────────────────────
+    // Load / filter actions
+    // ───────────────────────────────────────────────────────────
+    private async Task LoadEpicAsync()
+    {
+        ErrorMessage = null;
+        InfoMessage  = null;
+
+        var key = EpicKeyInput.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(key)) { ErrorMessage = "Enter an epic key."; return; }
+
+        IsLoadingEpic = true;
+        ClearFilters();
+
+        // Clear sprint data so we don't show stale sprint metrics from a previous load
+        SprintData  = null;
+        SprintIdInput = "";
+
+        try
+        {
+            EpicData = await JiraService.GetEpicReportAsync(key);
+            Metrics  = EpicProgressCalculator.Compute(EpicData);
+            InfoMessage = $"Loaded {EpicData.Issues.Count} issues for {EpicData.Key}.";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to load epic: {ex.Message}";
+            EpicData = null;
+            Metrics  = null;
+        }
+        finally
+        {
+            IsLoadingEpic = false;
+        }
+    }
+
+    private async Task ApplySprintFilterAsync()
+    {
+        ErrorMessage = null;
+        InfoMessage  = null;
+
+        if (EpicData is null) { ErrorMessage = "Load an epic first."; return; }
+
+        if (!int.TryParse(SprintIdInput, out var sprintId))
+        {
+            ErrorMessage = "Sprint ID must be a valid integer.";
+            return;
+        }
+
+        IsLoadingSprint = true;
+        ClearFilters();
+
+        try
+        {
+            // GetEpicSprintForecastAsync scopes issues to the intersection of epic + sprint
+            SprintData = await JiraService.GetEpicSprintForecastAsync(EpicData.Key, sprintId);
+
+            // Recompute — all epic-wide metrics stay the same, sprint overlay is added
+            Metrics = EpicProgressCalculator.Compute(EpicData, SprintData);
+
+            InfoMessage = SprintData.Issues.Count == 0
+                ? $"No issues found for {EpicData.Key} in sprint {sprintId}."
+                : $"Sprint filter applied: {SprintData.Issues.Count} issues in {SprintData.SprintName}.";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Failed to apply sprint filter: {ex.Message}";
+            SprintData = null;
+            Metrics    = EpicProgressCalculator.Compute(EpicData);
+        }
+        finally
+        {
+            IsLoadingSprint = false;
+        }
+    }
+
+    /// <summary>
+    /// Remove sprint filter — instantly reverts all metrics to epic-wide values.
+    /// No additional API call needed; EpicData is still in memory.
+    /// </summary>
+    private void ClearSprintFilter()
+    {
+        SprintData    = null;
+        SprintIdInput = "";
+        if (EpicData is not null)
+            Metrics = EpicProgressCalculator.Compute(EpicData);
+        ClearFilters();
+        InfoMessage = "Sprint filter cleared. Showing full epic metrics.";
+    }
+
+    private void ClearFilters()
+    {
+        FilterText = FilterStatus = FilterType = FilterAssignee = "";
+    }
+
+    private async Task OnEpicKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadEpicAsync();
+    }
+
+    private void ToggleExpand(JiraIssueModel issue) => issue.IsExpanded = !issue.IsExpanded;
+
+    // ───────────────────────────────────────────────────────────
+    // CSS class helpers (presentation only — no logic)
+    // ───────────────────────────────────────────────────────────
+    private static string GetStatusClass(string? cat) => (cat ?? "new").ToLower() switch
+    {
+        "done"          => "badge-done",
+        "indeterminate" => "badge-progress",
+        _               => "badge-todo"
+    };
+
+    private static string GetEpicStatusClass(string? cat) => (cat ?? "new").ToLower() switch
+    {
+        "done"          => "badge-done",
+        "indeterminate" => "badge-progress",
+        _               => "badge-todo"
+    };
+
+    private static string GetCompletionClass(double pct) =>
+        pct >= 80 ? "val-good" : pct >= 50 ? "val-warn" : "val-neutral";
+
+    private static string GetCompletionPillClass(double pct) =>
+        pct >= 80 ? "stat-green" : pct >= 50 ? "stat-amber" : "";
+
+    private static string GetEffortClass(double pct) =>
+        pct > 110 ? "val-danger" : pct > 90 ? "val-warn" : "val-neutral";
+
+    private static string GetEffortPillClass(double pct) =>
+        pct > 110 ? "stat-red" : pct > 90 ? "stat-amber" : "";
+
+    private static string GetEffortBarClass(double pct) =>
+        pct > 100 ? "bar-over" : pct > 80 ? "bar-high" : pct > 40 ? "bar-mid" : "bar-low";
+
+    private static string RiskClass(int count) =>
+        count == 0 ? "val-good" : count <= 2 ? "val-warn" : "val-danger";
+
+    private static string RiskLabel(int count, int of) =>
+        of > 0 ? $"({count * 100 / of}%)" : "";
+
+    private string GetOverallRiskClass()
+    {
+        if (Metrics is null) return "";
+        var r = Metrics.Risk;
+        var total = Metrics.Delivery.Total;
+        if (total == 0) return "risk-ok";
+        var riskPct = (r.Unestimated + r.StaleInProgress + r.Overlogged) * 100 / total;
+        return riskPct >= 30 ? "risk-high" : riskPct >= 10 ? "risk-med" : "risk-ok";
+    }
+
+    private string GetOverallRiskLabel()
+    {
+        var cls = GetOverallRiskClass();
+        return cls switch
+        {
+            "risk-high" => "High risk — multiple indicators need attention",
+            "risk-med"  => "Medium risk — some items need attention",
+            _           => "Low risk — indicators look healthy"
+        };
+    }
+
+    private static string BarPct(int count, int total) =>
+        (total > 0 ? Math.Round(count * 100.0 / total, 1) : 0)
+            .ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
+}
+
+<style>
+    /* ─── Root ─── */
+    .epd-root {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+    }
+
+    /* ─── Header ─── */
+    .epd-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .epd-title  { font-size: 22px; font-weight: 700; color: #111827; margin: 0; }
+    .epd-title-block { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+
+    .epd-epic-badge {
+        background: #eff6ff; color: #1d4ed8;
+        border: 1px solid #bfdbfe; border-radius: 20px;
+        padding: 2px 12px; font-size: 13px; font-weight: 700;
+    }
+
+    .epd-epic-summary {
+        font-size: 13px; color: #6b7280;
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 500px;
+    }
+
+    /* ─── Config Bar ─── */
+    .epd-config-bar {
+        display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end;
+        padding: 14px 18px; background: #fff;
+        border: 1px solid #e5e7eb; border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .cfg-group   { display: flex; flex-direction: column; gap: 5px; }
+    .cfg-row     { display: flex; gap: 7px; align-items: center; }
+    .cfg-hint    { font-size: 10px; color: #9ca3af; font-weight: 400; text-transform: none; letter-spacing: 0; }
+    .cfg-divider { width: 1px; background: #e5e7eb; align-self: stretch; }
+
+    .cfg-status-group { display: flex; align-items: center; gap: 10px; }
+    .cfg-assignee     { font-size: 13px; color: #374151; }
+
+    label {
+        font-size: 11px; font-weight: 600; color: #6b7280;
+        text-transform: uppercase; letter-spacing: 0.04em;
+    }
+
+    /* ─── Inputs & Buttons ─── */
+    .input {
+        padding: 8px 11px; border: 1px solid #d1d5db; border-radius: 8px;
+        background: #f9fafb; font-size: 13px; color: #111827; transition: border-color 0.2s;
+    }
+    .input:focus {
+        outline: none; border-color: #3b82f6; background: #fff;
+        box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+    }
+    .input-sm { width: 140px; }
+
+    .btn {
+        padding: 8px 15px; border-radius: 8px; border: 1px solid #d1d5db;
+        background: #f9fafb; color: #374151; font-size: 13px; font-weight: 600;
+        cursor: pointer; transition: all 0.15s; white-space: nowrap;
+    }
+    .btn:hover:not(:disabled) { background: #f3f4f6; border-color: #9ca3af; }
+    .btn.primary { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+    .btn.primary:hover:not(:disabled) { background: #2563eb; }
+    .btn.small   { padding: 5px 10px; font-size: 12px; }
+    .btn.danger-light { background: #fef2f2; border-color: #fca5a5; color: #dc2626; }
+    .btn.danger-light:hover:not(:disabled) { background: #fee2e2; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* ─── Messages ─── */
+    .epd-info, .epd-error {
+        padding: 10px 16px; border-radius: 8px; font-size: 13px;
+    }
+    .epd-info  { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; }
+    .epd-error { background: #fef2f2; color: #dc2626; border: 1px solid #fca5a5; }
+
+    .epd-loading {
+        display: flex; align-items: center; gap: 10px;
+        padding: 12px 16px; color: #3b82f6; font-size: 13px;
+    }
+
+    .loading-spinner {
+        display: inline-block; width: 14px; height: 14px;
+        border: 2px solid #bfdbfe; border-top-color: #3b82f6;
+        border-radius: 50%; animation: spin 0.7s linear infinite;
+    }
+    @@keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Sprint Banner ─── */
+    .sprint-banner {
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+        padding: 8px 16px; background: #f0f9ff;
+        border: 1px solid #bae6fd; border-radius: 8px;
+        font-size: 13px; color: #0369a1;
+    }
+    .sprint-banner-label { font-weight: 700; }
+    .sprint-banner-dates { color: #0284c7; }
+    .sprint-banner-scope { margin-left: auto; font-size: 11px; color: #64748b; }
+
+    /* ─── Stats Strip ─── */
+    .epd-stats-strip { display: flex; gap: 8px; flex-wrap: wrap; }
+
+    .stat-pill {
+        flex: 1 1 90px; min-width: 80px;
+        background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+        padding: 10px 12px; text-align: center;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .stat-pill-value { display: block; font-size: 20px; font-weight: 700; color: #111827; }
+    .stat-pill-label { display: block; font-size: 10px; color: #6b7280; font-weight: 500; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 2px; }
+
+    .stat-green { border-color: #a7f3d0; background: #f0fdf4; }
+    .stat-green .stat-pill-value { color: #065f46; }
+    .stat-blue  { border-color: #bfdbfe; background: #eff6ff; }
+    .stat-blue .stat-pill-value  { color: #1e40af; }
+    .stat-grey  { border-color: #e5e7eb; background: #f9fafb; }
+    .stat-grey .stat-pill-value  { color: #374151; }
+    .stat-amber { border-color: #fde68a; background: #fffbeb; }
+    .stat-amber .stat-pill-value { color: #92400e; }
+    .stat-red   { border-color: #fca5a5; background: #fef2f2; }
+    .stat-red .stat-pill-value   { color: #991b1b; }
+
+    /* ─── Metric Panels ─── */
+    .epd-panels {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+    }
+
+    .metric-panel {
+        background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+        overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .panel-head {
+        display: flex; align-items: center; gap: 8px;
+        padding: 12px 16px; border-bottom: 1px solid #f3f4f6;
+        background: #fafbfc;
+    }
+    .panel-icon  { font-size: 16px; }
+    .panel-title { font-weight: 700; font-size: 14px; color: #1f2937; }
+    .panel-scope { margin-left: auto; font-size: 11px; color: #9ca3af; font-weight: 500; }
+
+    .panel-delivery .panel-head { border-left: 3px solid #3b82f6; }
+    .panel-effort .panel-head   { border-left: 3px solid #8b5cf6; }
+    .panel-risk .panel-head     { border-left: 3px solid #f59e0b; }
+    .panel-sprint .panel-head   { border-left: 3px solid #10b981; }
+
+    .panel-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+
+    .panel-empty { opacity: 0.6; }
+    .panel-empty-body {
+        padding: 24px 16px; text-align: center; color: #9ca3af;
+        font-size: 13px;
+    }
+
+    /* ─── Progress bars ─── */
+    .progress-stacked {
+        display: flex; height: 10px; border-radius: 5px; overflow: hidden;
+        background: #f3f4f6;
+    }
+    .progress-seg { height: 100%; transition: width 0.4s; }
+    .seg-done     { background: #10b981; }
+    .seg-progress { background: #3b82f6; }
+    .seg-todo     { background: #d1d5db; }
+
+    .progress-legend { display: flex; gap: 12px; font-size: 11px; }
+    .leg-item         { display: flex; align-items: center; gap: 4px; }
+    .leg-item::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; }
+    .leg-done::before     { background: #10b981; }
+    .leg-progress::before { background: #3b82f6; }
+    .leg-todo::before     { background: #d1d5db; }
+
+    /* Effort bar */
+    .effort-bar-wrap {
+        height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden;
+    }
+    .effort-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+    .bar-low  { background: #10b981; }
+    .bar-mid  { background: #3b82f6; }
+    .bar-high { background: #f59e0b; }
+    .bar-over { background: #ef4444; }
+
+    .effort-bar-label { font-size: 11px; color: #6b7280; }
+    .approx-note {
+        margin-left: 4px; font-size: 10px; color: #9ca3af;
+        border-bottom: 1px dashed #d1d5db; cursor: help;
+    }
+
+    /* ─── Metric rows ─── */
+    .metric-rows { display: flex; flex-direction: column; gap: 6px; }
+
+    .metric-row {
+        display: flex; justify-content: space-between; align-items: center;
+        font-size: 13px; padding: 5px 0;
+        border-bottom: 1px solid #f9fafb;
+    }
+    .metric-row:last-child { border-bottom: none; }
+
+    .mr-label { color: #6b7280; }
+    .mr-value { font-weight: 700; color: #1f2937; }
+
+    .val-good    { color: #059669 !important; }
+    .val-warn    { color: #d97706 !important; }
+    .val-danger  { color: #dc2626 !important; }
+    .val-neutral { color: #374151 !important; }
+
+    /* Sprint overlay within a panel */
+    .panel-sprint-overlay {
+        background: #f0fdf4; border: 1px solid #a7f3d0; border-radius: 8px;
+        padding: 10px 12px;
+    }
+    .pso-title {
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: #059669; margin-bottom: 6px;
+    }
+
+    /* ─── Risk summary ─── */
+    .risk-summary {
+        padding: 8px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+    }
+    .risk-ok   { background: #f0fdf4; color: #065f46; }
+    .risk-med  { background: #fffbeb; color: #92400e; }
+    .risk-high { background: #fef2f2; color: #991b1b; }
+
+    /* ─── Issue Table ─── */
+    .epd-table-section {
+        background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+        overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .table-header-bar {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 12px 16px; border-bottom: 1px solid #f3f4f6; background: #fafbfc;
+        flex-wrap: wrap; gap: 8px;
+    }
+
+    .table-title { font-weight: 700; font-size: 14px; color: #1f2937; display: flex; align-items: center; gap: 8px; }
+    .table-count {
+        background: #e0e7ff; color: #3730a3; border-radius: 10px;
+        padding: 0 8px; font-size: 12px; font-weight: 700;
+    }
+
+    .table-filters { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+    .table-scroll { overflow-x: auto; max-height: 50vh; overflow-y: auto; }
+
+    .issues-table {
+        width: 100%; border-collapse: collapse; font-size: 12px;
+    }
+
+    .issues-table thead th {
+        position: sticky; top: 0; z-index: 2;
+        padding: 8px 10px; text-align: left; white-space: nowrap;
+        background: #f8fafc; border-bottom: 2px solid #e5e7eb;
+        font-size: 11px; font-weight: 700; color: #374151; text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .issues-table tbody td {
+        padding: 8px 10px; border-bottom: 1px solid #f3f4f6; vertical-align: middle;
+    }
+
+    .issue-row { cursor: pointer; transition: background 0.1s; }
+    .issue-row:hover { background: #f8fafc; }
+    .row-done { opacity: 0.6; }
+
+    .issue-key {
+        font-weight: 700; font-size: 11px; color: #1d4ed8;
+        background: #eff6ff; border-radius: 4px; padding: 2px 6px;
+        white-space: nowrap;
+    }
+
+    .td-summary { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1f2937; }
+    .td-num     { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .td-assignee { white-space: nowrap; color: #374151; }
+    .td-expand  { width: 24px; color: #9ca3af; cursor: pointer; }
+    .td-empty   { text-align: center; color: #9ca3af; padding: 20px !important; }
+
+    /* Status & type badges */
+    .status-badge {
+        border-radius: 20px; padding: 2px 9px; font-size: 11px; font-weight: 600;
+        display: inline-block; white-space: nowrap;
+    }
+    .badge-done     { background: #d1fae5; color: #065f46; }
+    .badge-progress { background: #dbeafe; color: #1e40af; }
+    .badge-todo     { background: #f3f4f6; color: #374151; }
+
+    .type-badge {
+        background: #e0e7ff; color: #3730a3;
+        border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .priority-badge {
+        border-radius: 4px; padding: 1px 6px; font-size: 11px; font-weight: 600;
+        white-space: nowrap;
+    }
+    .priority-highest, .priority-critical { background: #fef2f2; color: #991b1b; }
+    .priority-high   { background: #fff7ed; color: #c2410c; }
+    .priority-medium { background: #fefce8; color: #713f12; }
+    .priority-low    { background: #f0fdf4; color: #166534; }
+    .priority-lowest { background: #f0fdf4; color: #166534; }
+
+    /* Worklogs */
+    .worklog-row td { background: #f8fafc !important; padding: 4px 10px 10px 36px !important; }
+    .worklog-list   { display: flex; flex-direction: column; gap: 4px; }
+
+    .worklog-entry {
+        display: flex; gap: 10px; align-items: baseline;
+        font-size: 12px; padding: 4px 8px;
+        border-left: 3px solid #e0e7ff; background: #fff; border-radius: 4px;
+    }
+    .wl-author  { font-weight: 600; color: #374151; white-space: nowrap; }
+    .wl-time    { color: #3b82f6; font-weight: 600; white-space: nowrap; }
+    .wl-date    { color: #9ca3af; white-space: nowrap; }
+    .wl-comment { color: #6b7280; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 400px; }
+
+    /* ─── Empty state ─── */
+    .epd-empty {
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; padding: 48px; color: #9ca3af; text-align: center;
+        background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+    }
+    .empty-icon { font-size: 40px; margin-bottom: 14px; }
+    .empty-sub  { font-size: 12px; color: #d1d5db; margin-top: 4px; }
+
+    .td-progress {
+        min-width: 140px;
+    }
+
+    .progress {
+        background-color: #e5e7eb; /* gray-200 */
+        border-radius: 9999px;
+        height: 8px;
+        overflow: hidden;
+    }
+
+    .progress-bar {
+        height: 100%;
+        transition: width 0.3s ease-in-out;
+    }
+
+    .progress-bar-ok {
+        background-color: #22c55e; /* green-500 */
+    }
+
+    .progress-bar-in {
+        background-color: yellowgreen; 
+    }
+
+    .progress-bar-danger {
+        background-color: #ef4444; /* red-500 */
+    }
+
+    .progress-text {
+        font-size: 0.75rem;
+        margin-left: 0.35rem;
+        color: #374151;
+    }
+
+    </style>

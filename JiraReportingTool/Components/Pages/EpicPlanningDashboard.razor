@@ -31,6 +31,15 @@
         <button class="btn primary" @onclick="LoadEpicTasks">Load Tasks</button>
     </div>
 
+    <div class="toolbar-group">
+        <label>Time Off</label>
+        <button class="btn @(TimeOffMode ? "btn-timeoff-active" : "")"
+                @onclick="ToggleTimeOffMode"
+                title="Toggle Time Off Mode: click member cells to mark days off; click date headers to mark holidays">
+            @(TimeOffMode ? "Exit Time-Off Mode" : "Manage Time Off")
+        </button>
+    </div>
+
     <div class="toolbar-group epic-box">
         <button class="btn btn-outline-success" @onclick="ExportToExcel"
                 disabled="@(Report == null)"
@@ -68,56 +77,61 @@
             }
             else
             {
-                <ul class="task-list">
-                    @foreach (var t in AvailableTasks)
-                    {
-                        var isSelected = SelectedTask?.Id == t.Id;
-                        var assignmentInfo = GetTaskAssignmentInfo(t.Id);
-                        var isAssigned = assignmentInfo.Count > 0;
+                @foreach (var group in GetTasksGroupedByStatus())
+                {
+                    <div class="task-group-header status-@group.Key">
+                        @GetStatusGroupLabel(group.Key) <span class="task-group-count">@group.Count()</span>
+                    </div>
+                    <ul class="task-list">
+                        @foreach (var t in group.OrderBy(x => x.Key))
+                        {
+                            var isSelected = SelectedTask?.Id == t.Id;
+                            var assignmentInfo = GetTaskAssignmentInfo(t.Id);
+                            var isAssigned = assignmentInfo.Count > 0;
 
-                        <li class="task-item @(isSelected ? "selected" : "") @(isAssigned ? "assigned" : "")"
-                            @onclick="() => SelectTask(t)">
-                            <div class="task-header">
-                                <div class="task-title">@t.Key - @t.Summary</div>
-                                @if (isAssigned)
-                                {
-                                    <span class="task-assigned-badge">
-                                        ✓ Assigned
-                                    </span>
-                                }
-                            </div>
-                            <div class="task-meta">
-                                <span>@t.IssueType</span>
-                                <span>•</span>
-                                <span>@t.Status</span>
-                                <span>•</span>
-                                <span>@t.Assignee</span>
-                                <span>•</span>
-                                <span><strong>Est:</strong> @FormatEstimateHours(t.OriginalEstimate)</span>
-                            </div>
-                            @if (isAssigned)
-                            {
-                                <div class="task-assignments">
-                                    @foreach (var info in assignmentInfo)
+                            <li class="task-item @(isSelected ? "selected" : "") @(isAssigned ? "assigned" : "")"
+                                @onclick="() => SelectTask(t)">
+                                <div class="task-header">
+                                    <div class="task-title">@t.Key - @t.Summary</div>
+                                    @if (isAssigned)
                                     {
-                                        <div class="task-assignment-chip">
-                                            <span class="chip-team">@info.Team</span>
-                                            <span class="chip-name">@info.MemberName</span>
-                                            <span class="chip-dates">@info.From.ToString("dd-MMM") → @info.To.ToString("dd-MMM")</span>
-                                        </div>
+                                        <span class="task-assigned-badge">✓ Assigned</span>
                                     }
                                 </div>
-                            }
-                        </li>
-                    }
-                </ul>
+                                <div class="task-meta">
+                                    <span>@t.IssueType</span>
+                                    <span>•</span>
+                                    <span>@t.Status</span>
+                                    <span>•</span>
+                                    <span>@t.Assignee</span>
+                                    <span>•</span>
+                                    <span><strong>Est:</strong> @FormatEstimateHours(t.OriginalEstimate)</span>
+                                </div>
+                                @if (isAssigned)
+                                {
+                                    <div class="task-assignments">
+                                        @foreach (var info in assignmentInfo)
+                                        {
+                                            <div class="task-assignment-chip">
+                                                <span class="chip-team">@info.Team</span>
+                                                <span class="chip-name">@info.MemberName</span>
+                                                <span class="chip-dates">@info.From.ToString("dd-MMM") → @info.To.ToString("dd-MMM")</span>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
             }
         </div>
 
         <div class="panel-footer">
             <div class="muted">
                 <strong>How to schedule:</strong>
-                Select a task → click a cell to set start → click another cell in the same row to set end.
+                Select a task → click a cell to set the start date → click again on the same row to auto-schedule.
+                Tasks split automatically across days (max @(MaxHoursPerDay)h/day per member).
             </div>
         </div>
     </div>
@@ -137,7 +151,7 @@
                 <span class="pill warn">
                     Placing for: @TeamMembers.First(x => x.Id == PendingPlacement.TeamMemberId).Name
                     | Start: @PendingPlacement.Start.ToString("dd-MMM")
-                    (click an end date)
+                    (click again to auto-schedule from here)
                 </span>
                 <button class="btn small" @onclick="CancelPlacement">Cancel</button>
             }
@@ -150,8 +164,13 @@
                         <th class="sticky-col">Team Member</th>
                         @foreach (var d in VisibleDates)
                         {
-                            <th class="date-col @(IsWeekend(d) ? "weekend-col" : "")">
+                            var isHol = IsHoliday(d);
+                            <th class="date-col @(IsWeekend(d) ? "weekend-col" : "") @(isHol ? "holiday-col" : "")"
+                                style="cursor: @(TimeOffMode ? "pointer" : "default");"
+                                title="@(TimeOffMode ? (isHol ? "Click to remove holiday" : "Click to mark as holiday") : d.ToString("dddd, dd MMM yyyy"))"
+                                @onclick="() => OnDateHeaderClicked(d)">
                                 @d.ToString("dd-MMM", CultureInfo.InvariantCulture)
+                                @if (isHol) { <span class="holiday-star">H</span> }
                             </th>
                         }
                     </tr>
@@ -167,12 +186,11 @@
 
                         @foreach (var member in teamGroup)
                         {
-                            var lanedAssignments = GetLanedAssignments(member.Id);
-                            var maxLanes = GetMaxLanes(member.Id);
-                            var rowHeight = Math.Max(70, maxLanes * 34 + 30);
+                            var lanedBlocks = GetLanedBlocks(member.Id);
+                            var maxLanes    = GetMaxLanes(member.Id);
+                            var rowHeight   = Math.Max(70, maxLanes * 34 + 30);
 
                             <tr style="height: @(rowHeight)px;">
-                                <!-- AFTER -->
                                 <td class="sticky-col member-col">
                                     <div class="member-info">
                                         <span class="member-name">@member.Name</span>
@@ -182,65 +200,83 @@
                                 @for (int i = 0; i < VisibleDates.Count; i++)
                                 {
                                     var currentDate = VisibleDates[i];
-                                    var cellAssignments = lanedAssignments
-                                    .Where(la =>
-                                    {
-                                        var clampedFrom = la.Assignment.From < FromDate ? FromDate : la.Assignment.From;
-                                        return clampedFrom == currentDate;
-                                    })
-                                    .ToList();
 
-                                    var allocated = GetAllocatedHours(member.Id, currentDate);
-                                    var remaining = GetRemainingHours(member.Id, currentDate);
-                                    var usagePercent = MaxHoursPerDay > 0 ? (allocated / MaxHoursPerDay) * 100m : 0m;
-                                    var weekendClass = IsWeekend(currentDate) ? " weekend-cell" : "";
-                                    var cellClass = (allocated == 0m ? "cell stacked-cell"
-                                    : allocated >= MaxHoursPerDay ? "cell stacked-cell cell-full"
-                                    : "cell stacked-cell cell-partial") + weekendClass;
+                                    @* Blocks whose visible start date (clamped to range) falls on currentDate *@
+                                    var cellBlocks = lanedBlocks
+                                        .Where(lb =>
+                                        {
+                                            var clampedFrom = lb.Block.From < FromDate ? FromDate : lb.Block.From;
+                                            return clampedFrom == currentDate;
+                                        })
+                                        .ToList();
+
+                                    var allocated      = GetAllocatedHours(member.Id, currentDate);
+                                    var remaining      = GetRemainingHours(member.Id, currentDate);
+                                    var usagePercent   = MaxHoursPerDay > 0 ? (allocated / MaxHoursPerDay) * 100m : 0m;
+                                    var isWeekendDay   = IsWeekend(currentDate);
+                                    var isMemberOff    = IsMemberTimeOff(member.Id, currentDate);
+                                    var isHolidayDay   = IsHoliday(currentDate);
+                                    var isDayOffCell   = isMemberOff || isHolidayDay;
+                                    var weekendClass   = isWeekendDay ? " weekend-cell" : "";
+                                    var cellClass      = isDayOffCell
+                                                       ? "cell stacked-cell cell-dayoff" + weekendClass
+                                                       : (allocated == 0m   ? "cell stacked-cell"
+                                                         : allocated >= MaxHoursPerDay ? "cell stacked-cell cell-full"
+                                                         : "cell stacked-cell cell-partial") + weekendClass;
+                                    var cellTitle      = isDayOffCell
+                                                       ? (isHolidayDay ? "Holiday — no capacity" : "Time off — no capacity")
+                                                       : $"{allocated:0.#}h / {MaxHoursPerDay}h ({remaining:0.#}h remaining)";
 
                                     <td class="@cellClass"
-                                        title="@($"{allocated:0.#}h / {MaxHoursPerDay}h ({remaining:0.#}h remaining)")"
+                                        title="@cellTitle"
                                         @onclick="() => OnCalendarCellClicked(member.Id, currentDate)">
 
-                                        @* Background usage bar *@
-                                        @if (allocated > 0)
+                                        @* Time-off indicator label (non-weekend only, weekend already greyed) *@
+                                        @if (isDayOffCell && !isWeekendDay)
+                                        {
+                                            <div class="cell-dayoff-label">
+                                                @(isHolidayDay ? "holiday" : "off")
+                                            </div>
+                                        }
+
+                                        @* Background capacity usage bar *@
+                                        @if (allocated > 0 && !isDayOffCell)
                                         {
                                             <div class="cell-usage-bar" style="height: @(usagePercent)%;"></div>
                                         }
 
-                                        @* Hours label *@
-                                        @if (allocated > 0)
+                                        @* Actual daily allocation label *@
+                                        @if (allocated > 0 && !isDayOffCell)
                                         {
                                             <div class="cell-hours-label @(allocated >= MaxHoursPerDay ? "full" : "")">
                                                 @($"{allocated:0.#}h")
                                             </div>
                                         }
 
-                                        @foreach (var (assignment, lane) in cellAssignments)
+                                        @* Render a stacked block for each group starting on this date *@
+                                        @foreach (var (block, lane) in cellBlocks)
                                         {
-                                            var span = GetVisibleSpan(assignment);
-                                            var topOffset = lane * 34 + 22; // shifted down to make room for hours label
-                                            var widthPercent = span * 100;
-                                            var taskForBlock = AvailableTasks.FirstOrDefault(x => x.Id == assignment.TaskId);
-                                            var taskEst = taskForBlock is not null ? ParseJiraDurationToHours(taskForBlock.OriginalEstimate) : 0m;
-                                            var blockDays = assignment.To.DayNumber - assignment.From.DayNumber + 1;
-                                            var blockHPerDay = blockDays > 0 ? Math.Min(taskEst / blockDays, MaxHoursPerDay) : 0m;
+                                            var span       = GetBlockVisibleSpan(block);
+                                            var topOffset  = lane * 34 + 22;  // leave room for the hours label
+                                            var widthPct   = span * 100;
+                                            // Actual hours for this block on today's date (shows split correctly)
+                                            var blockToday = GetBlockHoursOnDate(block, currentDate);
 
                                             <div class="stacked-block"
-                                                 style="top: @(topOffset)px; width: calc(@(widthPercent)% - 6px);"
-                                                 title="@($"{GetTaskLabel(assignment.TaskId)} — {blockHPerDay:0.#}h/day")"
+                                                 style="top: @(topOffset)px; width: calc(@(widthPct)% - 6px);"
+                                                 title="@($"{GetTaskLabel(block.TaskId)} — {blockToday:0.#}h today")"
                                                  @onclick:stopPropagation="true">
                                                 <div class="stacked-block-content">
                                                     <span class="stacked-block-title">
-                                                        @GetTaskLabel(assignment.TaskId)
+                                                        @GetTaskLabel(block.TaskId)
                                                     </span>
                                                     <span class="stacked-block-range">
-                                                        @($"{blockHPerDay:0.#}h/d")
+                                                        @($"{blockToday:0.#}h/d")
                                                     </span>
                                                 </div>
                                                 <button class="btn-remove"
                                                         title="Remove"
-                                                        @onclick="() => RemoveAssignment(assignment)"
+                                                        @onclick="() => RemoveBlock(block.GroupId)"
                                                         @onclick:stopPropagation="true">
                                                     ✕
                                                 </button>
@@ -259,18 +295,42 @@
 
 @code
 {
-    // -----------------------------
-    // Minimal DTOs (replace with yours)
-    // -----------------------------
+    // ───────────────────────────────────────────────────────────
+    // Domain / View Models
+    // ───────────────────────────────────────────────────────────
     public record TeamMemberDto(Guid Id, string Name, string Team);
 
-    public class CalendarAssignment
+    /// <summary>
+    /// Stores one calendar day's scheduled hours for a single (task, member) pair.
+    /// Multiple TaskAllocations sharing the same GroupId represent a task that was
+    /// split across several days by the scheduling engine.
+    /// Example — 20 h task free each day:
+    ///   Day 1 → 6 h | Day 2 → 6 h | Day 3 → 6 h | Day 4 → 2 h
+    ///   All four records share the same GroupId and are shown as one visual block.
+    /// </summary>
+    public class TaskAllocation
     {
-        public Guid AssignmentId { get; set; } = Guid.NewGuid();
+        public Guid AllocationId { get; set; } = Guid.NewGuid();
+        /// <summary>Links all day-segments that belong to one "assign task" action.</summary>
+        public Guid GroupId { get; set; }
         public int TaskId { get; set; }
         public Guid TeamMemberId { get; set; }
-        public DateOnly From { get; set; }
-        public DateOnly To { get; set; }
+        public DateOnly Date { get; set; }
+        public decimal HoursAllocated { get; set; }
+    }
+
+    /// <summary>
+    /// Derived visual block for calendar rendering.
+    /// Computed from TaskAllocation groups (one block per GroupId); never stored directly.
+    /// From = earliest allocated date in the group, To = latest.
+    /// </summary>
+    private sealed class CalendarBlock
+    {
+        public Guid GroupId { get; init; }
+        public int TaskId { get; init; }
+        public Guid TeamMemberId { get; init; }
+        public DateOnly From { get; init; }
+        public DateOnly To { get; init; }
     }
 
     private class PendingPlacementState
@@ -293,7 +353,27 @@
     private JiraIssueModel? SelectedTask { get; set; }
 
     private List<TeamMemberDto> TeamMembers { get; set; } = new();
-    private List<CalendarAssignment> Assignments { get; set; } = new();
+    /// <summary>
+    /// Source of truth for all scheduled work.
+    /// One entry per (task, member, day) tuple — replaces the old range-based CalendarAssignment list.
+    /// Visual blocks and capacity totals are derived from this list on every render.
+    /// </summary>
+    private List<TaskAllocation> Allocations { get; set; } = new();
+
+    /// <summary>
+    /// Persists task metadata across epic loads so that calendar blocks for previously
+    /// loaded epics retain their labels after switching to a different epic.
+    /// Key = JiraIssueModel.Id (DB auto-increment ID, stable within a session).
+    /// </summary>
+    private Dictionary<int, JiraIssueModel> _taskCache = new();
+
+    // ── Time Off / Holidays ──
+    /// <summary>Global holidays — these dates count as off for ALL team members.</summary>
+    private HashSet<DateOnly> Holidays { get; set; } = new();
+    /// <summary>Per-member time off — individual dates a specific member is unavailable.</summary>
+    private Dictionary<Guid, HashSet<DateOnly>> MemberTimeOff { get; set; } = new();
+    /// <summary>When true, cell clicks mark/unmark time off instead of scheduling tasks.</summary>
+    private bool TimeOffMode { get; set; } = false;
 
     private List<DateOnly> VisibleDates { get; set; } = new();
 
@@ -301,9 +381,6 @@
 
     private string? ErrorMessage { get; set; }
     private string? InfoMessage { get; set; }
-
-    // Toggle: prevent overlaps per member
-    private bool PreventOverlaps { get; set; } = true;
 
     protected override void OnInitialized()
     {
@@ -395,9 +472,15 @@
 
         // Bind real issues from the report
         AvailableTasks = Report?.Issues?
-            .OrderBy(i => i.Key) // optional sorting
+            .OrderBy(i => i.Key)
             .ToList()
             ?? new List<JiraIssueModel>();
+
+        // BUG FIX: accumulate all loaded tasks in a persistent cache so that
+        // calendar blocks for previously loaded epics keep their labels after
+        // switching to a different epic. Allocations are NOT cleared here.
+        foreach (var t in AvailableTasks)
+            _taskCache[t.Id] = t;
 
         SelectedTask = null;
         PendingPlacement = null;
@@ -414,6 +497,34 @@
         PendingPlacement = null;
     }
 
+    private void ToggleTimeOffMode()
+    {
+        TimeOffMode = !TimeOffMode;
+        InfoMessage = TimeOffMode
+            ? "Time Off Mode ON — click member cells to mark/unmark days off; click date headers to mark holidays."
+            : "Time Off Mode OFF.";
+    }
+
+    // Groups AvailableTasks by StatusCategoryKey in priority order for the task list panel.
+    private IEnumerable<IGrouping<string, JiraIssueModel>> GetTasksGroupedByStatus()
+        => AvailableTasks
+            .GroupBy(t => (t.StatusCategoryKey ?? "new").ToLower())
+            .OrderBy(g => g.Key switch
+            {
+                "indeterminate" => 0,   // In Progress — most actionable, show first
+                "new"           => 1,   // To Do
+                "done"          => 2,   // Done — show last
+                _               => 99
+            });
+
+    private static string GetStatusGroupLabel(string statusKey) => statusKey switch
+    {
+        "indeterminate" => "In Progress",
+        "new"           => "To Do",
+        "done"          => "Done",
+        _               => statusKey
+    };
+
     // -----------------------------
     // Calendar interactions
     // -----------------------------
@@ -426,79 +537,158 @@
      // -----------------------------
     private const decimal MaxHoursPerDay = 6m;
 
-    // -----------------------------
-    // Per-cell allocated hours for a member on a specific date
-    // -----------------------------
+    // ───────────────────────────────────────────────────────────
+    // Capacity helpers
+    // ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the total hours already allocated to a member on a specific day
+    /// from any arbitrary allocation list (committed or provisional).
+    /// Static so the scheduling engine can call it without a component reference.
+    /// </summary>
+    private static decimal GetAllocatedHoursFromList(
+        Guid memberId, DateOnly date, IEnumerable<TaskAllocation> list)
+        => list
+            .Where(a => a.TeamMemberId == memberId && a.Date == date)
+            .Sum(a => a.HoursAllocated);
+
+    /// <summary>Returns committed allocated hours for a member on a specific date.</summary>
     private decimal GetAllocatedHours(Guid memberId, DateOnly date)
-    {
-        return Assignments
-            .Where(a => a.TeamMemberId == memberId && a.From <= date && a.To >= date)
-            .Sum(a =>
-            {
-                var task = AvailableTasks.FirstOrDefault(x => x.Id == a.TaskId);
-                if (task is null) return 0m;
-
-                var totalEstimate = ParseJiraDurationToHours(task.OriginalEstimate);
-                var assignmentDays = a.To.DayNumber - a.From.DayNumber + 1;
-
-                // Spread the estimate evenly across the assignment days
-                // Cap per-day at 6h
-                var perDay = assignmentDays > 0
-                    ? Math.Min(totalEstimate / assignmentDays, MaxHoursPerDay)
-                    : 0m;
-
-                return perDay;
-            });
-    }
+        => GetAllocatedHoursFromList(memberId, date, Allocations);
 
     private decimal GetRemainingHours(Guid memberId, DateOnly date)
     {
+        // Days off (weekends, holidays, member time off) have zero capacity
+        if (IsDayOff(memberId, date)) return 0m;
         return Math.Max(0m, MaxHoursPerDay - GetAllocatedHours(memberId, date));
     }
 
-    // -----------------------------
-    // Validation: can a new assignment fit?
-    // Returns null if OK, or an error message if it doesn't fit.
-    // -----------------------------
-    private string? ValidateAssignment(int taskId, Guid memberId, DateOnly from, DateOnly to)
+    // ───────────────────────────────────────────────────────────
+    // Time Off / Holiday helpers
+    // ───────────────────────────────────────────────────────────
+
+    private bool IsHoliday(DateOnly date)       => Holidays.Contains(date);
+    private bool IsMemberTimeOff(Guid memberId, DateOnly date)
+        => MemberTimeOff.TryGetValue(memberId, out var days) && days.Contains(date);
+
+    /// <summary>Returns true if this day is unavailable for a given member:
+    /// weekend, global holiday, or individual time off.</summary>
+    private bool IsDayOff(Guid memberId, DateOnly date)
+        => IsWeekend(date) || IsHoliday(date) || IsMemberTimeOff(memberId, date);
+
+    private void ToggleHoliday(DateOnly date)
     {
-        var task = AvailableTasks.FirstOrDefault(x => x.Id == taskId);
-        if (task is null) return "Task not found.";
+        if (Holidays.Contains(date)) Holidays.Remove(date);
+        else                         Holidays.Add(date);
+        InfoMessage = Holidays.Contains(date)
+            ? $"{date:dd-MMM} marked as holiday."
+            : $"{date:dd-MMM} holiday removed.";
+    }
 
-        var totalEstimate = ParseJiraDurationToHours(task.OriginalEstimate);
-        var days = to.DayNumber - from.DayNumber + 1;
+    private void ToggleMemberTimeOff(Guid memberId, DateOnly date)
+    {
+        if (!MemberTimeOff.ContainsKey(memberId))
+            MemberTimeOff[memberId] = new HashSet<DateOnly>();
 
-        if (days <= 0) return "Invalid date range.";
-
-        var hoursPerDay = Math.Min(totalEstimate / days, MaxHoursPerDay);
-
-        // Check each day in the range
-        for (var d = from; d <= to; d = d.AddDays(1))
+        var memberName = TeamMembers.FirstOrDefault(m => m.Id == memberId)?.Name ?? "Member";
+        if (MemberTimeOff[memberId].Contains(date))
         {
-            var currentlyAllocated = GetAllocatedHours(memberId, d);
-            if (currentlyAllocated + hoursPerDay > MaxHoursPerDay)
+            MemberTimeOff[memberId].Remove(date);
+            InfoMessage = $"Removed time off for {memberName} on {date:dd-MMM}.";
+        }
+        else
+        {
+            MemberTimeOff[memberId].Add(date);
+            InfoMessage = $"Marked {memberName} as off on {date:dd-MMM}.";
+        }
+    }
+
+    private void OnDateHeaderClicked(DateOnly date)
+    {
+        if (!TimeOffMode) return;
+        ToggleHoliday(date);
+    }
+
+    // ───────────────────────────────────────────────────────────
+    // Scheduling Engine
+    // ───────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Core task-splitting scheduler.
+    ///
+    /// Allocates <paramref name="totalHours"/> for a (task, member) pair, starting at
+    /// <paramref name="startDate"/> and advancing one calendar day at a time.  Each day
+    /// absorbs up to <see cref="MaxHoursPerDay"/> minus whatever the member already has
+    /// committed.  Days that are completely full are skipped — the task "spills" forward.
+    ///
+    /// Example — 20 h task, member free every day (6 h/day cap):
+    ///   Day 1 → 6 h  |  Day 2 → 6 h  |  Day 3 → 6 h  |  Day 4 → 2 h  (total 4 days)
+    ///
+    /// All returned allocations share a single GroupId so the calendar can render them
+    /// as one continuous visual block even when days are non-consecutive.
+    ///
+    /// The optional <paramref name="provisional"/> list lets the caller pass allocations
+    /// not yet committed to <see cref="Allocations"/> but that should count as consumed
+    /// capacity (useful for bulk-scheduling multiple tasks in one call).
+    /// </summary>
+    private List<TaskAllocation> ScheduleTask(
+        int taskId,
+        Guid memberId,
+        decimal totalHours,
+        DateOnly startDate,
+        List<TaskAllocation>? provisional = null)
+    {
+        var result  = new List<TaskAllocation>();
+        var groupId = Guid.NewGuid();
+        var remaining = totalHours;
+        var date = startDate;
+        const int maxDaysForward = 365; // safety guard: never loop more than a year
+
+        for (int daysAdvanced = 0; remaining > 0m && daysAdvanced < maxDaysForward; daysAdvanced++)
+        {
+            // Skip weekends, holidays, and member-specific time off — no capacity on these days
+            if (!IsDayOff(memberId, date))
             {
-                var remaining = Math.Max(0, MaxHoursPerDay - currentlyAllocated);
-                var memberName = TeamMembers.FirstOrDefault(x => x.Id == memberId)?.Name ?? "member";
-                return $"Cannot assign: {memberName} on {d:dd-MMM} already has {currentlyAllocated:0.#}h allocated " +
-                       $"({remaining:0.#}h remaining), but this task needs {hoursPerDay:0.#}h/day.";
+                // Capacity = MaxHoursPerDay − already committed − provisional (not yet in Allocations)
+                var committed = GetAllocatedHoursFromList(memberId, date, Allocations);
+                var pending   = provisional is not null
+                                ? GetAllocatedHoursFromList(memberId, date, provisional)
+                                : 0m;
+                var capacity  = Math.Max(0m, MaxHoursPerDay - committed - pending);
+
+                if (capacity > 0m)
+                {
+                    var hours = Math.Min(remaining, capacity);
+                    result.Add(new TaskAllocation
+                    {
+                        GroupId        = groupId,
+                        TaskId         = taskId,
+                        TeamMemberId   = memberId,
+                        Date           = date,
+                        HoursAllocated = hours
+                    });
+                    remaining -= hours;
+                }
+                // capacity == 0 → day is full, advance without recording
             }
+            // IsDayOff → silently skip, task hours spill to the next working day
+
+            date = date.AddDays(1);
         }
 
-        // Also warn if the estimate exceeds the total capacity of the date range
-        var totalCapacity = days * MaxHoursPerDay;
-        if (totalEstimate > totalCapacity)
-        {
-            return $"Task estimate ({totalEstimate:0.#}h) exceeds the capacity of {days} day(s) × {MaxHoursPerDay}h = {totalCapacity:0.#}h. " +
-                   $"Extend the date range or split the task.";
-        }
-
-        return null; // All good
+        return result;
     }
     private void OnCalendarCellClicked(Guid memberId, DateOnly date)
     {
         ErrorMessage = null;
         InfoMessage = null;
+
+        // In Time Off Mode: toggle member time off, don't schedule tasks
+        if (TimeOffMode)
+        {
+            ToggleMemberTimeOff(memberId, date);
+            return;
+        }
 
         if (SelectedTask is null)
         {
@@ -506,7 +696,7 @@
             return;
         }
 
-        // First click: set start
+        // First click: record start date and wait for the confirmation click
         if (PendingPlacement is null)
         {
             PendingPlacement = new PendingPlacementState
@@ -517,98 +707,109 @@
             return;
         }
 
-        // Second click: must be same row (same team member)
+        // Second click: must be on the same member row
         if (PendingPlacement.TeamMemberId != memberId)
         {
-            ErrorMessage = "End date must be selected on the same team member row.";
+            ErrorMessage = "Confirmation click must be on the same team member row.";
             return;
         }
 
-        var start = PendingPlacement.Start;
-        var end = date;
+        // Use the earlier of the two clicked dates as the scheduling start date
+        var startDate = date < PendingPlacement.Start ? date : PendingPlacement.Start;
 
-        if (end < start)
-            (start, end) = (end, start);
-
-        // ── Validate capacity before assigning ──
-        var validationError = ValidateAssignment(SelectedTask.Id, memberId, start, end);
-        if (validationError is not null)
+        var totalHours = ParseJiraDurationToHours(SelectedTask.OriginalEstimate);
+        if (totalHours <= 0m)
         {
-            ErrorMessage = validationError;
+            ErrorMessage = $"Task {SelectedTask.Key} has no estimate — cannot auto-schedule.";
             PendingPlacement = null;
             return;
         }
 
-        // Create assignment
-        Assignments.Add(new CalendarAssignment
+        // ── Run the scheduling engine ──
+        // Fills up to MaxHoursPerDay per calendar day, advancing to the next day when full.
+        // A 20 h task with a free member → Day 1: 6 h, Day 2: 6 h, Day 3: 6 h, Day 4: 2 h.
+        var newAllocations = ScheduleTask(SelectedTask.Id, memberId, totalHours, startDate);
+
+        if (newAllocations.Count == 0)
         {
-            TaskId = SelectedTask.Id,
-            TeamMemberId = memberId,
-            From = start,
-            To = end
-        });
+            ErrorMessage = $"Could not schedule {SelectedTask.Key}: no available capacity " +
+                           $"from {startDate:dd-MMM} within the next 365 days.";
+            PendingPlacement = null;
+            return;
+        }
 
-        var taskEstimate = ParseJiraDurationToHours(SelectedTask.OriginalEstimate);
-        var totalDays = end.DayNumber - start.DayNumber + 1;
-        var hPerDay = Math.Min(taskEstimate / totalDays, MaxHoursPerDay);
+        // Commit to the per-day allocation store
+        Allocations.AddRange(newAllocations);
 
-        InfoMessage =
-            $"Assigned {SelectedTask.Key} to {TeamMembers.First(x => x.Id == memberId).Name} " +
-            $"from {start:dd-MMM} to {end:dd-MMM} ({taskEstimate:0.#}h over {totalDays}d = {hPerDay:0.#}h/day).";
+        var lastDate   = newAllocations.Max(a => a.Date);
+        var dayCount   = newAllocations.Count;
+        var memberName = TeamMembers.First(x => x.Id == memberId).Name;
+
+        InfoMessage = $"Scheduled {SelectedTask.Key} for {memberName}: " +
+                      $"{totalHours:0.#}h split across {dayCount} day(s) " +
+                      $"({startDate:dd-MMM} → {lastDate:dd-MMM}).";
 
         SelectedTask = null;
         PendingPlacement = null;
     }
-    // -----------------------------
-    // Total allocated hours per member (across all dates)
-    // -----------------------------
+    // Total scheduled hours per member — sums the actual allocated day-buckets
+    // (more accurate than re-summing estimates, since partial-day allocations are exact)
     private string GetMemberTotalEstimateHours(Guid memberId)
     {
-        var memberAssignments = Assignments.Where(a => a.TeamMemberId == memberId).ToList();
-        if (memberAssignments.Count == 0) return "0h";
+        var total = Allocations
+            .Where(a => a.TeamMemberId == memberId)
+            .Sum(a => a.HoursAllocated);
 
-        decimal totalHours = 0m;
-        foreach (var assignment in memberAssignments)
-        {
-            var task = AvailableTasks.FirstOrDefault(x => x.Id == assignment.TaskId);
-            if (task is not null)
-                totalHours += ParseJiraDurationToHours(task.OriginalEstimate);
-        }
-
-        var rounded = (totalHours % 1m == 0m)
-            ? decimal.Round(totalHours, 0)
-            : decimal.Round(totalHours, 1);
-
+        if (total <= 0m) return "0h";
+        var rounded = total % 1m == 0m ? decimal.Round(total, 0) : decimal.Round(total, 1);
         return $"{rounded.ToString(CultureInfo.InvariantCulture)}h";
     }
 
-    private void RemoveAssignment(CalendarAssignment assignment)
+    /// <summary>Removes all day-allocations belonging to the given visual block (identified by GroupId).</summary>
+    private void RemoveBlock(Guid groupId)
     {
-        Assignments.RemoveAll(a => a.AssignmentId == assignment.AssignmentId);
+        Allocations.RemoveAll(a => a.GroupId == groupId);
         InfoMessage = "Assignment removed.";
     }
 
-    // -----------------------------
-    // Helpers
-    // -----------------------------
-    private int GetSpanDays(CalendarAssignment a)
+    // ───────────────────────────────────────────────────────────
+    // Visual span helpers for CalendarBlock (calendar rendering + Excel export)
+    // ───────────────────────────────────────────────────────────
+
+    private int GetBlockVisibleSpan(CalendarBlock block)
     {
-        var span = a.To.DayNumber - a.From.DayNumber + 1;
-
-        // Clamp to visible range (optional)
-        if (a.From < FromDate) span -= (FromDate.DayNumber - a.From.DayNumber);
-        if (a.To > ToDate) span -= (a.To.DayNumber - ToDate.DayNumber);
-
-        return Math.Max(1, span);
+        var clampedFrom = block.From < FromDate ? FromDate : block.From;
+        var clampedTo   = block.To   > ToDate   ? ToDate   : block.To;
+        return Math.Max(1, clampedTo.DayNumber - clampedFrom.DayNumber + 1);
     }
 
+    private int GetBlockVisibleStartCol(CalendarBlock block)
+    {
+        var clampedFrom = block.From < FromDate ? FromDate : block.From;
+        return VisibleDates.IndexOf(clampedFrom);
+    }
+
+    /// <summary>
+    /// Returns the actual hours scheduled for a specific block on a specific date.
+    /// For split tasks this gives the correct per-day value (e.g. 6 h on Day 1, 2 h on Day 4)
+    /// rather than a misleading average.
+    /// </summary>
+    private decimal GetBlockHoursOnDate(CalendarBlock block, DateOnly date)
+        => Allocations
+            .Where(a => a.GroupId == block.GroupId && a.Date == date)
+            .Sum(a => a.HoursAllocated);
+
+    // Resolves a task label from the persistent cache so blocks from previously
+    // loaded epics remain readable after switching to a new epic.
     private string GetTaskLabel(int taskId)
     {
-        var t = AvailableTasks.FirstOrDefault(x => x.Id == taskId);
-        return t is null
-            ? taskId.ToString()
-            : $"{t.Key} - {t.Summary} (Est: {t.OriginalEstimate})";
+        if (!_taskCache.TryGetValue(taskId, out var t)) return $"Task #{taskId}";
+        return $"{t.Key} - {t.Summary} (Est: {t.OriginalEstimate})";
     }
+
+    // Same cache lookup used by Excel export
+    private JiraIssueModel? FindTask(int taskId)
+        => _taskCache.TryGetValue(taskId, out var t) ? t : null;
 
     private static bool RangesOverlap(DateOnly aFrom, DateOnly aTo, DateOnly bFrom, DateOnly bTo)
         => aFrom <= bTo && bFrom <= aTo;
@@ -763,8 +964,8 @@
             {
                 foreach (var member in teamGroup)
                 {
-                    var lanedAssignments = GetLanedAssignments(member.Id);
-                    var maxLanes = GetMaxLanes(member.Id);
+                    var lanedBlocks = GetLanedBlocks(member.Id);
+                    var maxLanes    = GetMaxLanes(member.Id);
 
                     // One Excel row per lane
                     for (int lane = 0; lane < maxLanes; lane++)
@@ -780,21 +981,21 @@
                             planSheet.Cell(excelRow, 2).Style.Font.Bold = true;
                         }
 
-                        var laneAssignments = lanedAssignments
-                            .Where(la => la.Lane == lane)
-                            .Select(la => la.Assignment)
-                            .OrderBy(a => a.From)
+                        var laneBlocks = lanedBlocks
+                            .Where(lb => lb.Lane == lane)
+                            .Select(lb => lb.Block)
+                            .OrderBy(b => b.From)
                             .ToList();
 
-                        foreach (var assignment in laneAssignments)
+                        foreach (var block in laneBlocks)
                         {
-                            var task = AvailableTasks.FirstOrDefault(x => x.Id == assignment.TaskId);
+                            var task = FindTask(block.TaskId);
                             var label = task is not null
                                 ? $"{task.Key} - {task.Summary}"
-                                : assignment.TaskId.ToString();
+                                : block.TaskId.ToString();
 
-                            var startCol = GetVisibleStartCol(assignment);
-                            var spanCount = GetVisibleSpan(assignment);
+                            var startCol  = GetBlockVisibleStartCol(block);
+                            var spanCount = GetBlockVisibleSpan(block);
 
                             if (startCol < 0) continue;
 
@@ -842,7 +1043,18 @@
                 cell.Style.Border.BottomBorderColor = ClosedXML.Excel.XLColor.FromHtml("#D1D5DB");
             }
 
-            var sortedAssignments = Assignments
+            // Build the summary from allocation groups (one row per GroupId = one scheduled block)
+            var assignmentGroups = Allocations
+                .GroupBy(a => (a.TeamMemberId, a.GroupId))
+                .Select(g => new
+                {
+                    TaskId       = g.First().TaskId,
+                    TeamMemberId = g.Key.TeamMemberId,
+                    From         = g.Min(a => a.Date),
+                    To           = g.Max(a => a.Date),
+                    TotalHours   = g.Sum(a => a.HoursAllocated),
+                    DayCount     = g.Count()
+                })
                 .OrderBy(a =>
                 {
                     var m = TeamMembers.FirstOrDefault(x => x.Id == a.TeamMemberId);
@@ -856,13 +1068,12 @@
                 .ThenBy(a => a.From)
                 .ToList();
 
-            for (int i = 0; i < sortedAssignments.Count; i++)
+            for (int i = 0; i < assignmentGroups.Count; i++)
             {
-                var a = sortedAssignments[i];
-                var row = i + 2;
-                var task = AvailableTasks.FirstOrDefault(x => x.Id == a.TaskId);
+                var a      = assignmentGroups[i];
+                var row    = i + 2;
+                var task   = FindTask(a.TaskId);
                 var member = TeamMembers.FirstOrDefault(x => x.Id == a.TeamMemberId);
-                var days = a.To.DayNumber - a.From.DayNumber + 1;
 
                 summarySheet.Cell(row, 1).Value = task?.Key ?? "-";
                 summarySheet.Cell(row, 2).Value = task?.Summary ?? "-";
@@ -870,8 +1081,8 @@
                 summarySheet.Cell(row, 4).Value = member?.Name ?? "-";
                 summarySheet.Cell(row, 5).Value = a.From.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
                 summarySheet.Cell(row, 6).Value = a.To.ToString("dd-MMM-yyyy", CultureInfo.InvariantCulture);
-                summarySheet.Cell(row, 7).Value = days;
-                summarySheet.Cell(row, 8).Value = task is not null ? FormatEstimateHours(task.OriginalEstimate) : "-";
+                summarySheet.Cell(row, 7).Value = a.DayCount;
+                summarySheet.Cell(row, 8).Value = $"{a.TotalHours:0.#}h";
             }
 
             summarySheet.Columns().AdjustToContents();
@@ -888,55 +1099,67 @@
 
             await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
 
-            InfoMessage = $"Exported {AvailableTasks.Count} tasks and {Assignments.Count} assignments to {fileName}.";
+            var exportedGroups = Allocations.Select(a => a.GroupId).Distinct().Count();
+            InfoMessage = $"Exported {AvailableTasks.Count} tasks and {exportedGroups} assignment(s) to {fileName}.";
         }
         catch (Exception ex)
         {
             ErrorMessage = $"Export failed: {ex.Message}";
         }
     }
-    // -----------------------------
-    // Stacked assignment layout helpers
-    // -----------------------------
+    // ───────────────────────────────────────────────────────────
+    // Visual layout — derive CalendarBlocks from TaskAllocations,
+    // then assign stacking lanes so overlapping blocks don't collide.
+    // ───────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Assigns a "lane" (vertical row index) to each assignment for a member,
-    /// so overlapping tasks stack without collision.
-    /// Returns assignments paired with their lane index, sorted.
+    /// Groups committed TaskAllocations into CalendarBlocks (one per GroupId),
+    /// then assigns each block a vertical "lane" using a greedy first-fit algorithm
+    /// so that blocks whose date spans overlap are pushed to separate rows.
+    ///
+    /// Design note: a split task (e.g. Days 1-3, then Day 5) has From=Day1, To=Day5.
+    /// The visual block stretches across that range; per-day labels show actual hours.
     /// </summary>
-    private List<(CalendarAssignment Assignment, int Lane)> GetLanedAssignments(Guid memberId)
+    private List<(CalendarBlock Block, int Lane)> GetLanedBlocks(Guid memberId)
     {
-        var memberAssignments = Assignments
+        // Derive one CalendarBlock per (member, GroupId) pair
+        var blocks = Allocations
             .Where(a => a.TeamMemberId == memberId)
-            .OrderBy(a => a.From)
-            .ThenBy(a => a.To)
+            .GroupBy(a => a.GroupId)
+            .Select(g => new CalendarBlock
+            {
+                GroupId      = g.Key,
+                TaskId       = g.First().TaskId,
+                TeamMemberId = memberId,
+                From         = g.Min(a => a.Date),
+                To           = g.Max(a => a.Date)
+            })
+            .OrderBy(b => b.From)
+            .ThenBy(b => b.To)
             .ToList();
 
-        var result = new List<(CalendarAssignment, int)>();
-        // Each lane tracks the last "To" date used
+        var result   = new List<(CalendarBlock, int)>();
+        // laneEnds[i] = last "To" date used by lane i
         var laneEnds = new List<DateOnly>();
 
-        foreach (var a in memberAssignments)
+        foreach (var block in blocks)
         {
-            // Find the first lane where this assignment fits (no overlap)
             int lane = -1;
             for (int i = 0; i < laneEnds.Count; i++)
             {
-                if (a.From > laneEnds[i])
+                if (block.From > laneEnds[i])  // fits in lane i — no overlap
                 {
-                    lane = i;
-                    laneEnds[i] = a.To;
+                    lane        = i;
+                    laneEnds[i] = block.To;
                     break;
                 }
             }
-
-            if (lane == -1)
+            if (lane == -1)                    // no free lane — open a new one
             {
                 lane = laneEnds.Count;
-                laneEnds.Add(a.To);
+                laneEnds.Add(block.To);
             }
-
-            result.Add((a, lane));
+            result.Add((block, lane));
         }
 
         return result;
@@ -944,42 +1167,23 @@
 
     private int GetMaxLanes(Guid memberId)
     {
-        var laned = GetLanedAssignments(memberId);
+        var laned = GetLanedBlocks(memberId);
         return laned.Count == 0 ? 1 : laned.Max(x => x.Lane) + 1;
     }
-
-    private int GetDateColumnIndex(DateOnly date)
-    {
-        return VisibleDates.IndexOf(date);
-    }
-
-    private int GetVisibleSpan(CalendarAssignment a)
-    {
-        var clampedFrom = a.From < FromDate ? FromDate : a.From;
-        var clampedTo = a.To > ToDate ? ToDate : a.To;
-        return Math.Max(1, clampedTo.DayNumber - clampedFrom.DayNumber + 1);
-    }
-
-    private int GetVisibleStartCol(CalendarAssignment a)
-    {
-        var clampedFrom = a.From < FromDate ? FromDate : a.From;
-        return GetDateColumnIndex(clampedFrom);
-    }
-    // -----------------------------
-    // Task assignment hints
-    // -----------------------------
+    // Task assignment info used by the left-panel chips — one entry per (member, GroupId) pair
     private List<(string MemberName, string Team, DateOnly From, DateOnly To)> GetTaskAssignmentInfo(int taskId)
     {
-        return Assignments
+        return Allocations
             .Where(a => a.TaskId == taskId)
-            .Select(a =>
+            .GroupBy(a => (a.TeamMemberId, a.GroupId))
+            .Select(g =>
             {
-                var member = TeamMembers.FirstOrDefault(m => m.Id == a.TeamMemberId);
+                var member = TeamMembers.FirstOrDefault(m => m.Id == g.Key.TeamMemberId);
                 return (
                     MemberName: member?.Name ?? "Unknown",
-                    Team: member?.Team ?? "",
-                    From: a.From,
-                    To: a.To
+                    Team:        member?.Team ?? "",
+                    From:        g.Min(a => a.Date),
+                    To:          g.Max(a => a.Date)
                 );
             })
             .OrderBy(x => x.From)
@@ -1701,4 +1905,121 @@
         .weekend-cell.cell-full {
             background: #ddd6d6 !important;
         }
+
+    /* ─── Time Off / Holiday cell ─── */
+    .cell-dayoff {
+        background: #fffbeb !important;
+        cursor: default;
+        background-image: repeating-linear-gradient(
+            45deg,
+            transparent,
+            transparent 5px,
+            rgba(245,158,11,0.12) 5px,
+            rgba(245,158,11,0.12) 10px
+        ) !important;
+    }
+
+        .cell-dayoff:hover {
+            background: #fef3c7 !important;
+            background-image: repeating-linear-gradient(
+                45deg,
+                transparent,
+                transparent 5px,
+                rgba(245,158,11,0.2) 5px,
+                rgba(245,158,11,0.2) 10px
+            ) !important;
+        }
+
+    /* ─── Time-off label inside the cell ─── */
+    .cell-dayoff-label {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        font-size: 9px;
+        font-weight: 700;
+        color: #d97706;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        pointer-events: none;
+        white-space: nowrap;
+    }
+
+    /* ─── Holiday column header ─── */
+    .holiday-col {
+        background: #fffbeb !important;
+        color: #92400e !important;
+    }
+
+    .holiday-star {
+        display: inline-block;
+        margin-left: 3px;
+        font-size: 9px;
+        font-weight: 800;
+        color: #d97706;
+        background: #fef3c7;
+        border: 1px solid #fbbf24;
+        border-radius: 3px;
+        padding: 0 3px;
+        line-height: 1.4;
+        vertical-align: middle;
+    }
+
+    /* ─── Time Off Mode active button ─── */
+    .btn-timeoff-active {
+        border-color: #f59e0b;
+        background: #fffbeb;
+        color: #92400e;
+        font-weight: 700;
+    }
+
+        .btn-timeoff-active:hover {
+            background: #fef3c7;
+            border-color: #d97706;
+        }
+
+    /* ─── Task status group header ─── */
+    .task-group-header {
+        padding: 6px 8px 4px;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.07em;
+        border-radius: 6px 6px 0 0;
+        margin-top: 10px;
+        margin-bottom: 2px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+        .task-group-header:first-child {
+            margin-top: 0;
+        }
+
+        .task-group-header.status-indeterminate {
+            color: #1d4ed8;
+            background: #eff6ff;
+            border-left: 3px solid #3b82f6;
+        }
+
+        .task-group-header.status-new {
+            color: #374151;
+            background: #f9fafb;
+            border-left: 3px solid #9ca3af;
+        }
+
+        .task-group-header.status-done {
+            color: #166534;
+            background: #f0fdf4;
+            border-left: 3px solid #22c55e;
+        }
+
+    .task-group-count {
+        padding: 1px 6px;
+        border-radius: 999px;
+        background: rgba(0,0,0,0.07);
+        font-size: 10px;
+        font-weight: 700;
+    }
 </style>
