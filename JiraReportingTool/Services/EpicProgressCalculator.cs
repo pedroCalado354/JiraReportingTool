@@ -46,6 +46,18 @@ public sealed record EpicRiskMetrics(
     int StaleInProgress          // In Progress + no worklog in last 2 days
 );
 
+/// <summary>Bug / quality health for the epic.</summary>
+public sealed record EpicQualityMetrics(
+    int TotalBugs,
+    int OpenBugs,                // Total − Done
+    int DoneBugs,
+    double BugFixRate,           // Done / Total × 100
+    double BugRatio,             // TotalBugs / AllIssues × 100
+    int UnassignedBugs,
+    int UnestimatedBugs,
+    int StaleBugs                // In Progress bug + no worklog in last 2 days
+);
+
 /// <summary>
 /// Sprint-scoped overlay — only present when a sprint filter is active.
 /// All values are scoped to the sprint; <see cref="EpicContributionPct"/> relates
@@ -77,6 +89,7 @@ public sealed record EpicProgressResult(
     EpicDeliveryMetrics Delivery,
     EpicEffortMetrics Effort,
     EpicRiskMetrics Risk,
+    EpicQualityMetrics Quality,
     SprintScopedMetrics? Sprint
 );
 
@@ -98,6 +111,7 @@ public static class EpicProgressCalculator
             Delivery: ComputeDelivery(issues),
             Effort:   ComputeEffort(issues),
             Risk:     ComputeRisk(issues),
+            Quality:  ComputeQuality(issues),
             Sprint:   null
         );
     }
@@ -116,6 +130,7 @@ public static class EpicProgressCalculator
             Delivery: ComputeDelivery(epicIssues),
             Effort:   ComputeEffort(epicIssues),
             Risk:     ComputeRisk(epicIssues),
+            Quality:  ComputeQuality(epicIssues),
             Sprint:   ComputeSprint(epic, sprint)
         );
     }
@@ -158,6 +173,32 @@ public static class EpicProgressCalculator
             StaleInProgress: issues.Count(i =>
                                 Cat(i.StatusCategoryKey) == "indeterminate" &&
                                 IsStale(i.Worklogs, now))
+        );
+    }
+
+    // ── Quality ───────────────────────────────────────────────────────────────
+
+    private static EpicQualityMetrics ComputeQuality(List<JiraIssueModel> issues)
+    {
+        var bugs = issues
+            .Where(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        var now  = DateTime.UtcNow;
+        var total = bugs.Count;
+        var done  = bugs.Count(i => Cat(i.StatusCategoryKey) == "done");
+        return new(
+            TotalBugs:       total,
+            OpenBugs:        total - done,
+            DoneBugs:        done,
+            BugFixRate:      SafePct(done, total),
+            BugRatio:        SafePct(total, issues.Count),
+            UnassignedBugs:  bugs.Count(i =>
+                                 string.IsNullOrWhiteSpace(i.Assignee) ||
+                                 string.Equals(i.Assignee, "Unassigned", StringComparison.OrdinalIgnoreCase)),
+            UnestimatedBugs: bugs.Count(i => i.OriginalEstimateSeconds == 0),
+            StaleBugs:       bugs.Count(i =>
+                                 Cat(i.StatusCategoryKey) == "indeterminate" &&
+                                 IsStale(i.Worklogs, now))
         );
     }
 

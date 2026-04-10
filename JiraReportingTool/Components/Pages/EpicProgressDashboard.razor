@@ -389,6 +389,80 @@
 
         </div><!-- /epd-panels -->
 
+        <!-- ═══ QUALITY PANEL ════════════════════════════════════════════════ -->
+        <div class="metric-panel panel-quality">
+            <div class="panel-head">
+                <span class="panel-icon">🐛</span>
+                <span class="panel-title">Quality Metrics</span>
+                <span class="panel-scope">Epic-wide · Bugs only</span>
+            </div>
+            <div class="panel-body quality-body">
+
+                <!-- Bug count cards -->
+                <div class="quality-cards">
+                    <div class="quality-card qc-total">
+                        <span class="qc-value">@Metrics.Quality.TotalBugs</span>
+                        <span class="qc-label">Total Bugs</span>
+                    </div>
+                    <div class="quality-card qc-open">
+                        <span class="qc-value">@Metrics.Quality.OpenBugs</span>
+                        <span class="qc-label">Open</span>
+                    </div>
+                    <div class="quality-card qc-done">
+                        <span class="qc-value">@Metrics.Quality.DoneBugs</span>
+                        <span class="qc-label">Fixed</span>
+                    </div>
+                    <div class="quality-card qc-ratio">
+                        <span class="qc-value">@EpicProgressCalculator.FormatPct(Metrics.Quality.BugRatio)</span>
+                        <span class="qc-label">Bug Ratio</span>
+                    </div>
+                </div>
+
+                @if (Metrics.Quality.TotalBugs > 0)
+                {
+                    <div>
+                        <div class="quality-bar-label">
+                            Fix rate — <strong>@EpicProgressCalculator.FormatPct(Metrics.Quality.BugFixRate)</strong> of bugs resolved
+                        </div>
+                        <div class="quality-bar-track">
+                            <div class="quality-bar-fill @GetBugFixBarClass(Metrics.Quality.BugFixRate)"
+                                 style="width:@(Math.Min(Metrics.Quality.BugFixRate, 100).ToString("F1", System.Globalization.CultureInfo.InvariantCulture))%"></div>
+                        </div>
+                    </div>
+
+                    <div class="metric-rows">
+                        <div class="metric-row">
+                            <span class="mr-label">Unassigned bugs</span>
+                            <span class="mr-value @RiskClass(Metrics.Quality.UnassignedBugs)">
+                                @Metrics.Quality.UnassignedBugs
+                                @RiskLabel(Metrics.Quality.UnassignedBugs, Metrics.Quality.TotalBugs)
+                            </span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Bugs without estimate</span>
+                            <span class="mr-value @RiskClass(Metrics.Quality.UnestimatedBugs)">
+                                @Metrics.Quality.UnestimatedBugs
+                                @RiskLabel(Metrics.Quality.UnestimatedBugs, Metrics.Quality.TotalBugs)
+                            </span>
+                        </div>
+                        <div class="metric-row">
+                            <span class="mr-label">Stale in-progress bugs</span>
+                            <span class="mr-value @RiskClass(Metrics.Quality.StaleBugs)"
+                                  title="In Progress with no worklog in the last 2 days">
+                                @Metrics.Quality.StaleBugs
+                                @RiskLabel(Metrics.Quality.StaleBugs, Metrics.Quality.OpenBugs)
+                            </span>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="quality-no-bugs">No bugs found in this epic.</div>
+                }
+
+            </div>
+        </div>
+
         <!-- ═══ ISSUE TABLE ═══════════════════════════════════════════════════ -->
         <div class="epd-table-section">
             <div class="table-header-bar">
@@ -835,6 +909,9 @@
         };
     }
 
+    private static string GetBugFixBarClass(double pct) =>
+        pct >= 80 ? "qbar-good" : pct >= 50 ? "qbar-mid" : "qbar-low";
+
     private static string BarPct(int count, int total) =>
         (total > 0 ? Math.Round(count * 100.0 / total, 1) : 0)
             .ToString("F1", System.Globalization.CultureInfo.InvariantCulture);
@@ -1200,6 +1277,45 @@
         font-size: 0.75rem;
         margin-left: 0.35rem;
         color: #374151;
+    }
+
+    /* ─── Quality Panel ─── */
+    .panel-quality .panel-head { border-left: 3px solid #ef4444; }
+
+    .quality-body { gap: 14px; }
+
+    .quality-cards {
+        display: flex; gap: 10px; flex-wrap: wrap;
+    }
+
+    .quality-card {
+        flex: 1 1 80px; min-width: 70px;
+        border-radius: 10px; padding: 10px 14px; text-align: center;
+        border: 1px solid #e5e7eb;
+    }
+    .qc-value { display: block; font-size: 22px; font-weight: 700; }
+    .qc-label { display: block; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; margin-top: 2px; }
+
+    .qc-total { background: #fef2f2; border-color: #fca5a5; }
+    .qc-total .qc-value { color: #991b1b; }
+    .qc-open  { background: #fff7ed; border-color: #fdba74; }
+    .qc-open  .qc-value { color: #c2410c; }
+    .qc-done  { background: #f0fdf4; border-color: #a7f3d0; }
+    .qc-done  .qc-value { color: #065f46; }
+    .qc-ratio { background: #f5f3ff; border-color: #ddd6fe; }
+    .qc-ratio .qc-value { color: #5b21b6; }
+
+    .quality-bar-label { font-size: 12px; color: #6b7280; margin-bottom: 5px; }
+    .quality-bar-track {
+        height: 8px; background: #f3f4f6; border-radius: 4px; overflow: hidden;
+    }
+    .quality-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s; }
+    .qbar-good { background: #10b981; }
+    .qbar-mid  { background: #f59e0b; }
+    .qbar-low  { background: #ef4444; }
+
+    .quality-no-bugs {
+        font-size: 13px; color: #9ca3af; font-style: italic; padding: 8px 0;
     }
 
     </style>
