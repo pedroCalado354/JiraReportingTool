@@ -11,7 +11,7 @@ public class JiraDbRepository(AppDbContext db)
 {
     // ── Epic Report ──────────────────────────────────────────────────────────
 
-    public async Task<JiraEpicReport?> GetEpicReportAsync(string epicKey)
+    public async Task<JiraEpicReport?> GetEpicReportServiceAsync(string epicKey)
         => await db.JiraEpicReports
             .Include(e => e.Issues).ThenInclude(i => i.Worklogs)
             .FirstOrDefaultAsync(e => e.Key == epicKey);

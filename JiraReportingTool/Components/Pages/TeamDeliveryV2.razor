@@ -1,0 +1,1788 @@
+@page "/delivery-v2"
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+@inject IJSRuntime JS
+@using JiraReportingTool.Models
+@using ClosedXML.Excel
+
+<PageTitle>Team Delivery V2</PageTitle>
+
+<!-- ── Load form ─────────────────────────────────────────────────────────── -->
+<div class="tdd-load-bar">
+    <div class="tdd-load-inner">
+        <div class="tdd-load-title">Team Delivery</div>
+
+        <div class="tdd-load-field">
+            <label class="tdd-label">Jira Saved Filter</label>
+            <div class="tdd-load-row">
+                <select class="tdd-select tdd-select-wide"
+                        @bind="SelectedFilterId"
+                        disabled="@(FiltersLoading || !string.IsNullOrEmpty(SprintId))">
+                    <option value="">— select a filter —</option>
+                    @foreach (var f in MyFilters)
+                    {
+                        <option value="@f.Id" title="@f.Jql">@f.Name</option>
+                    }
+                </select>
+                @if (FiltersLoading)
+                {
+                    <span class="tdd-spinner"></span>
+                }
+            </div>
+            @if (!string.IsNullOrEmpty(SelectedFilterJql))
+            {
+                <div class="tdd-jql-hint" title="@SelectedFilterJql">JQL: @SelectedFilterJql</div>
+            }
+        </div>
+
+        <div class="tdd-load-divider">or</div>
+
+        <div class="tdd-load-field">
+            <label class="tdd-label">Sprint ID</label>
+            <input class="tdd-input tdd-input-sm"
+                   @bind="SprintId" @onkeyup="HandleKeyUp"
+                   placeholder="e.g. 6690"
+                   disabled="@(!string.IsNullOrEmpty(SelectedFilterId))" />
+        </div>
+
+        <div class="tdd-load-field">
+            <label class="tdd-label">
+                Days Left
+                @if (Report != null && string.IsNullOrEmpty(OverrideDaysLeftInput))
+                {
+                    <span class="tdd-label-hint">(auto: @Report.DaysRemaining)</span>
+                }
+            </label>
+            <input type="number" class="tdd-input tdd-input-xs"
+                   @bind="OverrideDaysLeftInput"
+                   placeholder="@(Report != null ? Report.DaysRemaining.ToString() : "auto")"
+                   min="0" max="99" />
+        </div>
+
+        <div class="tdd-load-actions">
+            <button class="tdd-btn tdd-btn-primary" @onclick="LoadData"
+                    disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId)))">
+                @if (IsLoading)
+                {
+                    <span class="tdd-spinner tdd-spinner-sm"></span>
+                }
+                Load
+            </button>
+            <button class="tdd-btn tdd-btn-success" @onclick="OpenExportModal"
+                    disabled="@(Report == null)" title="Export remaining work to Excel">
+                <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
+                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                    <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                </svg>
+                Export .xlsx
+            </button>
+        </div>
+    </div>
+</div>
+
+@if (ErrorMessage != null)
+{
+    <div class="tdd-error">@ErrorMessage</div>
+}
+
+@if (Report != null)
+{
+    <!-- ── Sprint timeline dual-bar ──────────────────────────────────────── -->
+    <div class="tdd-timeline-card">
+        <div class="tdd-timeline-header">
+            <span class="tdd-timeline-name">@(Report.SprintName is { Length: > 0 } sn ? sn : "Sprint")</span>
+            <span class="tdd-timeline-dates">
+                @if (Report.StartDate.HasValue && Report.EndDate.HasValue)
+                {
+                    @($"{Report.StartDate.Value:MMM d} – {Report.EndDate.Value:MMM d}")
+                }
+            </span>
+            <span class="tdd-timeline-days">@EffectiveDaysRemaining days left</span>
+        </div>
+        <div class="tdd-dualbar">
+            <div class="tdd-dualbar-row">
+                <span class="tdd-dualbar-label">Time elapsed</span>
+                <div class="tdd-dualbar-track">
+                    <div class="tdd-dualbar-fill tdd-dualbar-time" style="width:@Math.Min((int)Report.SprintProgressPct,100)%"></div>
+                </div>
+                <span class="tdd-dualbar-pct">@((int)Report.SprintProgressPct)%</span>
+            </div>
+            <div class="tdd-dualbar-row">
+                <span class="tdd-dualbar-label">Tasks done</span>
+                <div class="tdd-dualbar-track">
+                    <div class="tdd-dualbar-fill @(CompletionBehind ? "tdd-dualbar-behind" : "tdd-dualbar-done")" style="width:@Math.Min((int)FilteredCompletionPct,100)%"></div>
+                </div>
+                <span class="tdd-dualbar-pct @(CompletionBehind ? "tdd-text-danger" : "")">@((int)FilteredCompletionPct)%</span>
+            </div>
+        </div>
+        @if (CompletionBehind)
+        {
+            <div class="tdd-timeline-warn">Behind pace — completion is @((int)(Report.SprintProgressPct - FilteredCompletionPct))pp behind elapsed time</div>
+        }
+    </div>
+
+    <!-- ── Stats strip ───────────────────────────────────────────────────── -->
+    <div class="tdd-stats-strip">
+        <div class="tdd-stat">
+            <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "done")<span class="tdd-stat-of">/@FilteredIssues.Count</span></span>
+            <span class="tdd-stat-lbl">Done</span>
+        </div>
+        <div class="tdd-stat">
+            <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "indeterminate")</span>
+            <span class="tdd-stat-lbl">In Progress</span>
+        </div>
+        <div class="tdd-stat">
+            <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "new")</span>
+            <span class="tdd-stat-lbl">To Do</span>
+        </div>
+        <div class="tdd-stat-divider"></div>
+        <div class="tdd-stat">
+            <span class="tdd-stat-val tdd-text-muted">@FmtH(FilteredTotalLoggedSeconds)<span class="tdd-stat-of"> / @FmtH(FilteredIssues.Sum(i => i.OriginalEstimateSeconds))</span></span>
+            <span class="tdd-stat-lbl">Logged / Planned</span>
+        </div>
+        <div class="tdd-stat @(OverCapacity ? "tdd-stat-danger" : "")">
+            <span class="tdd-stat-val @(OverCapacity ? "tdd-text-danger" : "")">@FmtH(FilteredRemainingSeconds)</span>
+            <span class="tdd-stat-lbl">Remaining</span>
+        </div>
+        <div class="tdd-stat">
+            <span class="tdd-stat-val">@FmtH(EffectiveDaysRemaining * 6 * 3600)</span>
+            <span class="tdd-stat-lbl">Capacity</span>
+        </div>
+        <div class="tdd-stat-divider"></div>
+        <div class="tdd-stat @(OpenBugsCount > 0 ? "tdd-stat-warn" : "")">
+            <span class="tdd-stat-val @(OpenBugsCount > 0 ? "tdd-text-warn" : "")">@OpenBugsCount</span>
+            <span class="tdd-stat-lbl">Open Bugs</span>
+        </div>
+        <div class="tdd-stat @(RiskIssues.Count > 0 ? "tdd-stat-danger" : "")">
+            <span class="tdd-stat-val @(RiskIssues.Count > 0 ? "tdd-text-danger" : "")">@RiskIssues.Count</span>
+            <span class="tdd-stat-lbl">At Risk</span>
+        </div>
+        <div class="tdd-stat tdd-stat-risk-@RiskClass(Report.RiskLevel)">
+            <span class="tdd-stat-val tdd-stat-risk-val-@RiskClass(Report.RiskLevel)">@RiskShort(Report.RiskLevel)</span>
+            <span class="tdd-stat-lbl">Sprint Risk</span>
+        </div>
+    </div>
+
+    <!-- ── Filters ───────────────────────────────────────────────────────── -->
+    <div class="tdd-filter-bar">
+        <div class="tdd-filter-group">
+            <label class="tdd-label">Assignee</label>
+            <input class="tdd-input tdd-input-sm" placeholder="Search…"
+                   @bind="AssigneeSearch" @bind:event="oninput" />
+            <select class="tdd-select" @bind="FilterAssignee" @bind:after="OnFilterChanged">
+                <option value="">All members</option>
+                @foreach (var a in AssigneeOptions)
+                {
+                    <option value="@a">@a</option>
+                }
+            </select>
+        </div>
+        <div class="tdd-filter-group">
+            <label class="tdd-label">Epic</label>
+            <input class="tdd-input tdd-input-sm" placeholder="Search…"
+                   @bind="EpicSearch" @bind:event="oninput" />
+            <select class="tdd-select tdd-select-wide" @bind="FilterEpic" @bind:after="OnFilterChanged">
+                <option value="">All epics</option>
+                @foreach (var e in EpicOptions)
+                {
+                    <option value="@e.Key">@e.Key — @e.DisplayName</option>
+                }
+            </select>
+        </div>
+        <div class="tdd-filter-group">
+            <label class="tdd-label">Type</label>
+            <select class="tdd-select" @bind="FilterType" @bind:after="OnFilterChanged">
+                <option value="">All types</option>
+                @foreach (var t in TypeOptions)
+                {
+                    <option value="@t">@t</option>
+                }
+            </select>
+        </div>
+        <div class="tdd-filter-group">
+            <label class="tdd-label">Worklog date</label>
+            <div class="tdd-date-range">
+                <input type="date" class="tdd-input tdd-input-date"
+                       @bind="FilterDateFrom" @bind:after="OnFilterChanged" />
+                <span class="tdd-date-sep">–</span>
+                <input type="date" class="tdd-input tdd-input-date"
+                       @bind="FilterDateTo" @bind:after="OnFilterChanged" />
+            </div>
+        </div>
+        @if (!string.IsNullOrEmpty(FilterAssignee) || !string.IsNullOrEmpty(FilterEpic) ||
+             !string.IsNullOrEmpty(FilterType) || FilterDateFrom.HasValue || FilterDateTo.HasValue)
+        {
+            <button class="tdd-btn tdd-btn-ghost" @onclick="ClearFilters">Clear filters</button>
+        }
+        <span class="tdd-filter-count">@FilteredIssues.Count of @Report.TotalIssues issues</span>
+    </div>
+
+    <!-- ── Tabs ──────────────────────────────────────────────────────────── -->
+    <div class="tdd-tabs">
+        <button class="tdd-tab @(ActiveTab=="overview" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("overview")'>Overview</button>
+        <button class="tdd-tab @(ActiveTab=="team" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("team")'>Team</button>
+        <button class="tdd-tab @(ActiveTab=="forecast" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("forecast")'>Forecast</button>
+        <button class="tdd-tab @(ActiveTab=="activity" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("activity")'>Activity</button>
+        <button class="tdd-tab @(ActiveTab=="risk" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("risk")'>
+            Risk
+            @if (RiskIssues.Count > 0)
+            {
+                <span class="tdd-tab-badge">@RiskIssues.Count</span>
+            }
+        </button>
+        <button class="tdd-tab @(ActiveTab=="standup" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("standup")'>Standup</button>
+    </div>
+
+    <div class="tdd-panel">
+
+        <!-- ══ TAB 1: OVERVIEW ═══════════════════════════════════════════ -->
+        @if (ActiveTab == "overview")
+        {
+            <!-- Epic cards -->
+            <div class="tdd-epic-grid">
+                @foreach (var epic in FilteredEpics)
+                {
+                    var epicPct = (int)epic.CompletionPct;
+                    <div class="tdd-epic-card tdd-epic-@EpicState(epic)">
+                        <div class="tdd-epic-top">
+                            <div class="tdd-epic-name" title="@epic.DisplayName">@epic.DisplayName</div>
+                            <span class="tdd-pill tdd-pill-@EpicState(epic)">@epicPct%</span>
+                        </div>
+                        <div class="tdd-epic-key">@epic.Key</div>
+                        <div class="tdd-epic-bar">
+                            <div class="tdd-epic-bar-done" style="width:@Pct(epic.DoneCount,epic.TotalIssues)%"></div>
+                            <div class="tdd-epic-bar-prog" style="width:@Pct(epic.InProgressCount,epic.TotalIssues)%"></div>
+                        </div>
+                        <div class="tdd-epic-footer">
+                            <span>@epic.DoneCount/@epic.TotalIssues tasks</span>
+                            <span>@FmtH(epic.TotalRemainingSeconds) remaining</span>
+                        </div>
+                    </div>
+                }
+            </div>
+
+            <!-- Issue type breakdown -->
+            <div class="tdd-section-row">
+                <div class="tdd-breakdown-block">
+                    <div class="tdd-section-title">By Issue Type</div>
+                    <table class="tdd-bk-table">
+                        <thead><tr><th>Type</th><th>Total</th><th>Done</th><th>Progress</th></tr></thead>
+                        <tbody>
+                            @foreach (var kv in IssueTypeBreakdown.OrderByDescending(x => x.Value.Total))
+                            {
+                                var pct = Pct(kv.Value.Done, kv.Value.Total);
+                                <tr>
+                                    <td><span class="tdd-type-badge tdd-type-@kv.Key.ToLower()">@kv.Key</span></td>
+                                    <td class="tdd-bk-num">@kv.Value.Total</td>
+                                    <td class="tdd-bk-num">@kv.Value.Done</td>
+                                    <td>
+                                        <div class="tdd-mini-bar-wrap">
+                                            <div class="tdd-mini-bar-fill" style="width:@pct%"></div>
+                                        </div>
+                                        <span class="tdd-bk-pct">@pct%</span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="tdd-breakdown-block">
+                    <div class="tdd-section-title">By Priority</div>
+                    <table class="tdd-bk-table">
+                        <thead><tr><th>Priority</th><th>Total</th><th>Done</th><th>Progress</th></tr></thead>
+                        <tbody>
+                            @foreach (var kv in PriorityBreakdown)
+                            {
+                                var pct = Pct(kv.Value.Done, kv.Value.Total);
+                                <tr>
+                                    <td><span class="tdd-pri-badge tdd-pri-@kv.Key.ToLower().Replace(" ","")">@kv.Key</span></td>
+                                    <td class="tdd-bk-num">@kv.Value.Total</td>
+                                    <td class="tdd-bk-num">@kv.Value.Done</td>
+                                    <td>
+                                        <div class="tdd-mini-bar-wrap">
+                                            <div class="tdd-mini-bar-fill tdd-mini-bar-pri" style="width:@pct%"></div>
+                                        </div>
+                                        <span class="tdd-bk-pct">@pct%</span>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Task detail table -->
+            <div class="tdd-section-title tdd-mt">Task Detail</div>
+            <div class="tdd-table-wrap">
+                <table class="tdd-table">
+                    <thead>
+                        <tr>
+                            <th>Epic</th>
+                            <th>Key</th>
+                            <th>Task</th>
+                            <th>Assignee</th>
+                            <th>Status</th>
+                            <th>Type</th>
+                            <th>Priority</th>
+                            <th>Est.</th>
+                            <th>Logged</th>
+                            <th>Remaining</th>
+                            <th>Progress</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var epic in FilteredEpics)
+                        {
+                            @foreach (var issue in epic.Issues.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }))
+                            {
+                                var pct = IssueProgress(issue);
+                                <tr class="@(issue.StatusCategoryKey == "done" ? "tdd-row-done" : "")">
+                                    <td class="tdd-cell-muted tdd-nowrap">@(string.IsNullOrEmpty(issue.EpicKey) ? "—" : issue.EpicKey)</td>
+                                    <td class="tdd-cell-key tdd-nowrap">@issue.Key</td>
+                                    <td class="tdd-cell-sum">@issue.Summary</td>
+                                    <td class="tdd-nowrap">@issue.Assignee</td>
+                                    <td><span class="tdd-status-badge tdd-status-@issue.StatusCategoryKey">@issue.Status</span></td>
+                                    <td><span class="tdd-type-badge tdd-type-@issue.IssueType.ToLower()">@issue.IssueType</span></td>
+                                    <td class="tdd-nowrap"><span class="tdd-pri-dot tdd-pri-@(issue.Priority?.ToLower().Replace(" ","") ?? "")"></span>@issue.Priority</td>
+                                    <td class="tdd-nowrap">@(issue.OriginalEstimate == "-" ? "—" : issue.OriginalEstimate)</td>
+                                    <td class="tdd-nowrap">@(FilteredSpentSeconds(issue) > 0 ? FmtH(FilteredSpentSeconds(issue)) : "—")</td>
+                                    <td class="tdd-nowrap @(issue.RemainingEstimateSeconds > EffectiveDaysRemaining * 6 * 3600 && issue.RemainingEstimateSeconds > 0 ? "tdd-text-danger tdd-fw" : "")">
+                                        @(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)
+                                    </td>
+                                    <td>
+                                        <div class="tdd-prog-wrap">
+                                            <div class="tdd-prog-bar">
+                                                <div class="tdd-prog-fill @(pct > 100 ? "tdd-prog-over" : pct == 100 ? "tdd-prog-full" : "tdd-prog-partial")"
+                                                     style="width:@Math.Min(pct,100)%"></div>
+                                            </div>
+                                            <span class="tdd-prog-pct @(pct > 100 ? "tdd-text-danger tdd-fw" : pct == 100 ? "tdd-text-success" : "tdd-cell-muted")">@pct%</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+
+        <!-- ══ TAB 2: TEAM ═══════════════════════════════════════════════ -->
+        @if (ActiveTab == "team")
+        {
+            <div class="tdd-section-title">Team Workload</div>
+            <div style="max-height:300px" class="mb-3">
+                <canvas id="chart-workload"></canvas>
+            </div>
+
+            @foreach (var person in WorkloadPeople)
+            {
+                var issues     = FilteredIssues.Where(i => i.Assignee.Equals(person, StringComparison.OrdinalIgnoreCase)).ToList();
+                var logged     = WorklogSecondsByAuthor.TryGetValue(person, out var authSecs) ? authSecs : 0;
+                var remaining  = issues.Sum(i => i.RemainingEstimateSeconds);
+                var estimated  = issues.Sum(i => i.OriginalEstimateSeconds);
+                var done       = issues.Count(i => i.StatusCategoryKey == "done");
+                var inProg     = issues.Count(i => i.StatusCategoryKey == "indeterminate");
+                var toDo       = issues.Count - done - inProg;
+                var stale      = issues.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);
+                var overloaded = estimated > 0 && logged > estimated;
+                var capPct     = EffectiveDaysRemaining > 0
+                    ? Math.Min(100, (int)((double)remaining / (EffectiveDaysRemaining * 6 * 3600) * 100))
+                    : 0;
+                var capOver    = EffectiveDaysRemaining > 0 && remaining > EffectiveDaysRemaining * 6 * 3600;
+
+                <div class="tdd-member-card @(overloaded ? "tdd-member-over" : "")" @onclick="() => ToggleMember(person)">
+                    <div class="tdd-member-header">
+                        <div class="tdd-avatar @(overloaded ? "tdd-avatar-danger" : "tdd-avatar-primary")">@Initials(person)</div>
+                        <div class="tdd-member-info">
+                            <div class="tdd-member-name">@person</div>
+                            <div class="tdd-member-sub">@done done · @inProg in progress · @toDo to do</div>
+                        </div>
+                        <div class="tdd-member-stats">
+                            <div class="tdd-mstat">
+                                <span class="tdd-mstat-val">@FmtH(logged)</span>
+                                <span class="tdd-mstat-lbl">Logged</span>
+                            </div>
+                            <div class="tdd-mstat">
+                                <span class="tdd-mstat-val @(capOver ? "tdd-text-danger" : "")">@FmtH(remaining)</span>
+                                <span class="tdd-mstat-lbl">Remaining</span>
+                            </div>
+                            <div class="tdd-mstat">
+                                <span class="tdd-mstat-val @(overloaded ? "tdd-text-danger" : "")">@FmtH(estimated)</span>
+                                <span class="tdd-mstat-lbl">Planned</span>
+                            </div>
+                            <!-- Capacity gauge -->
+                            <div class="tdd-cap-gauge">
+                                <div class="tdd-cap-label @(capOver ? "tdd-text-danger" : "")">Capacity @capPct%</div>
+                                <div class="tdd-cap-bar">
+                                    <div class="tdd-cap-fill @(capOver ? "tdd-cap-over" : "tdd-cap-ok")" style="width:@capPct%"></div>
+                                </div>
+                            </div>
+                            @if (overloaded)  { <span class="tdd-badge tdd-badge-danger">Overloaded</span> }
+                            @if (stale > 0)   { <span class="tdd-badge tdd-badge-warn">@stale stale</span> }
+                        </div>
+                        <span class="tdd-member-toggle">@(ExpandedMembers.Contains(person) ? "▲" : "▼")</span>
+                    </div>
+                    <div class="tdd-member-bar">
+                        <div class="tdd-member-bar-done" style="width:@Pct(done,issues.Count)%"></div>
+                        <div class="tdd-member-bar-prog" style="width:@Pct(inProg,issues.Count)%"></div>
+                    </div>
+                </div>
+
+                @if (ExpandedMembers.Contains(person))
+                {
+                    var personLogs = AllWorklogsFor(person);
+                    <div class="tdd-expand-panel">
+                        <!-- Worklog entries -->
+                        <div class="tdd-expand-section">
+                            <div class="tdd-expand-title">Worklogs — @person <span class="tdd-expand-sub">(@FmtH(logged) total)</span></div>
+                            @if (!personLogs.Any())
+                            {
+                                <div class="tdd-empty">No worklogs in current filter.</div>
+                            }
+                            else
+                            {
+                                <table class="tdd-table">
+                                    <thead><tr><th>Date</th><th>Issue</th><th>Summary</th><th>Logged</th><th>Comment</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var x in personLogs)
+                                        {
+                                            <tr>
+                                                <td class="tdd-cell-muted tdd-nowrap">@x.Log.Started.ToString("MMM d, HH:mm")</td>
+                                                <td class="tdd-cell-key tdd-nowrap">@x.Issue.Key</td>
+                                                <td class="tdd-cell-sum">@x.Issue.Summary</td>
+                                                <td class="tdd-cell-key tdd-nowrap">@x.Log.TimeSpent</td>
+                                                <td class="tdd-cell-muted tdd-cell-sum">@(string.IsNullOrEmpty(x.Log.Comment) ? "—" : x.Log.Comment)</td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                    <tfoot>
+                                        <tr>
+                                            <td colspan="3" class="tdd-fw">Total</td>
+                                            <td class="tdd-cell-key tdd-fw">@FmtH(personLogs.Sum(x => x.Log.TimeSpentSeconds))</td>
+                                            <td></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            }
+                        </div>
+
+                        <!-- Assigned issues -->
+                        @if (issues.Any())
+                        {
+                            <div class="tdd-expand-section tdd-expand-border">
+                                <div class="tdd-expand-title">Assigned Issues</div>
+                                <table class="tdd-table">
+                                    <thead><tr><th>Epic</th><th>Key</th><th>Summary</th><th>Status</th><th>Type</th><th>My Logged</th><th>Remaining</th><th>Progress</th></tr></thead>
+                                    <tbody>
+                                        @foreach (var issue in issues.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }))
+                                        {
+                                            var pct = IssueProgress(issue);
+                                            var myLogged = issue.Worklogs
+                                                .Where(w => w.Author.Equals(person, StringComparison.OrdinalIgnoreCase) && WorklogInRange(w))
+                                                .Sum(w => w.TimeSpentSeconds);
+                                            <tr class="@(issue.StatusCategoryKey == "done" ? "tdd-row-done" : "")">
+                                                <td class="tdd-cell-muted tdd-nowrap">@(string.IsNullOrEmpty(issue.EpicKey) ? "—" : issue.EpicKey)</td>
+                                                <td class="tdd-cell-key tdd-nowrap">@issue.Key</td>
+                                                <td class="tdd-cell-sum">@issue.Summary</td>
+                                                <td>
+                                                    <span class="tdd-status-badge tdd-status-@issue.StatusCategoryKey">@issue.Status</span>
+                                                    @if (issue.StatusCategoryKey == "indeterminate" && issue.DaysSinceLastWorklog >= 2 && issue.DaysSinceLastWorklog < 999)
+                                                    {
+                                                        <span class="tdd-badge tdd-badge-danger" style="font-size:10px;margin-left:4px">@issue.DaysSinceLastWorklog d idle</span>
+                                                    }
+                                                </td>
+                                                <td><span class="tdd-type-badge tdd-type-@issue.IssueType.ToLower()">@issue.IssueType</span></td>
+                                                <td class="tdd-nowrap">@(myLogged > 0 ? FmtH(myLogged) : "—")</td>
+                                                <td class="tdd-nowrap">@(issue.RemainingEstimate == "-" ? "—" : issue.RemainingEstimate)</td>
+                                                <td>
+                                                    <div class="tdd-prog-wrap">
+                                                        <div class="tdd-prog-bar">
+                                                            <div class="tdd-prog-fill @(pct>100?"tdd-prog-over":pct==100?"tdd-prog-full":"tdd-prog-partial")" style="width:@Math.Min(pct,100)%"></div>
+                                                        </div>
+                                                        <span class="tdd-prog-pct @(pct==100?"tdd-text-success":pct>100?"tdd-text-danger":"tdd-cell-muted")">@pct%</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        }
+
+        <!-- ══ TAB 3: FORECAST ═══════════════════════════════════════════ -->
+        @if (ActiveTab == "forecast")
+        {
+            <div class="tdd-epic-grid">
+                @foreach (var epic in FilteredEpics)
+                {
+                    var variance  = EpicFilteredVariancePct(epic);
+                    var isOver    = EpicFilteredIsOverBudget(epic);
+                    var label     = isOver ? "Over Budget" : Report.RiskLevel == SprintRisk.Behind ? "At Risk" : "On Track";
+                    var state     = isOver ? "danger" : Report.RiskLevel == SprintRisk.Behind ? "warn" : "ok";
+                    var spentPct  = epic.TotalEstimateSeconds > 0
+                        ? Math.Min(100, (int)((double)EpicFilteredSpent(epic) / epic.TotalEstimateSeconds * 100))
+                        : 0;
+                    <div class="tdd-epic-card tdd-epic-@(isOver ? "danger" : "neutral")">
+                        <div class="tdd-epic-top">
+                            <div class="tdd-epic-name" title="@epic.DisplayName">@epic.DisplayName</div>
+                            <span class="tdd-pill tdd-pill-@state">@label</span>
+                        </div>
+                        <div class="tdd-forecast-row">
+                            <div class="tdd-fstat">
+                                <div class="tdd-fstat-val">@FmtH(epic.TotalEstimateSeconds)</div>
+                                <div class="tdd-fstat-lbl">Planned</div>
+                            </div>
+                            <div class="tdd-fstat">
+                                <div class="tdd-fstat-val @(isOver ? "tdd-text-danger" : "")">@FmtH(EpicFilteredSpent(epic))</div>
+                                <div class="tdd-fstat-lbl">Logged</div>
+                            </div>
+                            <div class="tdd-fstat">
+                                <div class="tdd-fstat-val @(variance > 0 ? "tdd-text-danger" : "tdd-text-success")">
+                                    @(variance > 0 ? "+" : "")@variance.ToString("0")%
+                                </div>
+                                <div class="tdd-fstat-lbl">Variance</div>
+                            </div>
+                        </div>
+                        @if (epic.TotalEstimateSeconds > 0)
+                        {
+                            <div class="tdd-fbar-wrap">
+                                <div class="tdd-fbar-fill @(isOver ? "tdd-fbar-over" : "tdd-fbar-ok")" style="width:@spentPct%"></div>
+                            </div>
+                            <div class="tdd-fbar-labels">
+                                <span>0h</span><span>@FmtH(epic.TotalEstimateSeconds) est.</span>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="tdd-section-title tdd-mt">Estimated vs Actual Hours per Epic</div>
+            <div style="max-height:320px">
+                <canvas id="chart-forecast"></canvas>
+            </div>
+
+            <div class="tdd-section-title tdd-mt">Variance Detail</div>
+            <div class="tdd-table-wrap">
+                <table class="tdd-table">
+                    <thead>
+                        <tr>
+                            <th>Epic</th><th>Tasks</th><th>Done</th>
+                            <th>Planned</th><th>Logged</th><th>Remaining</th>
+                            <th>Variance</th><th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var epic in FilteredEpics)
+                        {
+                            var v    = EpicFilteredVariancePct(epic);
+                            var eOvr = EpicFilteredIsOverBudget(epic);
+                            <tr class="@(eOvr ? "tdd-row-danger" : "")">
+                                <td class="tdd-fw">@epic.DisplayName</td>
+                                <td class="tdd-bk-num">@epic.TotalIssues</td>
+                                <td class="tdd-bk-num">@epic.DoneCount</td>
+                                <td class="tdd-nowrap">@FmtH(epic.TotalEstimateSeconds)</td>
+                                <td class="tdd-nowrap @(eOvr ? "tdd-text-danger tdd-fw" : "")">@FmtH(EpicFilteredSpent(epic))</td>
+                                <td class="tdd-nowrap">@FmtH(epic.TotalRemainingSeconds)</td>
+                                <td class="tdd-nowrap @(v > 0 ? "tdd-text-danger" : "tdd-text-success")">
+                                    @(v > 0 ? "+" : "")@v.ToString("0.0")%
+                                </td>
+                                <td>
+                                    @if (eOvr)
+                                    {
+                                        <span class="tdd-badge tdd-badge-danger">Over Budget</span>
+                                    }
+                                    else if (Report.RiskLevel == SprintRisk.Behind)
+                                    {
+                                        <span class="tdd-badge tdd-badge-warn">At Risk</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="tdd-badge tdd-badge-ok">On Track</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    <tfoot>
+                        <tr class="tdd-fw">
+                            <td>Total</td>
+                            <td class="tdd-bk-num">@FilteredIssues.Count</td>
+                            <td class="tdd-bk-num">@FilteredIssues.Count(i => i.StatusCategoryKey == "done")</td>
+                            <td class="tdd-nowrap">@FmtH(FilteredIssues.Sum(i => i.OriginalEstimateSeconds))</td>
+                            <td class="tdd-nowrap">@FmtH(FilteredTotalLoggedSeconds)</td>
+                            <td class="tdd-nowrap">@FmtH(FilteredIssues.Sum(i => i.RemainingEstimateSeconds))</td>
+                            <td colspan="2"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        }
+
+        <!-- ══ TAB 4: ACTIVITY ═══════════════════════════════════════════ -->
+        @if (ActiveTab == "activity")
+        {
+            <div class="tdd-section-title">Daily Worklog Totals</div>
+            <div style="max-height:280px" class="mb-4">
+                <canvas id="chart-activity"></canvas>
+            </div>
+
+            <div class="tdd-section-title tdd-mt">Full Worklog History</div>
+            <div class="tdd-table-wrap">
+                <table class="tdd-table">
+                    <thead>
+                        <tr><th>Date</th><th>Author</th><th>Issue</th><th>Summary</th><th>Type</th><th>Epic</th><th>Logged</th><th>Comment</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var x in AllWorklogsFiltered)
+                        {
+                            <tr>
+                                <td class="tdd-cell-muted tdd-nowrap">@x.Log.Started.ToString("MMM d, HH:mm")</td>
+                                <td class="tdd-nowrap">@x.Log.Author</td>
+                                <td class="tdd-cell-key tdd-nowrap">@x.Issue.Key</td>
+                                <td class="tdd-cell-sum">@x.Issue.Summary</td>
+                                <td><span class="tdd-type-badge tdd-type-@x.Issue.IssueType.ToLower()">@x.Issue.IssueType</span></td>
+                                <td class="tdd-cell-muted tdd-nowrap">@(string.IsNullOrEmpty(x.Issue.EpicKey) ? "—" : x.Issue.EpicKey)</td>
+                                <td class="tdd-cell-key tdd-nowrap">@x.Log.TimeSpent</td>
+                                <td class="tdd-cell-muted tdd-cell-sum">@(string.IsNullOrEmpty(x.Log.Comment) ? "—" : x.Log.Comment)</td>
+                            </tr>
+                        }
+                    </tbody>
+                    @{
+                        var totalLogged = AllWorklogsFiltered.Sum(x => x.Log.TimeSpentSeconds);
+                    }
+                    <tfoot>
+                        <tr class="tdd-fw">
+                            <td colspan="6">Total</td>
+                            <td class="tdd-cell-key">@FmtH(totalLogged)</td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        }
+
+        <!-- ══ TAB 5: RISK ═══════════════════════════════════════════════ -->
+        @if (ActiveTab == "risk")
+        {
+            <div class="tdd-risk-cards">
+                <div class="tdd-risk-card tdd-risk-danger">
+                    <div class="tdd-risk-val">@StaleCount</div>
+                    <div class="tdd-risk-lbl">Stale — in progress, idle 2+ days</div>
+                </div>
+                <div class="tdd-risk-card tdd-risk-warn">
+                    <div class="tdd-risk-val">@NotStartedLateCount</div>
+                    <div class="tdd-risk-lbl">Not started — sprint &gt;50% elapsed</div>
+                </div>
+                <div class="tdd-risk-card tdd-risk-warn">
+                    <div class="tdd-risk-val">@OverCapacityCount</div>
+                    <div class="tdd-risk-lbl">Over capacity — remaining &gt; days left</div>
+                </div>
+                <div class="tdd-risk-card @(OpenBugsCount > 0 ? "tdd-risk-warn" : "tdd-risk-ok")">
+                    <div class="tdd-risk-val">@OpenBugsCount</div>
+                    <div class="tdd-risk-lbl">Open bugs in sprint</div>
+                </div>
+            </div>
+
+            @if (RiskIssues.Count == 0)
+            {
+                <div class="tdd-all-clear">All clear — no blockers or at-risk items detected.</div>
+            }
+            else
+            {
+                <div class="tdd-table-wrap">
+                    <table class="tdd-table">
+                        <thead>
+                            <tr><th>Key</th><th>Summary</th><th>Assignee</th><th>Status</th><th>Risk</th><th>Type</th><th>Idle (d)</th><th>Remaining</th><th>Days left</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var ri in RiskIssues)
+                            {
+                                <tr class="@(ri.Reasons.Contains("Stale") ? "tdd-row-danger" : "tdd-row-warn")">
+                                    <td class="tdd-cell-key tdd-nowrap">@ri.Issue.Key</td>
+                                    <td class="tdd-cell-sum">@ri.Issue.Summary</td>
+                                    <td class="tdd-nowrap">@ri.Issue.Assignee</td>
+                                    <td><span class="tdd-status-badge tdd-status-@ri.Issue.StatusCategoryKey">@ri.Issue.Status</span></td>
+                                    <td>
+                                        @foreach (var reason in ri.Reasons)
+                                        {
+                                            <span class="tdd-badge @RiskBadgeClass(reason) tdd-badge-sm">@reason</span>
+                                        }
+                                    </td>
+                                    <td><span class="tdd-type-badge tdd-type-@ri.Issue.IssueType.ToLower()">@ri.Issue.IssueType</span></td>
+                                    <td class="tdd-bk-num">@(ri.Issue.DaysSinceLastWorklog < 999 ? ri.Issue.DaysSinceLastWorklog.ToString() : "—")</td>
+                                    <td class="tdd-nowrap">@(ri.Issue.RemainingEstimate == "-" ? "—" : ri.Issue.RemainingEstimate)</td>
+                                    <td class="tdd-bk-num">@EffectiveDaysRemaining</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+
+        <!-- ══ TAB 6: STANDUP ════════════════════════════════════════════ -->
+        @if (ActiveTab == "standup")
+        {
+            <div class="tdd-standup-header">
+                <span class="tdd-standup-title">Daily Standup</span>
+                <span class="tdd-badge tdd-badge-neutral">@DateTime.Today.ToString("ddd, MMM d")</span>
+                <span class="tdd-cell-muted">Sprint: @EffectiveDaysRemaining days remaining</span>
+            </div>
+
+            @foreach (var group in StandupGroups)
+            {
+                var recentLogs = group.Issues
+                    .SelectMany(i => i.Worklogs.Select(w => new WorklogRecord(i, w)))
+                    .Where(x => x.Log.Author.Equals(group.Assignee, StringComparison.OrdinalIgnoreCase)
+                             && x.Log.Started.Date >= DateTime.Today.AddDays(-2))
+                    .OrderByDescending(x => x.Log.Started)
+                    .ToList();
+                var inProgress = group.Issues.Where(i => i.StatusCategoryKey == "indeterminate").ToList();
+                var toDo       = group.Issues.Where(i => i.StatusCategoryKey == "new").ToList();
+                var isIdle     = !recentLogs.Any() && inProgress.Any();
+
+                <div class="tdd-standup-card @(isIdle ? "tdd-standup-idle" : "")">
+                    <div class="tdd-standup-person">
+                        <div class="tdd-avatar @(isIdle ? "tdd-avatar-warn" : "tdd-avatar-primary")">@Initials(group.Assignee)</div>
+                        <div>
+                            <div class="tdd-member-name">@group.Assignee</div>
+                            <div class="tdd-member-sub">
+                                @group.Issues.Count(i => i.StatusCategoryKey == "done") done ·
+                                @inProgress.Count in progress ·
+                                @toDo.Count to do
+                            </div>
+                        </div>
+                        @if (isIdle)
+                        {
+                            <span class="tdd-badge tdd-badge-warn">No recent activity</span>
+                        }
+                    </div>
+                    <div class="tdd-standup-cols">
+                        <div class="tdd-standup-col">
+                            <div class="tdd-standup-col-title">Recent activity</div>
+                            @if (!recentLogs.Any())
+                            {
+                                <div class="tdd-empty">No worklogs in last 2 days</div>
+                            }
+                            else
+                            {
+                                @foreach (var x in recentLogs)
+                                {
+                                    <div class="tdd-standup-log">
+                                        <div class="tdd-standup-log-meta">
+                                            <span class="tdd-cell-muted">@x.Log.Started.ToString("MMM d")</span>
+                                            <span class="tdd-fw tdd-nowrap">@x.Log.TimeSpent</span>
+                                            <span class="tdd-cell-muted tdd-nowrap">on @x.Issue.Key</span>
+                                        </div>
+                                        @if (!string.IsNullOrEmpty(x.Log.Comment))
+                                        {
+                                            <div class="tdd-cell-muted tdd-cell-sum">@x.Log.Comment</div>
+                                        }
+                                    </div>
+                                }
+                            }
+                        </div>
+                        <div class="tdd-standup-col">
+                            <div class="tdd-standup-col-title">In progress (@inProgress.Count)</div>
+                            @if (!inProgress.Any())
+                            {
+                                <div class="tdd-empty">—</div>
+                            }
+                            else
+                            {
+                                @foreach (var issue in inProgress)
+                                {
+                                    <div class="tdd-standup-issue">
+                                        <div class="tdd-cell-key tdd-nowrap">@issue.Key</div>
+                                        <div class="tdd-cell-muted tdd-cell-sum">@issue.Summary</div>
+                                        @if (issue.DaysSinceLastWorklog >= 2 && issue.DaysSinceLastWorklog < 999)
+                                        {
+                                            <span class="tdd-badge tdd-badge-danger" style="font-size:10px">Idle @issue.DaysSinceLastWorklog d</span>
+                                        }
+                                    </div>
+                                }
+                            }
+                        </div>
+                        <div class="tdd-standup-col">
+                            <div class="tdd-standup-col-title">Up next (@toDo.Count)</div>
+                            @if (!toDo.Any())
+                            {
+                                <div class="tdd-empty">—</div>
+                            }
+                            else
+                            {
+                                @foreach (var issue in toDo)
+                                {
+                                    <div class="tdd-standup-issue">
+                                        <div class="tdd-cell-key tdd-nowrap">
+                                            @issue.Key
+                                            @if (!string.IsNullOrEmpty(issue.Priority) && issue.Priority == "Highest")
+                                            {
+                                                <span class="tdd-badge tdd-badge-danger" style="font-size:10px;margin-left:3px">P1</span>
+                                            }
+                                        </div>
+                                        <div class="tdd-cell-muted tdd-cell-sum">@issue.Summary</div>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+
+    </div>
+}
+
+<!-- ── Export Modal ──────────────────────────────────────────────────────── -->
+@if (ShowExportModal)
+{
+    <div class="tdd-modal-backdrop">
+        <div class="tdd-modal">
+            <div class="tdd-modal-header">
+                <span class="tdd-modal-title">Export Remaining Work</span>
+                <button class="tdd-modal-close" @onclick="() => ShowExportModal = false">✕</button>
+            </div>
+            <div class="tdd-modal-body">
+                <p class="tdd-cell-muted" style="font-size:13px;margin-bottom:12px">
+                    Sprint: <strong>@(Report?.SprintName is { Length: > 0 } sn ? sn : SprintId)</strong>
+                    · <strong>@EffectiveDaysRemaining days left</strong>
+                </p>
+                <div class="tdd-export-row">
+                    <label class="tdd-fw" style="font-size:13px">Team members</label>
+                    <div class="tdd-export-links">
+                        <button class="tdd-btn-link" @onclick='() => ExportSelectedMembers = new HashSet<string>(ExportAllMembers)'>All</button>
+                        <span class="tdd-cell-muted">/</span>
+                        <button class="tdd-btn-link" @onclick="() => ExportSelectedMembers.Clear()">None</button>
+                    </div>
+                </div>
+                <div class="tdd-export-list">
+                    @foreach (var member in ExportAllMembers)
+                    {
+                        var isChecked = ExportSelectedMembers.Contains(member);
+                        <label class="tdd-export-item">
+                            <input type="checkbox" checked="@isChecked"
+                                   @onchange="e => ToggleExportMember(member, (bool)(e.Value ?? false))" />
+                            @member
+                        </label>
+                    }
+                </div>
+                <div class="tdd-cell-muted" style="font-size:12px;margin-top:6px">@ExportSelectedMembers.Count of @ExportAllMembers.Count selected</div>
+
+                <div class="tdd-export-section">
+                    <label class="tdd-fw" style="font-size:13px">Exclude epics (comma-separated keys)</label>
+                    <input class="tdd-input" style="margin-top:4px" placeholder="e.g. JM-10, JM-42"
+                           @bind="ExportIgnoredEpicsInput" />
+                </div>
+            </div>
+            <div class="tdd-modal-footer">
+                <button class="tdd-btn tdd-btn-ghost" @onclick="() => ShowExportModal = false">Cancel</button>
+                <button class="tdd-btn tdd-btn-success" @onclick="ExportToExcel"
+                        disabled="@(IsExporting || ExportSelectedMembers.Count == 0)">
+                    @if (IsExporting)
+                    {
+                        <span class="tdd-spinner tdd-spinner-sm"></span>
+                    }
+                    Export .xlsx
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+/* ── Base tokens ───────────────────────────────────────────────────────── */
+:root {
+    --tdd-bg:          #f8f9fb;
+    --tdd-surface:     #ffffff;
+    --tdd-border:      #e5e7eb;
+    --tdd-border2:     #d1d5db;
+    --tdd-primary:     #6366f1;
+    --tdd-success:     #22c55e;
+    --tdd-danger:      #ef4444;
+    --tdd-warn:        #f59e0b;
+    --tdd-muted:       #6b7280;
+    --tdd-text:        #111827;
+    --tdd-radius:      8px;
+    --tdd-shadow:      0 1px 4px rgba(0,0,0,0.08);
+    --tdd-shadow-md:   0 2px 10px rgba(0,0,0,0.12);
+}
+
+/* ── Load bar ──────────────────────────────────────────────────────────── */
+.tdd-load-bar {
+    background: var(--tdd-surface);
+    border: 1px solid var(--tdd-border);
+    border-radius: var(--tdd-radius);
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    box-shadow: var(--tdd-shadow);
+}
+.tdd-load-inner {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 16px;
+}
+.tdd-load-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--tdd-text);
+    align-self: center;
+    margin-right: 8px;
+}
+.tdd-load-field { display: flex; flex-direction: column; gap: 3px; }
+.tdd-load-row   { display: flex; align-items: center; gap: 8px; }
+.tdd-load-divider { color: var(--tdd-muted); font-weight: 600; align-self: flex-end; padding-bottom: 6px; }
+.tdd-load-actions { display: flex; gap: 8px; align-self: flex-end; }
+.tdd-jql-hint { font-size: 11px; color: var(--tdd-muted); max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ── Form controls ─────────────────────────────────────────────────────── */
+.tdd-label      { font-size: 12px; color: var(--tdd-muted); font-weight: 500; }
+.tdd-label-hint { font-weight: 400; }
+.tdd-input      { border: 1px solid var(--tdd-border2); border-radius: 6px; padding: 5px 10px; font-size: 13px; outline: none; transition: border-color .15s; background: var(--tdd-surface); color: var(--tdd-text); }
+.tdd-input:focus { border-color: var(--tdd-primary); }
+.tdd-input-sm   { width: 170px; }
+.tdd-input-xs   { width: 90px; }
+.tdd-input-date { width: 140px; }
+.tdd-select     { border: 1px solid var(--tdd-border2); border-radius: 6px; padding: 5px 8px; font-size: 13px; background: var(--tdd-surface); color: var(--tdd-text); outline: none; }
+.tdd-select-wide { width: 280px; }
+.tdd-btn        { border: none; border-radius: 6px; padding: 7px 16px; font-size: 13px; font-weight: 500; cursor: pointer; transition: opacity .15s; display: inline-flex; align-items: center; gap: 6px; }
+.tdd-btn:disabled { opacity: .5; cursor: default; }
+.tdd-btn-primary { background: var(--tdd-primary); color: #fff; }
+.tdd-btn-success { background: #15803d; color: #fff; }
+.tdd-btn-ghost   { background: transparent; border: 1px solid var(--tdd-border2); color: var(--tdd-text); }
+.tdd-btn:hover:not(:disabled) { opacity: .88; }
+.tdd-btn-link   { background: none; border: none; color: var(--tdd-primary); font-size: 13px; cursor: pointer; padding: 0; }
+.tdd-spinner    { width: 18px; height: 18px; border: 2px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: tdd-spin .7s linear infinite; display: inline-block; }
+.tdd-spinner-sm { width: 14px; height: 14px; }
+@@keyframes tdd-spin { to { transform: rotate(360deg); } }
+.tdd-error { background: #fee2e2; border: 1px solid #fca5a5; border-radius: var(--tdd-radius); padding: 12px 16px; color: #b91c1c; margin-bottom: 14px; font-size: 14px; }
+
+/* ── Timeline ──────────────────────────────────────────────────────────── */
+.tdd-timeline-card {
+    background: var(--tdd-surface);
+    border: 1px solid var(--tdd-border);
+    border-radius: var(--tdd-radius);
+    padding: 14px 20px;
+    margin-bottom: 14px;
+    box-shadow: var(--tdd-shadow);
+}
+.tdd-timeline-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.tdd-timeline-name   { font-weight: 700; font-size: 15px; color: var(--tdd-text); }
+.tdd-timeline-dates  { font-size: 12px; color: var(--tdd-muted); }
+.tdd-timeline-days   { font-size: 12px; font-weight: 600; color: var(--tdd-primary); margin-left: auto; }
+.tdd-timeline-warn   { font-size: 12px; color: var(--tdd-danger); margin-top: 6px; font-weight: 500; }
+.tdd-dualbar         { display: flex; flex-direction: column; gap: 7px; }
+.tdd-dualbar-row     { display: flex; align-items: center; gap: 10px; }
+.tdd-dualbar-label   { font-size: 12px; color: var(--tdd-muted); width: 80px; flex-shrink: 0; }
+.tdd-dualbar-track   { flex: 1; height: 10px; background: #f3f4f6; border-radius: 5px; overflow: hidden; }
+.tdd-dualbar-fill    { height: 100%; border-radius: 5px; transition: width .4s ease; }
+.tdd-dualbar-time    { background: #a5b4fc; }
+.tdd-dualbar-done    { background: var(--tdd-success); }
+.tdd-dualbar-behind  { background: var(--tdd-danger); }
+.tdd-dualbar-pct     { font-size: 12px; font-weight: 600; width: 38px; text-align: right; flex-shrink: 0; }
+
+/* ── Stats strip ───────────────────────────────────────────────────────── */
+.tdd-stats-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    background: var(--tdd-surface);
+    border: 1px solid var(--tdd-border);
+    border-radius: var(--tdd-radius);
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    box-shadow: var(--tdd-shadow);
+    align-items: center;
+}
+.tdd-stat       { display: flex; flex-direction: column; align-items: center; padding: 4px 12px; border-radius: 6px; }
+.tdd-stat-val   { font-size: 20px; font-weight: 700; color: var(--tdd-text); line-height: 1.15; }
+.tdd-stat-of    { font-size: 13px; font-weight: 400; color: var(--tdd-muted); }
+.tdd-stat-lbl   { font-size: 11px; color: var(--tdd-muted); margin-top: 1px; white-space: nowrap; }
+.tdd-stat-divider { width: 1px; background: var(--tdd-border); height: 36px; margin: 0 4px; }
+.tdd-stat-danger { background: #fef2f2; }
+.tdd-stat-warn  { background: #fffbeb; }
+.tdd-stat-risk-success { background: #f0fdf4; }
+.tdd-stat-risk-warning { background: #fffbeb; }
+.tdd-stat-risk-danger  { background: #fef2f2; }
+.tdd-stat-risk-val-success { color: var(--tdd-success) !important; }
+.tdd-stat-risk-val-warning { color: var(--tdd-warn) !important; }
+.tdd-stat-risk-val-danger  { color: var(--tdd-danger) !important; }
+
+/* ── Filter bar ────────────────────────────────────────────────────────── */
+.tdd-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 14px;
+    background: var(--tdd-surface);
+    border: 1px solid var(--tdd-border);
+    border-radius: var(--tdd-radius);
+    padding: 12px 16px;
+    margin-bottom: 14px;
+    box-shadow: var(--tdd-shadow);
+}
+.tdd-filter-group { display: flex; flex-direction: column; gap: 3px; }
+.tdd-date-range   { display: flex; align-items: center; gap: 6px; }
+.tdd-date-sep     { color: var(--tdd-muted); font-size: 12px; }
+.tdd-filter-count { font-size: 12px; color: var(--tdd-muted); margin-left: auto; align-self: center; }
+
+/* ── Tabs ──────────────────────────────────────────────────────────────── */
+.tdd-tabs {
+    display: flex;
+    border-bottom: 2px solid var(--tdd-border);
+    margin-bottom: 0;
+    gap: 0;
+}
+.tdd-tab {
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 500;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--tdd-muted);
+    cursor: pointer;
+    margin-bottom: -2px;
+    transition: color .15s, border-color .15s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.tdd-tab:hover   { color: var(--tdd-text); }
+.tdd-tab-active  { color: var(--tdd-primary); border-bottom-color: var(--tdd-primary); }
+.tdd-tab-badge   { background: var(--tdd-danger); color: #fff; border-radius: 10px; padding: 1px 6px; font-size: 11px; }
+
+/* ── Panel ─────────────────────────────────────────────────────────────── */
+.tdd-panel {
+    background: var(--tdd-surface);
+    border: 1px solid var(--tdd-border);
+    border-top: none;
+    border-radius: 0 0 var(--tdd-radius) var(--tdd-radius);
+    padding: 20px;
+    box-shadow: var(--tdd-shadow);
+}
+.tdd-section-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--tdd-muted); margin-bottom: 10px; }
+.tdd-mt { margin-top: 24px; }
+.tdd-section-row { display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 20px; }
+
+/* ── Epic cards ────────────────────────────────────────────────────────── */
+.tdd-epic-grid  { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px,1fr)); gap: 14px; margin-bottom: 20px; }
+.tdd-epic-card  { background: var(--tdd-surface); border: 1px solid var(--tdd-border); border-left: 3px solid var(--tdd-border); border-radius: var(--tdd-radius); padding: 14px; box-shadow: var(--tdd-shadow); }
+.tdd-epic-success { border-left-color: var(--tdd-success) !important; }
+.tdd-epic-danger  { border-left-color: var(--tdd-danger) !important; }
+.tdd-epic-neutral { border-left-color: var(--tdd-primary) !important; }
+.tdd-epic-top     { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2px; }
+.tdd-epic-name    { font-weight: 600; font-size: 14px; color: var(--tdd-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+.tdd-epic-key     { font-size: 11px; color: var(--tdd-muted); margin-bottom: 8px; }
+.tdd-epic-bar     { height: 7px; background: #f3f4f6; border-radius: 4px; overflow: hidden; display: flex; margin-bottom: 6px; }
+.tdd-epic-bar-done{ background: var(--tdd-success); height: 100%; }
+.tdd-epic-bar-prog{ background: var(--tdd-primary); height: 100%; }
+.tdd-epic-footer  { display: flex; justify-content: space-between; font-size: 12px; color: var(--tdd-muted); }
+
+/* ── Pill badges ───────────────────────────────────────────────────────── */
+.tdd-pill       { padding: 2px 9px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.tdd-pill-ok    { background: #dcfce7; color: #15803d; }
+.tdd-pill-warn  { background: #fef9c3; color: #854d0e; }
+.tdd-pill-danger{ background: #fee2e2; color: #b91c1c; }
+.tdd-pill-success{ background: #dcfce7; color: #15803d; }
+.tdd-pill-neutral{ background: #ede9fe; color: #4f46e5; }
+
+/* ── Breakdown tables ──────────────────────────────────────────────────── */
+.tdd-breakdown-block { flex: 1; min-width: 240px; }
+.tdd-bk-table   { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tdd-bk-table th{ text-align: left; font-size: 11px; color: var(--tdd-muted); padding: 4px 8px; border-bottom: 1px solid var(--tdd-border); font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
+.tdd-bk-table td{ padding: 5px 8px; border-bottom: 1px solid #f3f4f6; }
+.tdd-bk-num     { text-align: center; font-variant-numeric: tabular-nums; color: var(--tdd-text); }
+.tdd-bk-pct     { font-size: 11px; color: var(--tdd-muted); margin-left: 6px; }
+.tdd-mini-bar-wrap { display: inline-block; width: 80px; height: 6px; background: #f3f4f6; border-radius: 3px; overflow: hidden; vertical-align: middle; }
+.tdd-mini-bar-fill { height: 100%; background: var(--tdd-primary); border-radius: 3px; }
+.tdd-mini-bar-pri  { background: var(--tdd-warn); }
+
+/* ── Type & priority badges ────────────────────────────────────────────── */
+.tdd-type-badge { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.tdd-type-task  { background: #dbeafe; color: #1d4ed8; }
+.tdd-type-bug   { background: #fee2e2; color: #b91c1c; }
+.tdd-type-story { background: #dcfce7; color: #15803d; }
+.tdd-type-epic  { background: #ede9fe; color: #4f46e5; }
+.tdd-type-subtask { background: #f3f4f6; color: #374151; }
+.tdd-pri-badge  { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.tdd-pri-highest{ background: #fee2e2; color: #991b1b; }
+.tdd-pri-high   { background: #fef3c7; color: #92400e; }
+.tdd-pri-medium { background: #dbeafe; color: #1e40af; }
+.tdd-pri-low    { background: #f3f4f6; color: #374151; }
+.tdd-pri-lowest { background: #f9fafb; color: #6b7280; }
+.tdd-pri-dot    { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; vertical-align: middle; background: #d1d5db; }
+.tdd-pri-dot.tdd-pri-highest { background: var(--tdd-danger); }
+.tdd-pri-dot.tdd-pri-high    { background: var(--tdd-warn); }
+.tdd-pri-dot.tdd-pri-medium  { background: var(--tdd-primary); }
+.tdd-pri-dot.tdd-pri-low     { background: #9ca3af; }
+
+/* ── Status badges ─────────────────────────────────────────────────────── */
+.tdd-status-badge        { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.tdd-status-done         { background: #dcfce7; color: #15803d; }
+.tdd-status-indeterminate{ background: #dbeafe; color: #1d4ed8; }
+.tdd-status-new          { background: #f3f4f6; color: #374151; }
+
+/* ── Generic badges ────────────────────────────────────────────────────── */
+.tdd-badge        { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+.tdd-badge-sm     { padding: 1px 6px; font-size: 11px; margin-right: 3px; }
+.tdd-badge-danger { background: var(--tdd-danger); color: #fff; }
+.tdd-badge-warn   { background: var(--tdd-warn); color: #fff; }
+.tdd-badge-ok     { background: var(--tdd-success); color: #fff; }
+.tdd-badge-neutral{ background: #e5e7eb; color: #374151; }
+
+/* ── Table ─────────────────────────────────────────────────────────────── */
+.tdd-table-wrap { overflow-x: auto; }
+.tdd-table      { width: 100%; border-collapse: collapse; font-size: 13px; }
+.tdd-table th   { text-align: left; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--tdd-muted); padding: 7px 10px; border-bottom: 2px solid var(--tdd-border); background: #f9fafb; white-space: nowrap; }
+.tdd-table td   { padding: 7px 10px; border-bottom: 1px solid #f3f4f6; color: var(--tdd-text); vertical-align: middle; }
+.tdd-table tfoot td { border-top: 2px solid var(--tdd-border); background: #f9fafb; font-size: 12px; }
+.tdd-table tbody tr:hover { background: #fafafa; }
+.tdd-row-done   { opacity: .55; }
+.tdd-row-danger { background: #fef2f2 !important; }
+.tdd-row-warn   { background: #fffbeb !important; }
+.tdd-cell-muted { color: var(--tdd-muted); }
+.tdd-cell-key   { font-weight: 600; color: var(--tdd-primary); }
+.tdd-cell-sum   { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tdd-nowrap     { white-space: nowrap; }
+.tdd-fw         { font-weight: 600; }
+.tdd-prog-wrap  { display: flex; align-items: center; gap: 6px; }
+.tdd-prog-bar   { flex: 1; height: 5px; background: #f3f4f6; border-radius: 3px; overflow: hidden; min-width: 50px; }
+.tdd-prog-fill  { height: 100%; border-radius: 3px; }
+.tdd-prog-full  { background: var(--tdd-success); }
+.tdd-prog-partial{ background: var(--tdd-primary); }
+.tdd-prog-over  { background: var(--tdd-danger); }
+.tdd-prog-pct   { font-size: 12px; min-width: 34px; text-align: right; }
+
+/* ── Color utilities ───────────────────────────────────────────────────── */
+.tdd-text-danger  { color: var(--tdd-danger) !important; }
+.tdd-text-success { color: var(--tdd-success) !important; }
+.tdd-text-warn    { color: var(--tdd-warn) !important; }
+.tdd-text-muted   { color: var(--tdd-muted) !important; }
+
+/* ── Member cards ──────────────────────────────────────────────────────── */
+.tdd-member-card {
+    background: var(--tdd-surface);
+    border: 1px solid var(--tdd-border);
+    border-radius: var(--tdd-radius);
+    margin-bottom: 10px;
+    cursor: pointer;
+    transition: box-shadow .15s;
+    overflow: hidden;
+}
+.tdd-member-card:hover { box-shadow: var(--tdd-shadow-md); }
+.tdd-member-over { border-color: #fca5a5; }
+.tdd-member-header { display: flex; align-items: center; gap: 14px; padding: 14px 16px; flex-wrap: wrap; }
+.tdd-member-bar    { height: 3px; background: #f3f4f6; }
+.tdd-member-bar-done { height: 100%; background: var(--tdd-success); float: left; }
+.tdd-member-bar-prog { height: 100%; background: var(--tdd-primary); float: left; }
+.tdd-avatar         { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; color: #fff; flex-shrink: 0; }
+.tdd-avatar-primary { background: var(--tdd-primary); }
+.tdd-avatar-danger  { background: var(--tdd-danger); }
+.tdd-avatar-warn    { background: var(--tdd-warn); }
+.tdd-member-info    { flex: 1; min-width: 120px; }
+.tdd-member-name    { font-weight: 600; font-size: 14px; color: var(--tdd-text); }
+.tdd-member-sub     { font-size: 12px; color: var(--tdd-muted); margin-top: 1px; }
+.tdd-member-stats   { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.tdd-mstat          { display: flex; flex-direction: column; align-items: center; }
+.tdd-mstat-val      { font-size: 14px; font-weight: 600; color: var(--tdd-text); }
+.tdd-mstat-lbl      { font-size: 11px; color: var(--tdd-muted); }
+.tdd-member-toggle  { color: var(--tdd-muted); font-size: 12px; }
+.tdd-cap-gauge      { display: flex; flex-direction: column; gap: 2px; min-width: 90px; }
+.tdd-cap-label      { font-size: 11px; color: var(--tdd-muted); font-weight: 600; }
+.tdd-cap-bar        { height: 5px; background: #f3f4f6; border-radius: 3px; overflow: hidden; }
+.tdd-cap-fill       { height: 100%; border-radius: 3px; }
+.tdd-cap-ok         { background: var(--tdd-success); }
+.tdd-cap-over       { background: var(--tdd-danger); }
+
+/* ── Expand panel ──────────────────────────────────────────────────────── */
+.tdd-expand-panel   { background: #f9fafb; border-top: 1px solid var(--tdd-border); }
+.tdd-expand-section { padding: 14px 18px; }
+.tdd-expand-border  { border-top: 1px solid var(--tdd-border); }
+.tdd-expand-title   { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--tdd-muted); margin-bottom: 10px; }
+.tdd-expand-sub     { font-weight: 400; }
+.tdd-empty          { font-size: 13px; color: var(--tdd-muted); font-style: italic; }
+
+/* ── Forecast ──────────────────────────────────────────────────────────── */
+.tdd-forecast-row   { display: flex; gap: 16px; justify-content: center; text-align: center; margin: 10px 0; }
+.tdd-fstat-val      { font-size: 15px; font-weight: 700; }
+.tdd-fstat-lbl      { font-size: 11px; color: var(--tdd-muted); }
+.tdd-fbar-wrap      { height: 7px; background: #f3f4f6; border-radius: 4px; overflow: hidden; margin-top: 6px; }
+.tdd-fbar-fill      { height: 100%; border-radius: 4px; }
+.tdd-fbar-ok        { background: var(--tdd-primary); }
+.tdd-fbar-over      { background: var(--tdd-danger); }
+.tdd-fbar-labels    { display: flex; justify-content: space-between; font-size: 11px; color: var(--tdd-muted); margin-top: 2px; }
+
+/* ── Risk tab ──────────────────────────────────────────────────────────── */
+.tdd-risk-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px,1fr)); gap: 12px; margin-bottom: 20px; }
+.tdd-risk-card  { border-radius: var(--tdd-radius); padding: 18px; text-align: center; }
+.tdd-risk-danger{ background: #fef2f2; border: 1px solid #fca5a5; }
+.tdd-risk-warn  { background: #fffbeb; border: 1px solid #fcd34d; }
+.tdd-risk-ok    { background: #f0fdf4; border: 1px solid #86efac; }
+.tdd-risk-val   { font-size: 28px; font-weight: 700; color: var(--tdd-text); }
+.tdd-risk-danger .tdd-risk-val { color: var(--tdd-danger); }
+.tdd-risk-warn  .tdd-risk-val  { color: var(--tdd-warn); }
+.tdd-risk-ok    .tdd-risk-val  { color: var(--tdd-success); }
+.tdd-risk-lbl   { font-size: 12px; color: var(--tdd-muted); margin-top: 4px; }
+.tdd-all-clear  { background: #f0fdf4; border: 1px solid #86efac; border-radius: var(--tdd-radius); padding: 16px; color: #15803d; font-size: 14px; font-weight: 500; }
+
+/* ── Standup ───────────────────────────────────────────────────────────── */
+.tdd-standup-header { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+.tdd-standup-title  { font-weight: 700; font-size: 15px; color: var(--tdd-text); }
+.tdd-standup-card   { background: var(--tdd-surface); border: 1px solid var(--tdd-border); border-radius: var(--tdd-radius); padding: 16px; margin-bottom: 12px; box-shadow: var(--tdd-shadow); }
+.tdd-standup-idle   { border-left: 3px solid var(--tdd-warn); }
+.tdd-standup-person { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; flex-wrap: wrap; }
+.tdd-standup-cols   { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; }
+@@media (max-width: 700px) { .tdd-standup-cols { grid-template-columns: 1fr; } }
+.tdd-standup-col      { }
+.tdd-standup-col-title{ font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--tdd-muted); margin-bottom: 8px; }
+.tdd-standup-log      { margin-bottom: 8px; font-size: 13px; }
+.tdd-standup-log-meta { display: flex; align-items: center; gap: 5px; }
+.tdd-standup-issue    { margin-bottom: 8px; font-size: 13px; }
+
+/* ── Modal ─────────────────────────────────────────────────────────────── */
+.tdd-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+.tdd-modal          { background: var(--tdd-surface); border-radius: var(--tdd-radius); box-shadow: var(--tdd-shadow-md); width: 440px; max-width: 95vw; overflow: hidden; }
+.tdd-modal-header   { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--tdd-border); }
+.tdd-modal-title    { font-weight: 700; font-size: 15px; }
+.tdd-modal-close    { background: none; border: none; font-size: 16px; cursor: pointer; color: var(--tdd-muted); }
+.tdd-modal-body     { padding: 20px; }
+.tdd-modal-footer   { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--tdd-border); background: #f9fafb; }
+.tdd-export-row     { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.tdd-export-links   { display: flex; gap: 6px; align-items: center; }
+.tdd-export-list    { border: 1px solid var(--tdd-border); border-radius: 6px; padding: 8px 10px; max-height: 200px; overflow-y: auto; }
+.tdd-export-item    { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; cursor: pointer; }
+.tdd-export-section { border-top: 1px solid var(--tdd-border); margin-top: 14px; padding-top: 14px; }
+</style>
+
+@code {
+    private string SprintId = "";
+    private bool IsLoading;
+    private string? ErrorMessage;
+    private SprintReport? Report;
+
+    // ── Days left override ──────────────────────────────────────────────────
+    private string OverrideDaysLeftInput = "";
+    private int EffectiveDaysRemaining =>
+        int.TryParse(OverrideDaysLeftInput, out var n) && n >= 0 ? n : Report?.DaysRemaining ?? 0;
+
+    // ── Saved filters ───────────────────────────────────────────────────────
+    private List<JiraFilter> MyFilters = [];
+    private bool FiltersLoading;
+    private string SelectedFilterId = "";
+    private string SelectedFilterJql => MyFilters.FirstOrDefault(f => f.Id == SelectedFilterId)?.Jql ?? "";
+
+    // ── UI state ────────────────────────────────────────────────────────────
+    private string ActiveTab = "overview";
+    private HashSet<string> ExpandedMembers = [];
+    private bool _renderCharts;
+
+    // ── Filters ─────────────────────────────────────────────────────────────
+    private string FilterAssignee = "";
+    private string FilterEpic     = "";
+    private string FilterType     = "";
+    private string AssigneeSearch  = "";
+    private string EpicSearch      = "";
+    private DateTime? FilterDateFrom;
+    private DateTime? FilterDateTo;
+
+    private IEnumerable<string> AssigneeOptions => Report?.Issues
+        .Select(i => i.Assignee).Distinct().Order()
+        .Where(a => string.IsNullOrEmpty(AssigneeSearch) || a.Contains(AssigneeSearch, StringComparison.OrdinalIgnoreCase))
+        ?? Enumerable.Empty<string>();
+
+    private IEnumerable<EpicSummary> EpicOptions => Report?.EpicSummaries
+        .Where(e => string.IsNullOrEmpty(EpicSearch) ||
+            e.Key.Contains(EpicSearch, StringComparison.OrdinalIgnoreCase) ||
+            e.DisplayName.Contains(EpicSearch, StringComparison.OrdinalIgnoreCase))
+        ?? Enumerable.Empty<EpicSummary>();
+
+    private IEnumerable<string> TypeOptions => Report?.Issues
+        .Select(i => i.IssueType).Where(t => !string.IsNullOrEmpty(t)).Distinct().Order()
+        ?? Enumerable.Empty<string>();
+
+    private List<SprintIssue> FilteredIssues => Report?.Issues
+        .Where(i =>
+            (string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee) &&
+            (string.IsNullOrEmpty(FilterEpic)     || i.EpicKey  == FilterEpic) &&
+            (string.IsNullOrEmpty(FilterType)     || string.Equals(i.IssueType, FilterType, StringComparison.OrdinalIgnoreCase)) &&
+            (!FilterDateFrom.HasValue && !FilterDateTo.HasValue ||
+             i.Worklogs.Any(w =>
+                 (!FilterDateFrom.HasValue || w.Started.Date >= FilterDateFrom.Value.Date) &&
+                 (!FilterDateTo.HasValue   || w.Started.Date <= FilterDateTo.Value.Date))))
+        .ToList() ?? [];
+
+    private List<EpicSummary> FilteredEpics => FilteredIssues
+        .GroupBy(i => i.EpicKey)
+        .Select(g => new EpicSummary
+        {
+            Key    = g.Key,
+            Name   = g.First().EpicName,
+            Issues = g.ToList()
+        })
+        .OrderBy(e => string.IsNullOrEmpty(e.Key) ? "ZZZ" : e.Key)
+        .ToList();
+
+    private SprintReport FilteredReport => Report == null ? new() : new SprintReport
+    {
+        StartDate  = Report.StartDate,
+        EndDate    = Report.EndDate,
+        SprintName = Report.SprintName,
+        Issues     = FilteredIssues
+    };
+
+    // ── Computed KPIs ───────────────────────────────────────────────────────
+    private double FilteredCompletionPct
+    {
+        get
+        {
+            var total = FilteredIssues.Count;
+            if (total == 0) return 0;
+            return Math.Round(FilteredIssues.Count(i => i.StatusCategoryKey == "done") * 100.0 / total, 1);
+        }
+    }
+
+    private int FilteredRemainingSeconds => FilteredIssues.Sum(i => i.RemainingEstimateSeconds);
+
+    private bool OverCapacity => EffectiveDaysRemaining > 0 &&
+        FilteredRemainingSeconds > EffectiveDaysRemaining * 6 * 3600;
+
+    private bool CompletionBehind =>
+        Report != null && FilteredCompletionPct < Report.SprintProgressPct - 10;
+
+    private List<SprintIssue> FilteredBugs =>
+        FilteredIssues.Where(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
+
+    private int OpenBugsCount =>
+        FilteredBugs.Count(i => i.StatusCategoryKey != "done");
+
+    // ── Breakdown dictionaries ──────────────────────────────────────────────
+    private record BreakdownRow(int Total, int Done);
+
+    private Dictionary<string, BreakdownRow> IssueTypeBreakdown =>
+        FilteredIssues
+            .Where(i => !string.IsNullOrEmpty(i.IssueType))
+            .GroupBy(i => i.IssueType, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                g => g.Key,
+                g => new BreakdownRow(g.Count(), g.Count(i => i.StatusCategoryKey == "done")));
+
+    private static readonly string[] PriorityOrder = ["Highest", "High", "Medium", "Low", "Lowest"];
+
+    private Dictionary<string, BreakdownRow> PriorityBreakdown =>
+        FilteredIssues
+            .Where(i => !string.IsNullOrEmpty(i.Priority))
+            .GroupBy(i => i.Priority!, StringComparer.OrdinalIgnoreCase)
+            .Select(g => new { g.Key, Row = new BreakdownRow(g.Count(), g.Count(i => i.StatusCategoryKey == "done")) })
+            .OrderBy(x => Array.IndexOf(PriorityOrder, x.Key) is var idx && idx >= 0 ? idx : 99)
+            .ToDictionary(x => x.Key, x => x.Row);
+
+    // ── Worklog helpers ─────────────────────────────────────────────────────
+    private bool WorklogInRange(WorklogEntry w) =>
+        (!FilterDateFrom.HasValue || w.Started.Date >= FilterDateFrom.Value.Date) &&
+        (!FilterDateTo.HasValue   || w.Started.Date <= FilterDateTo.Value.Date);
+
+    private Dictionary<string, int> WorklogSecondsByAuthor => FilteredIssues
+        .SelectMany(i => i.Worklogs)
+        .Where(WorklogInRange)
+        .GroupBy(w => w.Author, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.Sum(w => w.TimeSpentSeconds), StringComparer.OrdinalIgnoreCase);
+
+    private IEnumerable<string> WorkloadPeople => FilteredIssues
+        .Select(i => i.Assignee)
+        .Concat(FilteredIssues.SelectMany(i => i.Worklogs).Where(WorklogInRange).Select(w => w.Author))
+        .Where(n => !string.IsNullOrEmpty(n))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Order();
+
+    private int FilteredSpentSeconds(SprintIssue issue) =>
+        (FilterDateFrom.HasValue || FilterDateTo.HasValue)
+            ? issue.Worklogs.Where(WorklogInRange).Sum(w => w.TimeSpentSeconds)
+            : issue.TimeSpentSeconds;
+
+    private int FilteredTotalLoggedSeconds => FilteredIssues.Sum(FilteredSpentSeconds);
+
+    // ── Worklogs for Activity tab ───────────────────────────────────────────
+    private record WorklogRecord(SprintIssue Issue, WorklogEntry Log);
+
+    private IEnumerable<WorklogRecord> AllWorklogsFiltered =>
+        FilteredIssues
+            .SelectMany(i => i.Worklogs.Select(w => new WorklogRecord(i, w)))
+            .Where(x => WorklogInRange(x.Log))
+            .OrderByDescending(x => x.Log.Started);
+
+    private List<WorklogRecord> AllWorklogsFor(string person) =>
+        FilteredIssues
+            .SelectMany(i => i.Worklogs.Select(w => new WorklogRecord(i, w)))
+            .Where(x => x.Log.Author.Equals(person, StringComparison.OrdinalIgnoreCase) && WorklogInRange(x.Log))
+            .OrderByDescending(x => x.Log.Started)
+            .ToList();
+
+    // ── Risk ────────────────────────────────────────────────────────────────
+    private record RiskIssueRecord(SprintIssue Issue, List<string> Reasons);
+
+    private List<RiskIssueRecord> RiskIssues
+    {
+        get
+        {
+            var result   = new List<RiskIssueRecord>();
+            var sprintPct = FilteredReport.SprintProgressPct;
+            var daysLeft  = EffectiveDaysRemaining;
+            foreach (var issue in FilteredIssues.Where(i => i.StatusCategoryKey != "done" && i.Status != "In Review"))
+            {
+                var reasons = new List<string>();
+                if (issue.StatusCategoryKey == "indeterminate" && issue.DaysSinceLastWorklog >= 2 && issue.DaysSinceLastWorklog < 999)
+                    reasons.Add("Stale");
+                if (sprintPct > 50 && issue.StatusCategoryKey == "new")
+                    reasons.Add("Not Started");
+                if (daysLeft > 0 && issue.RemainingEstimateSeconds > 0 && issue.RemainingEstimateSeconds > daysLeft * 6 * 3600)
+                    reasons.Add("Over Capacity");
+                if (reasons.Any())
+                    result.Add(new(issue, reasons));
+            }
+            return result.OrderByDescending(r => r.Reasons.Count).ThenBy(r => r.Issue.Assignee).ToList();
+        }
+    }
+
+    private int StaleCount          => RiskIssues.Count(r => r.Reasons.Contains("Stale"));
+    private int NotStartedLateCount => RiskIssues.Count(r => r.Reasons.Contains("Not Started"));
+    private int OverCapacityCount   => RiskIssues.Count(r => r.Reasons.Contains("Over Capacity"));
+
+    // ── Standup ─────────────────────────────────────────────────────────────
+    private record StandupGroup(string Assignee, List<SprintIssue> Issues);
+
+    private List<StandupGroup> StandupGroups => FilteredIssues
+        .GroupBy(i => i.Assignee)
+        .OrderBy(g => g.Key)
+        .Select(g => new StandupGroup(g.Key, g.ToList()))
+        .ToList();
+
+    // ── Lifecycle ────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        FiltersLoading = true;
+        try   { MyFilters = await JiraService.GetMyFiltersAsync(); }
+        finally { FiltersLoading = false; }
+    }
+
+    // ── Load ─────────────────────────────────────────────────────────────────
+    private async Task LoadData()
+    {
+        var useFilter = !string.IsNullOrEmpty(SelectedFilterId) && !string.IsNullOrEmpty(SelectedFilterJql);
+        var useSprint = !useFilter && int.TryParse(SprintId.Trim(), out _);
+        if (!useFilter && !useSprint) return;
+
+        IsLoading     = true;
+        ErrorMessage  = null;
+        Report        = null;
+        FilterAssignee = "";
+        FilterEpic     = "";
+        FilterType     = "";
+        AssigneeSearch = "";
+        EpicSearch     = "";
+        FilterDateFrom = null;
+        FilterDateTo   = null;
+        ExpandedMembers.Clear();
+
+        try
+        {
+            Report = useFilter
+                ? await JiraService.GetDeliveryDataByFilterAsync(SelectedFilterJql)
+                : await JiraService.GetDeliveryDataAsync(int.Parse(SprintId.Trim()));
+            _renderCharts = true;
+        }
+        catch (HttpRequestException ex) { ErrorMessage = $"Failed to load data: {ex.Message}"; }
+        catch (Exception ex)            { ErrorMessage = $"Unexpected error: {ex.Message}"; }
+        finally                         { IsLoading = false; }
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadData();
+    }
+
+    private void OnFilterChanged() => _renderCharts = true;
+
+    private void ClearFilters()
+    {
+        FilterAssignee = "";
+        FilterEpic     = "";
+        FilterType     = "";
+        AssigneeSearch = "";
+        EpicSearch     = "";
+        FilterDateFrom = null;
+        FilterDateTo   = null;
+        _renderCharts  = true;
+    }
+
+    private async Task SwitchTab(string tab)
+    {
+        ActiveTab     = tab;
+        _renderCharts = true;
+        await Task.CompletedTask;
+    }
+
+    private void ToggleMember(string name)
+    {
+        if (!ExpandedMembers.Remove(name)) ExpandedMembers.Add(name);
+    }
+
+    // ── Charts ───────────────────────────────────────────────────────────────
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_renderCharts && Report != null)
+        {
+            _renderCharts = false;
+            if (ActiveTab == "forecast")  await RenderForecastChart();
+            if (ActiveTab == "team")      await RenderWorkloadChart();
+            if (ActiveTab == "activity")  await RenderActivityChart();
+        }
+    }
+
+    private async Task RenderForecastChart()
+    {
+        var epics     = FilteredEpics;
+        var labels    = epics.Select(e => e.DisplayName.Length > 20 ? e.DisplayName[..20] + "…" : e.DisplayName).ToArray();
+        var estimated = epics.Select(e => Math.Round(e.TotalEstimateSeconds / 3600.0, 1)).ToArray();
+        var logged    = epics.Select(e => Math.Round(EpicFilteredSpent(e) / 3600.0, 1)).ToArray();
+        var remaining = epics.Select(e => Math.Round(e.TotalRemainingSeconds / 3600.0, 1)).ToArray();
+
+        await JS.InvokeVoidAsync("renderChart", "chart-forecast", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels,
+                datasets = new object[]
+                {
+                    new { label = "Estimated (h)", data = estimated, backgroundColor = "rgba(99,102,241,0.7)",  borderColor = "rgba(99,102,241,1)",  borderWidth = 1 },
+                    new { label = "Logged (h)",    data = logged,    backgroundColor = "rgba(34,197,94,0.7)",   borderColor = "rgba(34,197,94,1)",   borderWidth = 1 },
+                    new { label = "Remaining (h)", data = remaining, backgroundColor = "rgba(251,191,36,0.7)",  borderColor = "rgba(251,191,36,1)",  borderWidth = 1 }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = true,
+                plugins = new { legend = new { position = "top" } },
+                scales  = new { y = new { beginAtZero = true, title = new { display = true, text = "Hours" } } }
+            }
+        });
+    }
+
+    private async Task RenderWorkloadChart()
+    {
+        var people    = WorkloadPeople.ToList();
+        var labels    = people.ToArray();
+        var logged    = people.Select(p => Math.Round((WorklogSecondsByAuthor.TryGetValue(p, out var s) ? s : 0) / 3600.0, 1)).ToArray();
+        var remaining = people.Select(p => Math.Round(FilteredIssues.Where(i => i.Assignee.Equals(p, StringComparison.OrdinalIgnoreCase)).Sum(i => i.RemainingEstimateSeconds) / 3600.0, 1)).ToArray();
+        var estimated = people.Select(p => Math.Round(FilteredIssues.Where(i => i.Assignee.Equals(p, StringComparison.OrdinalIgnoreCase)).Sum(i => i.OriginalEstimateSeconds) / 3600.0, 1)).ToArray();
+
+        await JS.InvokeVoidAsync("renderChart", "chart-workload", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels,
+                datasets = new object[]
+                {
+                    new { label = "Planned (h)",   data = estimated, backgroundColor = "rgba(99,102,241,0.5)", borderColor = "rgba(99,102,241,1)", borderWidth = 1 },
+                    new { label = "Logged (h)",    data = logged,    backgroundColor = "rgba(34,197,94,0.7)",  borderColor = "rgba(34,197,94,1)",  borderWidth = 1 },
+                    new { label = "Remaining (h)", data = remaining, backgroundColor = "rgba(251,191,36,0.7)", borderColor = "rgba(251,191,36,1)", borderWidth = 1 }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = true,
+                plugins = new { legend = new { position = "top" } },
+                scales  = new { x = new { stacked = false }, y = new { beginAtZero = true, title = new { display = true, text = "Hours" } } }
+            }
+        });
+    }
+
+    private async Task RenderActivityChart()
+    {
+        var logs = AllWorklogsFiltered.ToList();
+        if (!logs.Any()) return;
+
+        var byDay = logs
+            .GroupBy(x => x.Log.Started.Date)
+            .OrderBy(g => g.Key)
+            .Select(g => new { Label = g.Key.ToString("MMM d"), Hours = Math.Round(g.Sum(x => x.Log.TimeSpentSeconds) / 3600.0, 1) })
+            .ToList();
+
+        await JS.InvokeVoidAsync("renderChart", "chart-activity", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels   = byDay.Select(d => d.Label).ToArray(),
+                datasets = new object[]
+                {
+                    new { label = "Hours logged", data = byDay.Select(d => d.Hours).ToArray(), backgroundColor = "rgba(99,102,241,0.7)", borderColor = "rgba(99,102,241,1)", borderWidth = 1, borderRadius = 4 }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = true,
+                plugins = new { legend = new { display = false } },
+                scales  = new { y = new { beginAtZero = true, title = new { display = true, text = "Hours" } } }
+            }
+        });
+    }
+
+    // ── Epic helpers ─────────────────────────────────────────────────────────
+    private int  EpicFilteredSpent(EpicSummary epic) => epic.Issues.Sum(FilteredSpentSeconds);
+
+    private double EpicFilteredVariancePct(EpicSummary epic)
+    {
+        if (epic.TotalEstimateSeconds <= 0) return 0;
+        return (EpicFilteredSpent(epic) - epic.TotalEstimateSeconds) / (double)epic.TotalEstimateSeconds * 100;
+    }
+
+    private bool EpicFilteredIsOverBudget(EpicSummary epic) =>
+        epic.TotalEstimateSeconds > 0 && EpicFilteredSpent(epic) > epic.TotalEstimateSeconds;
+
+    private static string EpicState(EpicSummary e) =>
+        e.IsOverBudget ? "danger" : e.CompletionPct >= 80 ? "success" : "neutral";
+
+    // ── Issue progress ───────────────────────────────────────────────────────
+    private int IssueProgress(SprintIssue issue)
+    {
+        if (issue.StatusCategoryKey == "done") return 100;
+        if (issue.OriginalEstimateSeconds <= 0) return 0;
+        return Math.Max(0, (int)Math.Round((double)FilteredSpentSeconds(issue) / issue.OriginalEstimateSeconds * 100));
+    }
+
+    // ── Risk display ─────────────────────────────────────────────────────────
+    private static string RiskClass(SprintRisk r) => r switch
+    {
+        SprintRisk.OnTrack => "success",
+        SprintRisk.AtRisk  => "warning",
+        _                  => "danger"
+    };
+
+    private static string RiskShort(SprintRisk r) => r switch
+    {
+        SprintRisk.OnTrack => "On Track",
+        SprintRisk.AtRisk  => "At Risk",
+        _                  => "Behind"
+    };
+
+    private static string RiskBadgeClass(string reason) => reason switch
+    {
+        "Stale" => "tdd-badge-danger",
+        _       => "tdd-badge-warn"
+    };
+
+    // ── Shared helpers ───────────────────────────────────────────────────────
+    private static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+             : name.Length >= 2  ? name[..2].ToUpper()
+             : name.ToUpper();
+    }
+
+    private static int Pct(int count, int total) =>
+        total == 0 ? 0 : (int)Math.Round((double)count / total * 100);
+
+    private static string FmtH(int seconds) =>
+        seconds <= 0 ? "0h" : $"{seconds / 3600.0:0.#}h";
+
+    // ── Export ────────────────────────────────────────────────────────────────
+    private bool ShowExportModal;
+    private bool IsExporting;
+    private HashSet<string> ExportSelectedMembers = [];
+    private string ExportIgnoredEpicsInput = "";
+
+    private List<string> ExportAllMembers => Report?.Issues
+        .Where(i => i.Assignee != "Unassigned")
+        .Select(i => i.Assignee).Distinct().Order().ToList() ?? [];
+
+    private void OpenExportModal()
+    {
+        ExportSelectedMembers = new HashSet<string>(ExportAllMembers);
+        ShowExportModal = true;
+    }
+
+    private void ToggleExportMember(string member, bool selected)
+    {
+        if (selected) ExportSelectedMembers.Add(member);
+        else          ExportSelectedMembers.Remove(member);
+    }
+
+    private async Task ExportToExcel()
+    {
+        if (Report == null || ExportSelectedMembers.Count == 0) return;
+
+        IsExporting = true;
+        StateHasChanged();
+
+        try
+        {
+            var ignoredEpics = ExportIgnoredEpicsInput
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(k => k.ToUpperInvariant())
+                .ToHashSet();
+
+            var issues = Report.Issues
+                .Where(i => i.StatusCategoryKey != "done"
+                         && ExportSelectedMembers.Contains(i.Assignee)
+                         && !string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase)
+                         && (string.IsNullOrEmpty(FilterEpic) || i.EpicKey == FilterEpic)
+                         && (ignoredEpics.Count == 0 || !ignoredEpics.Contains(i.EpicKey.ToUpperInvariant())))
+                .OrderBy(i => string.IsNullOrEmpty(i.EpicKey) ? "ZZZ" : i.EpicKey)
+                .ThenBy(i => i.Assignee)
+                .ThenBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, _ => 1 })
+                .ThenByDescending(i => i.RemainingEstimateSeconds)
+                .ToList();
+
+            using var wb = new XLWorkbook();
+            var ws = wb.Worksheets.Add("Remaining Work");
+            ws.Cell(1, 1).Value = "Epic";
+            ws.Cell(1, 2).Value = "Key";
+            ws.Cell(1, 3).Value = "Summary";
+            ws.Cell(1, 4).Value = "Assignee";
+            ws.Cell(1, 5).Value = "Status";
+            ws.Cell(1, 6).Value = "Type";
+            ws.Cell(1, 7).Value = "Priority";
+            ws.Cell(1, 8).Value = "Estimate";
+            ws.Cell(1, 9).Value = "Logged";
+            ws.Cell(1, 10).Value = "Remaining";
+            var row = 2;
+            foreach (var i in issues)
+            {
+                ws.Cell(row, 1).Value  = i.EpicKey;
+                ws.Cell(row, 2).Value  = i.Key;
+                ws.Cell(row, 3).Value  = i.Summary;
+                ws.Cell(row, 4).Value  = i.Assignee;
+                ws.Cell(row, 5).Value  = i.Status;
+                ws.Cell(row, 6).Value  = i.IssueType;
+                ws.Cell(row, 7).Value  = i.Priority;
+                ws.Cell(row, 8).Value  = i.OriginalEstimate;
+                ws.Cell(row, 9).Value  = FmtH(i.TimeSpentSeconds);
+                ws.Cell(row, 10).Value = i.RemainingEstimate;
+                row++;
+            }
+            ws.Columns().AdjustToContents();
+
+            using var ms = new System.IO.MemoryStream();
+            wb.SaveAs(ms);
+            var bytes = ms.ToArray();
+            var b64   = Convert.ToBase64String(bytes);
+            var fname = $"remaining_{Report.SprintName?.Replace(" ", "_") ?? SprintId}_{DateTime.Today:yyyyMMdd}.xlsx";
+            await JS.InvokeVoidAsync("downloadBase64File", b64, fname, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        }
+        finally
+        {
+            IsExporting     = false;
+            ShowExportModal = false;
+        }
+    }
+}
