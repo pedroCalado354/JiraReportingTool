@@ -86,10 +86,20 @@ public class JiraService : IJiraService
         // Fetch child issues using the modern "parent" field (Jira Cloud deprecated "Epic Link" — returns 410)
         var jql = Uri.EscapeDataString(
             $"issueType != Epic AND parent = \"{epicKey}\" ORDER BY created ASC");
-        var fields = "summary,status,assignee,issuetype,timetracking,worklog,labels";
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,labels,created,resolutiondate";
 
         var searchJson = await FetchAllPagesAsync(jql, fields);
-        report.Issues = ParseIssues(searchJson);
+        var (sprintReport, truncated) = ParseSprintReport(searchJson, "");
+        await FetchMissingWorklogsAsync(sprintReport, truncated);
+
+        // Tag all issues with their parent epic context
+        foreach (var issue in sprintReport.Issues)
+        {
+            issue.EpicKey  = epicKey;
+            issue.EpicName = report.Summary;
+        }
+
+        report.Issues = sprintReport.Issues;
         return report;
     }
 
@@ -112,90 +122,6 @@ public class JiraService : IJiraService
                 ? assignee.GetProperty("displayName").GetString() ?? "Unassigned"
                 : "Unassigned"
         };
-    }
-
-    private List<JiraIssueModel> ParseIssues(string json)
-    {
-        using var doc = JsonDocument.Parse(json);
-        var issues = new List<JiraIssueModel>();
-
-        if (!doc.RootElement.TryGetProperty("issues", out var issuesArray))
-            return issues;
-
-        foreach (var item in issuesArray.EnumerateArray())
-        {
-            var fields = item.GetProperty("fields");
-            var issue = new JiraIssueModel
-            {
-                Key = item.GetProperty("key").GetString() ?? "",
-                Summary = fields.GetProperty("summary").GetString() ?? "",
-                IssueType = fields.TryGetProperty("issuetype", out var it) && it.ValueKind != JsonValueKind.Null
-                    ? it.GetProperty("name").GetString() ?? ""
-                    : "",
-                Assignee = fields.TryGetProperty("assignee", out var assignee) && assignee.ValueKind != JsonValueKind.Null
-                    ? assignee.GetProperty("displayName").GetString() ?? "Unassigned"
-                    : "Unassigned"
-            };
-
-            if (fields.TryGetProperty("status", out var status))
-            {
-                issue.Status = status.GetProperty("name").GetString() ?? "";
-                if (status.TryGetProperty("statusCategory", out var sc))
-                    issue.StatusCategoryKey = sc.GetProperty("key").GetString() ?? "";
-            }
-
-            // Labels
-            if (fields.TryGetProperty("labels", out var labelsEl) && labelsEl.ValueKind == JsonValueKind.Array)
-                issue.Labels = labelsEl.EnumerateArray()
-                    .Select(l => l.GetString() ?? "")
-                    .Where(l => !string.IsNullOrEmpty(l))
-                    .ToList();
-
-            if (fields.TryGetProperty("timetracking", out var tt) && tt.ValueKind != JsonValueKind.Null)
-            {
-                if (tt.TryGetProperty("originalEstimate", out var oe) && oe.ValueKind != JsonValueKind.Null)
-                    issue.OriginalEstimate = oe.GetString() ?? "-";
-                if (tt.TryGetProperty("originalEstimateSeconds", out var oes))
-                    issue.OriginalEstimateSeconds = oes.GetInt32();
-                if (tt.TryGetProperty("timeSpent", out var ts) && ts.ValueKind != JsonValueKind.Null)
-                    issue.TimeSpent = ts.GetString() ?? "-";
-                if (tt.TryGetProperty("timeSpentSeconds", out var tss))
-                    issue.TimeSpentSeconds = tss.GetInt32();
-                if (tt.TryGetProperty("remainingEstimate", out var re) && re.ValueKind != JsonValueKind.Null)
-                    issue.RemainingEstimate = re.GetString() ?? "-";
-            }
-
-            if (fields.TryGetProperty("worklog", out var worklog) &&
-                worklog.TryGetProperty("worklogs", out var wls))
-            {
-                foreach (var wl in wls.EnumerateArray())
-                {
-                    var entry = new WorklogEntry
-                    {
-                        Author = wl.TryGetProperty("author", out var author) && author.ValueKind != JsonValueKind.Null
-                            ? author.GetProperty("displayName").GetString() ?? ""
-                            : "",
-                        TimeSpent = wl.TryGetProperty("timeSpent", out var tSpent)
-                            ? tSpent.GetString() ?? ""
-                            : "",
-                        TimeSpentSeconds = wl.TryGetProperty("timeSpentSeconds", out var tSec)
-                            ? tSec.GetInt32()
-                            : 0,
-                        Comment = ExtractAdfText(wl)
-                    };
-
-                    if (wl.TryGetProperty("started", out var started) &&
-                        DateTime.TryParse(started.GetString(), out var dt))
-                        entry.Started = dt;
-
-                    issue.Worklogs.Add(entry);
-                }
-            }
-
-            issues.Add(issue);
-        }
-
-        return issues;
     }
 
     public async Task<SprintReport> GetSprintReportAsync(string projectKey, int sprintId)

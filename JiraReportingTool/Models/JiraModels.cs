@@ -14,7 +14,7 @@ public class JiraEpicReport
     public string Status { get; set; } = "";
     public string StatusCategoryKey { get; set; } = "";
     public string Assignee { get; set; } = "Unassigned";
-    public List<JiraIssueModel> Issues { get; set; } = new();
+    public List<SprintIssue> Issues { get; set; } = new();
 
     [NotMapped] public int TotalIssues => Issues.Count;
     [NotMapped] public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
@@ -24,32 +24,9 @@ public class JiraEpicReport
     [NotMapped] public int TotalOriginalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
 }
 
-public class JiraIssueModel
-{
-    public int Id { get; set; }
-    public int JiraEpicReportId { get; set; }
-
-    public string Key { get; set; } = "";
-    public string Summary { get; set; } = "";
-    public string IssueType { get; set; } = "";
-    public string Status { get; set; } = "";
-    public string StatusCategoryKey { get; set; } = ""; // "new" | "indeterminate" | "done"
-    public string Assignee { get; set; } = "Unassigned";
-    public string OriginalEstimate { get; set; } = "-";
-    public int OriginalEstimateSeconds { get; set; }
-    public string TimeSpent { get; set; } = "-";
-    public int TimeSpentSeconds { get; set; }
-    public string RemainingEstimate { get; set; } = "-";
-    public List<WorklogEntry> Worklogs { get; set; } = new();
-
-    public List<string> Labels { get; set; } = new();
-    [NotMapped] public bool IsExpanded { get; set; }
-}
-
 public class WorklogEntry
 {
     public int Id { get; set; }
-    public int? JiraIssueModelId { get; set; }
     public int? SprintIssueId { get; set; }
 
     public string Author { get; set; } = "";
@@ -169,7 +146,12 @@ public class SprintReport
 public class SprintIssue
 {
     public int Id { get; set; }
-    public int SprintReportId { get; set; }
+
+    /// <summary>FK to SprintReport. Null when the issue belongs to an epic report instead.</summary>
+    public int? SprintReportId { get; set; }
+
+    /// <summary>FK to JiraEpicReport. Null when the issue belongs to a sprint report instead.</summary>
+    public int? JiraEpicReportId { get; set; }
 
     public string Key { get; set; } = "";
     public string Summary { get; set; } = "";

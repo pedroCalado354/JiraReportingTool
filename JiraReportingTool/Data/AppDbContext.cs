@@ -6,7 +6,6 @@ namespace JiraReportingTool.Data;
 public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(options)
 {
     public DbSet<JiraEpicReport> JiraEpicReports => Set<JiraEpicReport>();
-    public DbSet<JiraIssueModel> JiraIssues => Set<JiraIssueModel>();
     public DbSet<WorklogEntry> WorklogEntries => Set<WorklogEntry>();
     public DbSet<SprintReport> SprintReports => Set<SprintReport>();
     public DbSet<SprintIssue> SprintIssues => Set<SprintIssue>();
@@ -22,18 +21,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
-        // ── JiraEpicReport → JiraIssueModel (1-to-many, cascade) ────────────
-        modelBuilder.Entity<JiraIssueModel>()
+        // ── JiraEpicReport → SprintIssue (1-to-many, cascade) ───────────────
+        modelBuilder.Entity<SprintIssue>()
             .HasOne<JiraEpicReport>()
             .WithMany(e => e.Issues)
             .HasForeignKey(i => i.JiraEpicReportId)
-            .OnDelete(DeleteBehavior.Cascade);
-
-        // ── JiraIssueModel → WorklogEntry (1-to-many, cascade) ──────────────
-        modelBuilder.Entity<WorklogEntry>()
-            .HasOne<JiraIssueModel>()
-            .WithMany(i => i.Worklogs)
-            .HasForeignKey(w => w.JiraIssueModelId)
             .IsRequired(false)
             .OnDelete(DeleteBehavior.Cascade);
 
@@ -42,17 +34,16 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne<SprintReport>()
             .WithMany(s => s.Issues)
             .HasForeignKey(i => i.SprintReportId)
+            .IsRequired(false)
             .OnDelete(DeleteBehavior.Cascade);
 
-        // ── SprintIssue → WorklogEntry (1-to-many, client-side cascade) ──────
-        // Using ClientCascade instead of SQL Cascade to avoid multiple cascade
-        // path conflicts in SQL Server (WorklogEntry has two separate FK chains).
+        // ── SprintIssue → WorklogEntry (1-to-many) ───────────────────────────
         modelBuilder.Entity<WorklogEntry>()
             .HasOne<SprintIssue>()
             .WithMany(i => i.Worklogs)
             .HasForeignKey(w => w.SprintIssueId)
             .IsRequired(false)
-            .OnDelete(DeleteBehavior.ClientCascade);
+            .OnDelete(DeleteBehavior.Cascade);
 
         // ── SprintIssue.Labels → stored as JSON ─────────────────────────────
         modelBuilder.Entity<SprintIssue>()

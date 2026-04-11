@@ -349,8 +349,8 @@
     private DateOnly ToDate { get; set; }
 
     private string EpicKey { get; set; } = "";
-    private List<JiraIssueModel> AvailableTasks { get; set; } = new();
-    private JiraIssueModel? SelectedTask { get; set; }
+    private List<SprintIssue> AvailableTasks { get; set; } = new();
+    private SprintIssue? SelectedTask { get; set; }
 
     private List<TeamMemberDto> TeamMembers { get; set; } = new();
     /// <summary>
@@ -363,9 +363,9 @@
     /// <summary>
     /// Persists task metadata across epic loads so that calendar blocks for previously
     /// loaded epics retain their labels after switching to a different epic.
-    /// Key = JiraIssueModel.Id (DB auto-increment ID, stable within a session).
+    /// Key = SprintIssue.Id (DB auto-increment ID, stable within a session).
     /// </summary>
-    private Dictionary<int, JiraIssueModel> _taskCache = new();
+    private Dictionary<int, SprintIssue> _taskCache = new();
 
     // ── Time Off / Holidays ──
     /// <summary>Global holidays — these dates count as off for ALL team members.</summary>
@@ -474,7 +474,7 @@
         AvailableTasks = Report?.Issues?
             .OrderBy(i => i.Key)
             .ToList()
-            ?? new List<JiraIssueModel>();
+            ?? new List<SprintIssue>();
 
         // BUG FIX: accumulate all loaded tasks in a persistent cache so that
         // calendar blocks for previously loaded epics keep their labels after
@@ -488,7 +488,7 @@
         InfoMessage = $"Loaded {AvailableTasks.Count} issues for epic {epic}.";
     }
 
-    private void SelectTask(JiraIssueModel task)
+    private void SelectTask(SprintIssue task)
     {
         ErrorMessage = null;
         InfoMessage = null;
@@ -506,7 +506,7 @@
     }
 
     // Groups AvailableTasks by StatusCategoryKey in priority order for the task list panel.
-    private IEnumerable<IGrouping<string, JiraIssueModel>> GetTasksGroupedByStatus()
+    private IEnumerable<IGrouping<string, SprintIssue>> GetTasksGroupedByStatus()
         => AvailableTasks
             .GroupBy(t => (t.StatusCategoryKey ?? "new").ToLower())
             .OrderBy(g => g.Key switch
@@ -808,7 +808,7 @@
     }
 
     // Same cache lookup used by Excel export
-    private JiraIssueModel? FindTask(int taskId)
+    private SprintIssue? FindTask(int taskId)
         => _taskCache.TryGetValue(taskId, out var t) ? t : null;
 
     private static bool RangesOverlap(DateOnly aFrom, DateOnly aTo, DateOnly bFrom, DateOnly bTo)

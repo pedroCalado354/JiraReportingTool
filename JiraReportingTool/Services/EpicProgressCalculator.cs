@@ -28,9 +28,7 @@ public sealed record EpicDeliveryMetrics(
 
 /// <summary>
 /// Effort (hours) tracking for the epic.
-/// <see cref="IsApproxRemaining"/> is true when the source model (JiraIssueModel)
-/// does not expose an explicit RemainingEstimateSeconds and the value is
-/// approximated as max(0, Estimate − Spent).
+/// <see cref="IsApproxRemaining"/> is always false — RemainingEstimateSeconds comes directly from Jira.
 /// </summary>
 public sealed record EpicEffortMetrics(
     long TotalEstimateSec,
@@ -135,7 +133,7 @@ public static class EpicProgressCalculator
     /// </summary>
     public static EpicProgressResult Compute(JiraEpicReport epic)
     {
-        var issues = epic.Issues ?? new List<JiraIssueModel>();
+        var issues = epic.Issues ?? new List<SprintIssue>();
         return new EpicProgressResult(
             EpicKey:            epic.Key,
             Delivery:           ComputeDelivery(issues),
@@ -155,7 +153,7 @@ public static class EpicProgressCalculator
     /// </summary>
     public static EpicProgressResult Compute(JiraEpicReport epic, SprintReport sprint)
     {
-        var epicIssues = epic.Issues ?? new List<JiraIssueModel>();
+        var epicIssues = epic.Issues ?? new List<SprintIssue>();
         return new EpicProgressResult(
             EpicKey:            epic.Key,
             Delivery:           ComputeDelivery(epicIssues),
@@ -169,7 +167,7 @@ public static class EpicProgressCalculator
 
     // ── Delivery ─────────────────────────────────────────────────────────────
 
-    private static EpicDeliveryMetrics ComputeDelivery(List<JiraIssueModel> issues)
+    private static EpicDeliveryMetrics ComputeDelivery(List<SprintIssue> issues)
     {
         var total      = issues.Count;
         var totalTasks = issues.Count(f=> f.IssueType == "Task" );
@@ -183,19 +181,18 @@ public static class EpicProgressCalculator
 
     // ── Effort ────────────────────────────────────────────────────────────────
 
-    private static EpicEffortMetrics ComputeEffort(List<JiraIssueModel> issues)
+    private static EpicEffortMetrics ComputeEffort(List<SprintIssue> issues)
     {
         var totalEst  = issues.Sum(i => (long)i.OriginalEstimateSeconds);
         var spent     = issues.Sum(i => (long)i.TimeSpentSeconds);
-        // JiraIssueModel has no RemainingEstimateSeconds → approximate
-        var remaining = issues.Sum(i => Math.Max(0L, (long)i.OriginalEstimateSeconds - (long)i.TimeSpentSeconds));
+        var remaining = issues.Sum(i => (long)i.RemainingEstimateSeconds);
         var pct       = SafePct(spent, totalEst);
-        return new(totalEst, spent, remaining, pct, IsApproxRemaining: true);
+        return new(totalEst, spent, remaining, pct, IsApproxRemaining: false);
     }
 
     // ── Risk ──────────────────────────────────────────────────────────────────
 
-    private static EpicRiskMetrics ComputeRisk(List<JiraIssueModel> issues)
+    private static EpicRiskMetrics ComputeRisk(List<SprintIssue> issues)
     {
         var now = DateTime.UtcNow;
         return new(
@@ -212,7 +209,7 @@ public static class EpicProgressCalculator
 
     // ── Quality ───────────────────────────────────────────────────────────────
 
-    private static EpicQualityMetrics ComputeQuality(List<JiraIssueModel> issues)
+    private static EpicQualityMetrics ComputeQuality(List<SprintIssue> issues)
     {
         var bugs = issues
             .Where(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase))
@@ -288,7 +285,7 @@ public static class EpicProgressCalculator
 
     // ── Assignee breakdown ────────────────────────────────────────────────────
 
-    private static IReadOnlyList<TaskAssigneeRow> ComputeAssigneeBreakdown(List<JiraIssueModel> issues)
+    private static IReadOnlyList<TaskAssigneeRow> ComputeAssigneeBreakdown(List<SprintIssue> issues)
     {
         var epicTotal = issues.Count;
         return issues

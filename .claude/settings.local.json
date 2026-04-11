@@ -6,7 +6,8 @@
       "Bash(xargs -I{} sed -i 's/@inject JiraService JiraService/@inject IJiraService JiraService/g' {})",
       "Bash(dotnet ef:*)",
       "Bash(xargs grep:*)",
-      "Bash(grep \"System.OneOf\\\\|OneOf\\\\`\" ~/.nuget/packages/anthropic/1.0.0/lib/net8.0/Anthropic.xml)"
+      "Bash(grep \"System.OneOf\\\\|OneOf\\\\`\" ~/.nuget/packages/anthropic/1.0.0/lib/net8.0/Anthropic.xml)",
+      "Bash(del \"C:\\\\Users\\\\Pedro Calado\\\\source\\\\repos\\\\JiraReportingTool\\\\JiraReportingTool\\\\Migrations\\\\20260411120000_ConsolidateJiraIssueModel.cs\")"
     ]
   }
 }

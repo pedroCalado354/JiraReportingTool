@@ -565,7 +565,7 @@
     private class EpicLoadState
     {
         public string EpicKey { get; set; } = "";
-        public List<JiraIssueModel> Tasks { get; set; } = new();
+        public List<SprintIssue> Tasks { get; set; } = new();
         public bool IsLoading { get; set; }
         public bool IsExpanded { get; set; } = true;
     }
@@ -596,12 +596,12 @@
     private string EpicKeyInput { get; set; } = "";
 
     private List<TaskAllocation> Allocations { get; set; } = new();
-    private Dictionary<int, JiraIssueModel> _taskCache = new();
+    private Dictionary<int, SprintIssue> _taskCache = new();
     private HashSet<DateOnly> Holidays { get; set; } = new();
     private Dictionary<Guid, HashSet<DateOnly>> MemberTimeOff { get; set; } = new();
     private bool TimeOffMode { get; set; } = false;
 
-    private JiraIssueModel? SelectedTask { get; set; }
+    private SprintIssue? SelectedTask { get; set; }
     private int? SelectedCustomTaskId { get; set; }
     private PendingPlacementState? PendingPlacement { get; set; }
 
@@ -630,7 +630,7 @@
     // ───────────────────────────────────────────────────────────
     // Computed properties
     // ───────────────────────────────────────────────────────────
-    private List<JiraIssueModel> GetAllTasks()
+    private List<SprintIssue> GetAllTasks()
         => LoadedEpics.Values.SelectMany(e => e.Tasks).ToList();
 
     private bool IsTaskAssigned(int taskId)
@@ -753,7 +753,7 @@
         StateHasChanged();
 
         var report = await JiraService.GetEpicReportAsync(key);
-        var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<JiraIssueModel>();
+        var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
 
         foreach (var t in tasks) _taskCache[t.Id] = t;
 
@@ -785,7 +785,7 @@
         if (string.IsNullOrWhiteSpace(key) || LoadedEpics.ContainsKey(key)) return;
         LoadedEpics[key] = new EpicLoadState { EpicKey = key, IsLoading = true };
         var report = await JiraService.GetEpicReportAsync(key);
-        var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<JiraIssueModel>();
+        var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
         foreach (var t in tasks) _taskCache[t.Id] = t;
         LoadedEpics[key].Tasks     = tasks;
         LoadedEpics[key].IsLoading = false;
@@ -959,7 +959,7 @@
     // ───────────────────────────────────────────────────────────
     // Task selection
     // ───────────────────────────────────────────────────────────
-    private void SelectTask(JiraIssueModel task)
+    private void SelectTask(SprintIssue task)
     {
         ErrorMessage = null;
         InfoMessage = null;
@@ -1496,13 +1496,13 @@
         return t.Summary?.Length > 40 ? t.Summary[..40] + "…" : t.Summary ?? "";
     }
 
-    private JiraIssueModel? FindTask(int taskId)
+    private SprintIssue? FindTask(int taskId)
         => _taskCache.TryGetValue(taskId, out var t) ? t : null;
 
     // ───────────────────────────────────────────────────────────
     // Task grouping
     // ───────────────────────────────────────────────────────────
-    private IEnumerable<IGrouping<string, JiraIssueModel>> GetTasksGroupedByStatus(List<JiraIssueModel> tasks)
+    private IEnumerable<IGrouping<string, SprintIssue>> GetTasksGroupedByStatus(List<SprintIssue> tasks)
         => tasks
             .GroupBy(t => (t.StatusCategoryKey ?? "new").ToLower())
             .OrderBy(g => g.Key switch
@@ -1536,7 +1536,7 @@
     /// Dev Ready → use original estimate (task not started, full scope counts).
     /// Any other status → use remaining effort (max(0, original − spent)).
     /// </summary>
-    private static decimal GetTaskHours(JiraIssueModel t)
+    private static decimal GetTaskHours(SprintIssue t)
     {
         bool isDevReady = string.Equals(t.Status, "Dev Ready", StringComparison.OrdinalIgnoreCase);
         if (isDevReady)
@@ -1545,7 +1545,7 @@
         return remSec / 3600m;
     }
 
-    private static string FormatTaskHours(JiraIssueModel t)
+    private static string FormatTaskHours(SprintIssue t)
     {
         var h = GetTaskHours(t);
         if (h <= 0m) return "-";

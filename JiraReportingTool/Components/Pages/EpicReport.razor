@@ -282,7 +282,7 @@
         .Where(t => !string.IsNullOrEmpty(t))
         .Distinct().Order().ToList() ?? [];
 
-    private List<JiraIssueModel> FilteredIssues => Report?.Issues
+    private List<SprintIssue> FilteredIssues => Report?.Issues
         .Where(i =>
             (SelectedMembers.Count == 0 || SelectedMembers.Contains(i.Assignee)) &&
             (string.IsNullOrEmpty(FilterStatus) || i.Status == FilterStatus) &&

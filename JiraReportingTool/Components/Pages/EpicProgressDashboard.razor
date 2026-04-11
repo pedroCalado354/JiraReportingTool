@@ -264,10 +264,6 @@
                     </div>
                     <div class="effort-bar-label">
                         @EpicProgressCalculator.FormatPct(Metrics.Effort.EffortPct) logged
-                        @if (Metrics.Effort.IsApproxRemaining)
-                        {
-                            <span class="approx-note" title="JiraIssueModel does not expose RemainingEstimateSeconds; value approximated as Estimate − Spent">≈ approx</span>
-                        }
                     </div>
                     <div class="metric-rows">
                         <div class="metric-row">
@@ -664,7 +660,7 @@
             }
             else
             {
-                <!-- Epic Issues Table (JiraIssueModel) -->
+                <!-- Epic Issues Table (SprintIssue) -->
                 <div class="table-scroll">
                     <table class="issues-table">
                         <thead>
@@ -838,8 +834,8 @@
     // ───────────────────────────────────────────────────────────
     // Filtered issue collections
     // ───────────────────────────────────────────────────────────
-    private IEnumerable<JiraIssueModel> FilteredEpicIssues =>
-        (EpicData?.Issues ?? Enumerable.Empty<JiraIssueModel>())
+    private IEnumerable<SprintIssue> FilteredEpicIssues =>
+        (EpicData?.Issues ?? Enumerable.Empty<SprintIssue>())
         .Where(i => string.IsNullOrEmpty(FilterText)     || MatchesText(i.Key, i.Summary, FilterText))
         .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status == FilterStatus)
         .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
@@ -956,7 +952,7 @@
         if (e.Key == "Enter") await LoadEpicAsync();
     }
 
-    private void ToggleExpand(JiraIssueModel issue) => issue.IsExpanded = !issue.IsExpanded;
+    private void ToggleExpand(SprintIssue issue) => issue.IsExpanded = !issue.IsExpanded;
 
     // ───────────────────────────────────────────────────────────
     // CSS class helpers (presentation only — no logic)

@@ -32,7 +32,7 @@ public class JiraDbRepository(AppDbContext db)
         if (existing is not null)
         {
             db.WorklogEntries.RemoveRange(existing.Issues.SelectMany(i => i.Worklogs));
-            db.JiraIssues.RemoveRange(existing.Issues);
+            db.SprintIssues.RemoveRange(existing.Issues);
 
             existing.SyncedAt = report.SyncedAt;
             existing.Summary = report.Summary;
