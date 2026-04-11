@@ -119,38 +119,36 @@
     <!-- ═══ PLAN CRUD BAR ═══════════════════════════════════════════════ -->
     <div class="spd-plan-bar">
         <div class="plan-bar-left">
-            <span class="plan-bar-label">Plan:</span>
+            <span class="plan-bar-label">Sprint:</span>
+            <select class="input plan-select" disabled="@_isSaving"
+                    @onchange="OnSprintDropdownChanged">
+                <option value="0">— Load a saved sprint —</option>
+                @foreach (var p in _savedPlans)
+                {
+                    <option value="@p.Id" selected="@(p.Id == _currentPlanId)">
+                        @p.Name &nbsp;(@p.SprintStart.ToString("dd-MMM") → @p.SprintEnd.ToString("dd-MMM"))
+                    </option>
+                }
+            </select>
+            <button class="btn small" @onclick="NewSprint" disabled="@_isSaving" title="Clear the board and start a new sprint">
+                + New
+            </button>
+        </div>
+        <div class="plan-bar-right">
             @if (_currentPlanId.HasValue)
             {
-                <span class="plan-current-badge">
-                    #@_currentPlanId — @SprintName
-                </span>
+                <span class="plan-current-badge">@SprintName</span>
             }
             else
             {
                 <span class="plan-unsaved-badge">Unsaved</span>
             }
-        </div>
-        <div class="plan-bar-right">
-            @if (_savedPlans.Count > 0)
-            {
-                <select class="input input-sm plan-select" @bind="_loadPlanId">
-                    <option value="0">— Load a plan —</option>
-                    @foreach (var p in _savedPlans)
-                    {
-                        <option value="@p.Id">@p.Name (@p.SprintStart.ToString("dd-MMM") → @p.SprintEnd.ToString("dd-MMM"))</option>
-                    }
-                </select>
-                <button class="btn small" @onclick="LoadSelectedPlanAsync" disabled="@(_loadPlanId == 0 || _isSaving)">
-                    Load
-                </button>
-            }
-            <button class="btn primary small" @onclick="SavePlanAsync" disabled="@_isSaving">
-                @(_isSaving ? "Saving…" : (_currentPlanId.HasValue ? "💾 Update" : "💾 Save"))
+            <button class="btn primary small" @onclick="SavePlanAsync" disabled="@(_isSaving || string.IsNullOrWhiteSpace(SprintName))">
+                @(_isSaving ? "Saving…" : "💾 Save Sprint")
             </button>
             @if (_currentPlanId.HasValue)
             {
-                <button class="btn danger small" @onclick="DeletePlanAsync" disabled="@_isSaving">
+                <button class="btn danger small" @onclick="DeletePlanAsync" disabled="@_isSaving" title="Delete this sprint plan">
                     🗑 Delete
                 </button>
             }
@@ -241,7 +239,7 @@
                                     <span class="task-group-count">@group.Count()</span>
                                 </div>
                                 <ul class="task-list">
-                                    @foreach (var t in group.OrderBy(x => x.Key))
+                                    @foreach (var t in group.OrderBy(x => x.Status))
                                     {
                                         var task = t;
                                         var isSelected = SelectedTask?.Id == task.Id;
@@ -258,7 +256,7 @@
                                             </div>
                                             <div class="task-summary-text">@task.Summary</div>
                                             <div class="task-meta-row">
-                                                <span class="meta-chip meta-type">@task.IssueType</span>
+                                                <span class="meta-chip meta-status @GetStatusType(task.IssueType)">@task.IssueType</span>
                                                 <span class="meta-chip meta-status @GetStatusClass(task.Status)">
                                                     @task.Status
                                                 </span>
@@ -844,7 +842,7 @@
                 })).ToList(),
             };
 
-            var saved = await PlanService.SaveAsync(plan);
+            var saved = await PlanService.UpsertByNameAsync(plan);
             _currentPlanId = saved.Id;
             _savedPlans    = await PlanService.GetAllAsync();
             InfoMessage = $"Plan '{saved.Name}' saved (#{saved.Id}).";
@@ -853,11 +851,27 @@
         finally { _isSaving = false; }
     }
 
-    private async Task LoadSelectedPlanAsync()
+    private async Task OnSprintDropdownChanged(ChangeEventArgs e)
     {
-        if (_loadPlanId == 0) return;
-        await LoadPlanAsync(_loadPlanId);
-        _loadPlanId = 0;
+        if (!int.TryParse(e.Value?.ToString(), out var id) || id == 0) return;
+        await LoadPlanAsync(id);
+    }
+
+    private void NewSprint()
+    {
+        _currentPlanId    = null;
+        SprintName        = "";
+        LoadedEpics.Clear();
+        _taskCache.Clear();
+        Allocations.Clear();
+        _customTasks.Clear();
+        Holidays.Clear();
+        MemberTimeOff.Clear();
+        _nextCustomTaskId = -1;
+        SelectedTask      = null;
+        SelectedCustomTaskId = null;
+        PendingPlacement  = null;
+        InfoMessage = "New sprint ready — set the sprint name and dates, then load epics.";
     }
 
     private async Task LoadPlanAsync(int id)
@@ -1719,15 +1733,24 @@ private static decimal ParseJiraDurationToHours(string? input)
             ErrorMessage = $"Export failed: {ex.Message}";
         }
     }
+    private static string GetStatusType(string? issueType)
+    {
+        return issueType?.ToLowerInvariant() switch
+        {
+            "task" => "type-task",
+            "bug" => "type-bug",
+            _ => "type-default"
+        };
+    }
     private static string GetStatusClass(string? status)
     {
         return status?.ToLowerInvariant() switch
         {
-            "Dev ready" => "status-dev-ready",
-            "In Progress" => "status-in-progress",
-            "In Review" => "status-in-review",
-            "Qa Ready" => "status-qa-ready",
-            "Done" => "status-done",
+            "dev ready" => "status-dev-ready",
+            "in progress" => "status-in-progress",
+            "in review" => "status-in-review",
+            "qa ready" => "status-qa-ready",
+            "done" => "status-done",
             _ => "status-default"
         };
     }
@@ -2065,7 +2088,7 @@ private static decimal ParseJiraDurationToHours(string? input)
         height: 75vh;
         display: flex;
         flex-direction: column;
-        overflow: hidden;
+        overflow-y: auto;
         box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     }
 
@@ -2099,7 +2122,7 @@ private static decimal ParseJiraDurationToHours(string? input)
     /* Epic sections */
     .epic-section {
         border-bottom: 1px solid #f3f4f6;
-        overflow: hidden;
+        flex-shrink: 0;
     }
 
     .epic-section-header {
@@ -2176,8 +2199,6 @@ private static decimal ParseJiraDurationToHours(string? input)
         list-style: none;
         padding: 4px 8px;
         margin: 0;
-        overflow-y: auto;
-        flex: 1;
         display: grid;
         gap: 5px;
     }
@@ -2252,6 +2273,23 @@ private static decimal ParseJiraDurationToHours(string? input)
         line-height: 1;
     }
 
+    /* Issue type colors */
+
+    .type-task {
+        background-color: #e0f2fe; /* sky-100 */
+        color: #0369a1; /* sky-700 */
+    }
+
+    .type-bug {
+        background-color: #fee2e2; /* red-100 */
+        color: #b91c1c; /* red-700 */
+    }
+
+    .type-default {
+        background-color: #e5e7eb; /* gray-200 */
+        color: #374151;
+    }
+
     /* Status colors */
 
     .status-dev-ready {
@@ -2283,9 +2321,9 @@ private static decimal ParseJiraDurationToHours(string? input)
         background-color: #e5e7eb; /* gray-200 */
         color: #374151;
     }
-
+@* 
     .meta-type   { background: #e0e7ff; color: #3730a3; }
-    .meta-status { background: #f3f4f6; color: #374151; }
+    .meta-status { background: #f3f4f6; color: #374151; } *@
 
     .task-panel-hint {
         padding: 10px 12px;
@@ -2701,6 +2739,7 @@ private static decimal ParseJiraDurationToHours(string? input)
     .custom-section {
         border-top: 2px solid #f3f4f6;
         margin-top: 4px;
+        flex-shrink: 0;
     }
 
     .custom-section-header {

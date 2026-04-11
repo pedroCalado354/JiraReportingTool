@@ -106,9 +106,14 @@
 
         <!-- STATS STRIP — always epic-wide -->
         <div class="epd-stats-strip">
+
+            <div class="stat-pill">
+                <span class="stat-pill-value">@Metrics.Delivery.TotalTasks</span>
+                <span class="stat-pill-label">Total Tasks</span>
+            </div>
             <div class="stat-pill">
                 <span class="stat-pill-value">@Metrics.Delivery.Total</span>
-                <span class="stat-pill-label">Total Tasks</span>
+                <span class="stat-pill-label">Total All Tasks</span>
             </div>
             <div class="stat-pill stat-green">
                 <span class="stat-pill-value">@Metrics.Delivery.Done</span>
@@ -139,6 +144,45 @@
                 <span class="stat-pill-label">Effort %</span>
             </div>
         </div>
+
+        <!-- TASK RATE BY ASSIGNEE -->
+        @if (Metrics.AssigneeBreakdown.Count > 0)
+        {
+            <div class="epd-assignee-section">
+                <div class="epd-section-title">Task Rate by Assignee</div>
+                <div class="at-table">
+                    <div class="at-header">
+                        <span>Assignee</span>
+                        <span>Tasks</span>
+                        <span>Done</span>
+                        <span>In Progress</span>
+                        <span>To Do</span>
+                        <span>Completion</span>
+                        <span>Epic Share</span>
+                        <span>Time Logged</span>
+                    </div>
+                    @foreach (var row in Metrics.AssigneeBreakdown)
+                    {
+                        <div class="at-row">
+                            <span class="at-name">@row.Assignee</span>
+                            <span class="at-num">@row.Total</span>
+                            <span class="at-num at-done">@row.Done</span>
+                            <span class="at-num at-progress">@row.InProgress</span>
+                            <span class="at-num at-todo">@row.ToDo</span>
+                            <span class="at-pct @GetCompletionClass(row.CompletionPct)">
+                                @EpicProgressCalculator.FormatPct(row.CompletionPct)
+                            </span>
+                            <span class="at-pct">@EpicProgressCalculator.FormatPct(row.EpicSharePct)</span>
+                            <span class="at-time">
+                                @(row.TotalSpentSec > 0
+                                    ? EpicProgressCalculator.FormatSeconds(row.TotalSpentSec)
+                                    : "—")
+                            </span>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
 
         <!-- METRIC PANELS — 2×2 grid -->
         <div class="epd-panels">
@@ -430,30 +474,94 @@
                         </div>
                     </div>
 
-                    <div class="metric-rows">
-                        <div class="metric-row">
-                            <span class="mr-label">Unassigned bugs</span>
-                            <span class="mr-value @RiskClass(Metrics.Quality.UnassignedBugs)">
+                    <!-- Bug quality detail cards -->
+                    <div class="quality-cards">
+
+                        <div class="quality-card qc-unassigned">
+                            <span class="qc-value @RiskClass(Metrics.Quality.UnassignedBugs)">
                                 @Metrics.Quality.UnassignedBugs
                                 @RiskLabel(Metrics.Quality.UnassignedBugs, Metrics.Quality.TotalBugs)
                             </span>
+                            <span class="qc-label">Unassigned bugs</span>
                         </div>
-                        <div class="metric-row">
-                            <span class="mr-label">Bugs without estimate</span>
-                            <span class="mr-value @RiskClass(Metrics.Quality.UnestimatedBugs)">
+
+                        <div class="quality-card qc-unestimated">
+                            <span class="qc-value @RiskClass(Metrics.Quality.UnestimatedBugs)">
                                 @Metrics.Quality.UnestimatedBugs
                                 @RiskLabel(Metrics.Quality.UnestimatedBugs, Metrics.Quality.TotalBugs)
                             </span>
+                            <span class="qc-label">Bugs without estimate</span>
                         </div>
-                        <div class="metric-row">
-                            <span class="mr-label">Stale in-progress bugs</span>
-                            <span class="mr-value @RiskClass(Metrics.Quality.StaleBugs)"
-                                  title="In Progress with no worklog in the last 2 days">
+
+                        <div class="quality-card qc-stale" title="In Progress with no worklog in the last 2 days">
+                            <span class="qc-value @RiskClass(Metrics.Quality.StaleBugs)">
                                 @Metrics.Quality.StaleBugs
                                 @RiskLabel(Metrics.Quality.StaleBugs, Metrics.Quality.OpenBugs)
                             </span>
+                            <span class="qc-label">Stale in-progress bugs</span>
                         </div>
+
+                        <div class="quality-card qc-spent">
+                            <span class="qc-value">
+                                @(Metrics.Quality.BugSpentSec > 0
+                                                        ? EpicProgressCalculator.FormatSeconds(Metrics.Quality.BugSpentSec)
+                                                        : "—")
+                            </span>
+                            <span class="qc-label">Time spent on bugs</span>
+                        </div>
+
+                        <div class="quality-card qc-avg-fix">
+                            <span class="qc-value">
+                                @(Metrics.Quality.AvgBugFixTimeSec > 0
+                                                        ? EpicProgressCalculator.FormatSeconds(Metrics.Quality.AvgBugFixTimeSec)
+                                                        : "—")
+                            </span>
+                            <span class="qc-label">Avg bug fix time</span>
+                        </div>
+
+                        <div class="quality-card qc-overhead"
+                             title="Bug hours as % of feature hours">
+                            <span class="qc-value @GetBugOverheadClass(Metrics.Quality.BugOverhead)">
+                                @EpicProgressCalculator.FormatPct(Metrics.Quality.BugOverhead)
+                            </span>
+                            <span class="qc-label">Bug overhead</span>
+                        </div>
+
                     </div>
+
+                    @if (Metrics.Quality.ByAssignee.Count > 0)
+                    {
+                        <div class="quality-section-title">Bug Rate by Assignee</div>
+                        <div class="bat-table">
+                            <div class="bat-header">
+                                <span>Assignee</span>
+                                <span>Bugs / Tasks</span>
+                                <span>Bug Rate</span>
+                                <span>Time on Bugs</span>
+                                <span>Bug hrs / All hrs</span>
+                            </div>
+                            @foreach (var row in Metrics.Quality.ByAssignee)
+                            {
+                                <div class="bat-row">
+                                    <span class="bat-name">@row.Assignee</span>
+                                    <span class="bat-count">@row.BugCount / @row.TotalTasks</span>
+                                    <span class="bat-rate @GetBugRateClass(row.BugRate)">
+                                        @EpicProgressCalculator.FormatPct(row.BugRate)
+                                    </span>
+                                    <span class="bat-time">
+                                        @(row.BugSpentSec > 0
+                                            ? EpicProgressCalculator.FormatSeconds(row.BugSpentSec)
+                                            : "—")
+                                    </span>
+                                    <span class="bat-share @GetBugRateClass(row.BugTimeSharePct)">
+                                        @(row.TotalSpentSec > 0
+                                            ? EpicProgressCalculator.FormatPct(row.BugTimeSharePct)
+                                            : "—")
+                                    </span>
+                                </div>
+                            }
+                        </div>
+                    }
                 }
                 else
                 {
@@ -593,7 +701,7 @@
                                         <td class="td-expand">@(ei.IsExpanded ? "▾" : "▸")</td>
                                         <td><span class="issue-key">@ei.Key</span></td>
                                         <td class="td-summary" title="@ei.Summary">@ei.Summary</td>
-                                        <td><span class="type-badge">@ei.IssueType</span></td>
+                                    <td><span class="type-badge @GetStatusType(ei.IssueType)">@ei.IssueType</span></td>
                                         <td><span class="status-badge @GetStatusClass(ei.StatusCategoryKey)">@ei.Status</span></td>
                                         <td class="td-assignee">
                                             @(
@@ -866,6 +974,15 @@
         "indeterminate" => "badge-progress",
         _               => "badge-todo"
     };
+    private static string GetStatusType(string? issueType)
+    {
+        return issueType?.ToLowerInvariant() switch
+        {
+            "task" => "type-task",
+            "bug" => "type-bug",
+            _ => "type-default"
+        };
+    }
 
     private static string GetCompletionClass(double pct) =>
         pct >= 80 ? "val-good" : pct >= 50 ? "val-warn" : "val-neutral";
@@ -911,6 +1028,12 @@
 
     private static string GetBugFixBarClass(double pct) =>
         pct >= 80 ? "qbar-good" : pct >= 50 ? "qbar-mid" : "qbar-low";
+
+    private static string GetBugOverheadClass(double pct) =>
+        pct == 0 ? "val-neutral" : pct <= 20 ? "val-good" : pct <= 50 ? "val-warn" : "val-danger";
+
+    private static string GetBugRateClass(double pct) =>
+        pct <= 20 ? "val-good" : pct <= 40 ? "val-warn" : "val-danger";
 
     private static string BarPct(int count, int total) =>
         (total > 0 ? Math.Round(count * 100.0 / total, 1) : 0)
@@ -1318,4 +1441,86 @@
         font-size: 13px; color: #9ca3af; font-style: italic; padding: 8px 0;
     }
 
+    .quality-section-title {
+        font-size: 11px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: #6b7280; margin-top: 6px; padding-bottom: 5px;
+        border-bottom: 1px solid #f3f4f6;
+    }
+
+    .bat-table { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
+
+    .bat-header, .bat-row {
+        display: grid;
+        grid-template-columns: 1fr 90px 72px 90px 110px;
+        gap: 6px;
+        align-items: center;
+        font-size: 12px;
+        padding: 4px 6px;
+        border-radius: 6px;
+    }
+
+    .bat-header {
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.04em; color: #9ca3af; padding-bottom: 3px;
+    }
+
+    .bat-row { background: #f9fafb; }
+    .bat-row:hover { background: #f3f4f6; }
+
+    .bat-name  { color: #374151; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bat-count { color: #6b7280; text-align: center; }
+    .bat-rate  { font-weight: 700; text-align: center; }
+    .bat-time  { color: #6b7280; text-align: right; }
+    .bat-share { font-weight: 700; text-align: right; }
+
+    /* ─── Task Rate by Assignee ─── */
+    .epd-assignee-section {
+        background: #fff; border: 1px solid #e5e7eb; border-radius: 12px;
+        padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+
+    .epd-section-title {
+        font-size: 12px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.05em; color: #6b7280; margin-bottom: 10px;
+    }
+
+    .at-table { display: flex; flex-direction: column; gap: 3px; }
+
+    .at-header, .at-row {
+        display: grid;
+        grid-template-columns: 1fr 56px 56px 96px 56px 90px 82px 90px;
+        gap: 6px; align-items: center; font-size: 12px;
+        padding: 5px 8px; border-radius: 6px;
+    }
+
+    .at-header {
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: 0.04em; color: #9ca3af;
+    }
+
+    .at-row { background: #f9fafb; }
+    .at-row:hover { background: #f3f4f6; }
+
+    .at-name     { color: #374151; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .at-num      { color: #374151; text-align: center; font-weight: 600; }
+    .at-done     { color: #059669; }
+    .at-progress { color: #3b82f6; }
+    .at-todo     { color: #9ca3af; }
+    .at-pct      { font-weight: 700; text-align: center; }
+    .at-time     { color: #6b7280; text-align: right; }
+    
+    .type-task {
+        background-color: #e0f2fe; /* sky-100 */
+        color: #0369a1; /* sky-700 */
+    }
+
+    .type-bug {
+        background-color: #fee2e2; /* red-100 */
+        color: #b91c1c; /* red-700 */
+    }
+
+    .type-default {
+        background-color: #e5e7eb; /* gray-200 */
+        color: #374151;
+    }
     </style>

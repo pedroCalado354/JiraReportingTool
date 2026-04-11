@@ -7,6 +7,7 @@ public class SprintPlanService(AppDbContext db) : ISprintPlanService
 
     public Task<List<SprintPlanHeader>> GetAllAsync() =>
         db.SprintPlans
+          .AsNoTracking()
           .OrderByDescending(p => p.UpdatedAt)
           .ToListAsync();
 
@@ -14,6 +15,7 @@ public class SprintPlanService(AppDbContext db) : ISprintPlanService
 
     public Task<SprintPlanHeader?> GetAsync(int id) =>
         db.SprintPlans
+          .AsNoTracking()
           .Include(p => p.Allocations)
           .Include(p => p.CustomTasks)
           .Include(p => p.Holidays)
@@ -52,6 +54,27 @@ public class SprintPlanService(AppDbContext db) : ISprintPlanService
 
         await db.SaveChangesAsync();
         return plan;
+    }
+
+    // ── Upsert by name ────────────────────────────────────────────────────────
+
+    public async Task<SprintPlanHeader> UpsertByNameAsync(SprintPlanHeader plan)
+    {
+        // Only resolve by name when caller hasn't already set an ID
+        if (plan.Id == 0)
+        {
+            var existing = await db.SprintPlans
+                .AsNoTracking()
+                .FirstOrDefaultAsync(p => p.Name == plan.Name);
+
+            if (existing is not null)
+            {
+                plan.Id        = existing.Id;
+                plan.CreatedAt = existing.CreatedAt;
+            }
+        }
+
+        return await SaveAsync(plan);
     }
 
     // ── Delete (cascade removes children via FK) ──────────────────────────────
