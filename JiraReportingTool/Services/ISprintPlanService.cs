@@ -17,4 +17,7 @@ public interface ISprintPlanService
     Task<SprintPlanHeader> UpsertByNameAsync(SprintPlanHeader plan);
 
     Task DeleteAsync(int id);
+
+    /// <summary>Returns all version snapshots for a plan, newest first.</summary>
+    Task<List<SprintPlanVersion>> GetVersionsAsync(int planId);
 }

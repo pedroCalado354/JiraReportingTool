@@ -18,6 +18,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SprintPlanCustomTask> SprintPlanCustomTasks => Set<SprintPlanCustomTask>();
     public DbSet<SprintPlanHoliday>    SprintPlanHolidays    => Set<SprintPlanHoliday>();
     public DbSet<SprintPlanTimeOff>    SprintPlanTimeOffs    => Set<SprintPlanTimeOff>();
+    public DbSet<SprintPlanVersion>    SprintPlanVersions    => Set<SprintPlanVersion>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -98,6 +99,17 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne<SprintPlanHeader>()
             .WithMany(p => p.TimeOffs)
             .HasForeignKey(t => t.SprintPlanId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // ── SprintPlanVersion → SprintPlanHeader (cascade delete, no nav on header) ──
+        modelBuilder.Entity<SprintPlanVersion>()
+            .Property(v => v.DataJson)
+            .HasColumnType("nvarchar(max)");
+
+        modelBuilder.Entity<SprintPlanVersion>()
+            .HasOne<SprintPlanHeader>()
+            .WithMany()
+            .HasForeignKey(v => v.SprintPlanId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }

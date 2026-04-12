@@ -1,3 +1,4 @@
+using System.Text.Json;
 using JiraReportingTool.Data;
 using Microsoft.EntityFrameworkCore;
 
@@ -26,6 +27,7 @@ public class SprintPlanService(AppDbContext db) : ISprintPlanService
 
     public async Task<SprintPlanHeader> SaveAsync(SprintPlanHeader plan)
     {
+        db.ChangeTracker.Clear();
         plan.UpdatedAt = DateTime.UtcNow;
 
         if (plan.Id == 0)
@@ -36,7 +38,20 @@ public class SprintPlanService(AppDbContext db) : ISprintPlanService
         }
         else
         {
-            // ── Update: delete all children, then re-insert via the header ──
+            // ── Update: snapshot current state as a version, then full-replace ──
+            var json = JsonSerializer.Serialize(plan);
+            var maxVersion = await db.SprintPlanVersions
+                .Where(v => v.SprintPlanId == plan.Id)
+                .MaxAsync(v => (int?)v.VersionNumber) ?? 0;
+            db.SprintPlanVersions.Add(new SprintPlanVersion
+            {
+                SprintPlanId  = plan.Id,
+                VersionNumber = maxVersion + 1,
+                SavedAt       = DateTime.UtcNow,
+                DataJson      = json,
+            });
+
+            // Delete all children, then re-insert via the header.
             // ExecuteDeleteAsync avoids loading the rows into memory.
             await db.SprintPlanAllocations.Where(a => a.SprintPlanId == plan.Id).ExecuteDeleteAsync();
             await db.SprintPlanCustomTasks.Where(t => t.SprintPlanId == plan.Id).ExecuteDeleteAsync();
@@ -81,4 +96,12 @@ public class SprintPlanService(AppDbContext db) : ISprintPlanService
 
     public Task DeleteAsync(int id) =>
         db.SprintPlans.Where(p => p.Id == id).ExecuteDeleteAsync();
+
+    // ── Version history ───────────────────────────────────────────────────────
+
+    public Task<List<SprintPlanVersion>> GetVersionsAsync(int planId) =>
+        db.SprintPlanVersions
+          .Where(v => v.SprintPlanId == planId)
+          .OrderByDescending(v => v.VersionNumber)
+          .ToListAsync();
 }

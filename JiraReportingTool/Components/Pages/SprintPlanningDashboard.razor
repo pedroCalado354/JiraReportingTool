@@ -148,12 +148,47 @@
             </button>
             @if (_currentPlanId.HasValue)
             {
+                <button class="btn small toggle-btn @(_showVersionsPanel ? "toggle-on" : "")"
+                        @onclick="() => _showVersionsPanel = !_showVersionsPanel"
+                        title="View version history">
+                    📋 History@(_planVersions.Count > 0 ? $" ({_planVersions.Count})" : "")
+                </button>
                 <button class="btn danger small" @onclick="DeletePlanAsync" disabled="@_isSaving" title="Delete this sprint plan">
                     🗑 Delete
                 </button>
             }
         </div>
     </div>
+
+    @if (_showVersionsPanel && _currentPlanId.HasValue)
+    {
+        <div class="spd-versions-panel">
+            <div class="versions-panel-header">
+                <span class="versions-panel-title">Version History — @SprintName</span>
+                <button class="btn small" @onclick="() => _showVersionsPanel = false">✕ Close</button>
+            </div>
+            @if (_planVersions.Count == 0)
+            {
+                <p class="versions-empty">No versions yet — versions are created automatically each time you save an existing plan.</p>
+            }
+            else
+            {
+                <div class="versions-list">
+                    @foreach (var v in _planVersions)
+                    {
+                        var ver = v;
+                        <div class="version-item">
+                            <span class="version-badge">v@ver.VersionNumber</span>
+                            <span class="version-date">@ver.SavedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
+                            <button class="btn small" @onclick="() => RestoreVersionAsync(ver)" disabled="@_isSaving">
+                                Restore
+                            </button>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
 
     <!-- ═══ TEAM FILTER + ACTIONS ══════════════════════════════════════ -->
     <div class="spd-actions-bar">
@@ -244,6 +279,7 @@
                                         var task = t;
                                         var isSelected = SelectedTask?.Id == task.Id;
                                         var isAssigned = IsTaskAssigned(task.Id);
+                                        var assignee   = isAssigned ? GetTaskAssigneeName(task.Id) : null;
                                         <li class="task-item @(isSelected ? "selected" : "") @(isAssigned ? "assigned" : "")"
                                             @onclick="() => SelectTask(task)">
                                             <div class="task-item-top">
@@ -251,6 +287,10 @@
                                                 @if (isAssigned)
                                                 {
                                                     <span class="badge-assigned">✓</span>
+                                                    @if (assignee is not null)
+                                                    {
+                                                        <span class="badge-assignee-name" title="@assignee">@assignee</span>
+                                                    }
                                                 }
                                                 <span class="task-est-label">@FormatTaskHours(task)</span>
                                             </div>
@@ -304,6 +344,7 @@
                             var ct = kvp.Value;
                             var isSelCt = SelectedCustomTaskId == ct.Id;
                             var isAssignedCt = IsTaskAssigned(ct.Id);
+                            var ctAssignee = isAssignedCt ? GetTaskAssigneeName(ct.Id) : null;
                             <li class="task-item custom-task-item @(isSelCt ? "selected" : "") @(isAssignedCt ? "assigned" : "")"
                                 style="border-left-color: @ct.Color"
                                 @onclick="() => SelectCustomTask(ct.Id)">
@@ -312,6 +353,10 @@
                                     @if (isAssignedCt)
                                     {
                                         <span class="badge-assigned">✓</span>
+                                        @if (ctAssignee is not null)
+                                        {
+                                            <span class="badge-assignee-name" title="@ctAssignee">@ctAssignee</span>
+                                        }
                                     }
                                     <span class="task-est-label">@ct.Hours h</span>
                                     <button class="epic-remove-btn" @onclick="() => RemoveCustomTask(ct.Id)" @onclick:stopPropagation="true" title="Remove">✕</button>
@@ -412,6 +457,13 @@
                 {
                     <div class="cal-scroll">
                         <table class="cal-table">
+                            <colgroup>
+                                <col class="col-member" />
+                                @foreach (var d in VisibleDates)
+                                {
+                                    <col class="col-date" />
+                                }
+                            </colgroup>
                             <thead>
                                 <tr>
                                     <th class="cal-sticky-col cal-head-member">
@@ -529,6 +581,26 @@
             }
         </div>
     </div>
+
+    @if (_showOverCapacityDialog && _overCapacityPending is not null)
+    {
+        <div class="modal-overlay" @onclick="CancelOverCapacity">
+            <div class="modal-dialog" @onclick:stopPropagation="true">
+                <div class="modal-title">Over Capacity Warning</div>
+                <p class="modal-body">
+                    Adding <strong>@_overCapacityPending.TaskLabel</strong> to
+                    <strong>@_overCapacityPending.MemberName</strong> exceeds the
+                    @MaxHoursPerDay h/day limit — not enough free capacity from
+                    @($"{_overCapacityPending.StartDate:dd-MMM}").
+                    <br />Schedule anyway (days may exceed @MaxHoursPerDay h)?
+                </p>
+                <div class="modal-actions">
+                    <button class="btn primary" @onclick="ConfirmOverCapacity">Yes, schedule anyway</button>
+                    <button class="btn" @onclick="CancelOverCapacity">No, cancel</button>
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -623,6 +695,16 @@
     private bool                  _isSaving   = false;
     private int                   _loadPlanId = 0;
 
+    // ── Plan versions ──
+    private List<SprintPlanVersion> _planVersions    = new();
+    private bool                    _showVersionsPanel = false;
+
+    // ── Over-capacity dialog ──
+    private bool _showOverCapacityDialog = false;
+    private record OverCapacityPending(
+        int TaskId, Guid MemberId, decimal TotalHours, DateOnly StartDate, string TaskLabel, string MemberName);
+    private OverCapacityPending? _overCapacityPending;
+
     private const decimal MaxHoursPerDay = 6m;
     private const decimal HoursPerDay = 6m;
     private const decimal DaysPerWeek = 5m;
@@ -635,6 +717,13 @@
 
     private bool IsTaskAssigned(int taskId)
         => Allocations.Any(a => a.TaskId == taskId);
+
+    private string? GetTaskAssigneeName(int taskId)
+    {
+        var memberId = Allocations.FirstOrDefault(a => a.TaskId == taskId)?.TeamMemberId;
+        if (memberId is null) return null;
+        return TeamMembers.FirstOrDefault(m => m.Id == memberId.Value)?.Name;
+    }
 
     private int TotalTaskCount => LoadedEpics.Values.Sum(e => e.Tasks.Count);
     private int AssignedCount => GetAllTasks().Count(t => IsTaskAssigned(t.Id));
@@ -845,6 +934,7 @@
             var saved = await PlanService.UpsertByNameAsync(plan);
             _currentPlanId = saved.Id;
             _savedPlans    = await PlanService.GetAllAsync();
+            _planVersions  = await PlanService.GetVersionsAsync(saved.Id);
             InfoMessage = $"Plan '{saved.Name}' saved (#{saved.Id}).";
         }
         catch (Exception ex) { ErrorMessage = $"Save failed: {ex.Message}"; }
@@ -871,6 +961,8 @@
         SelectedTask      = null;
         SelectedCustomTaskId = null;
         PendingPlacement  = null;
+        _planVersions     = new();
+        _showVersionsPanel = false;
         InfoMessage = "New sprint ready — set the sprint name and dates, then load epics.";
     }
 
@@ -882,61 +974,81 @@
         {
             var plan = await PlanService.GetAsync(id);
             if (plan is null) { ErrorMessage = $"Plan #{id} not found."; return; }
-
-            // Restore sprint config
-            _currentPlanId      = plan.Id;
-            SprintName          = plan.Name;
-            SprintStartDateTime = plan.SprintStart.ToDateTime(TimeOnly.MinValue);
-            SprintEndDateTime   = plan.SprintEnd.ToDateTime(TimeOnly.MinValue);
-            ApplySprintRange();
-
-            // Reload epics from cache/Jira
-            LoadedEpics.Clear();
-            _taskCache.Clear();
-            var epicKeys = plan.LoadedEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
-            foreach (var key in epicKeys)
-                await LoadEpicByKey(key);
-
-            // Restore custom tasks
-            _customTasks.Clear();
-            foreach (var ct in plan.CustomTasks)
-                _customTasks[ct.LocalId] = new CustomTaskEntry
-                {
-                    Id = ct.LocalId, Name = ct.Name,
-                    Category = ct.Category, Hours = ct.Hours, Color = ct.Color
-                };
-            _nextCustomTaskId = _customTasks.Count > 0 ? _customTasks.Keys.Min() - 1 : -1;
-
-            // Restore allocations (match member by stable Guid, fallback to name lookup)
-            Allocations.Clear();
-            foreach (var a in plan.Allocations)
-            {
-                var memberId = TeamMembers.Any(m => m.Id == a.MemberId)
-                    ? a.MemberId
-                    : TeamMembers.FirstOrDefault(m => m.Name == a.MemberName)?.Id ?? a.MemberId;
-                Allocations.Add(new TaskAllocation
-                {
-                    TaskId = a.TaskId, TeamMemberId = memberId,
-                    Date = a.Date, HoursAllocated = a.HoursAllocated, GroupId = a.GroupId
-                });
-            }
-
-            // Restore holidays & time-off
-            Holidays = plan.Holidays.Select(h => h.Date).ToHashSet();
-            MemberTimeOff.Clear();
-            foreach (var to in plan.TimeOffs)
-            {
-                var memberId = TeamMembers.Any(m => m.Id == to.MemberId)
-                    ? to.MemberId
-                    : to.MemberId;
-                if (!MemberTimeOff.ContainsKey(memberId))
-                    MemberTimeOff[memberId] = new HashSet<DateOnly>();
-                MemberTimeOff[memberId].Add(to.Date);
-            }
-
+            await ApplyPlanAsync(plan);
+            _planVersions = await PlanService.GetVersionsAsync(id);
             InfoMessage = $"Plan '{plan.Name}' loaded — {plan.Allocations.Count} allocations.";
         }
         catch (Exception ex) { ErrorMessage = $"Load failed: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
+    // Applies a SprintPlanHeader to the in-memory state. When keepId=true the
+    // current _currentPlanId is preserved (used when restoring a version).
+    private async Task ApplyPlanAsync(SprintPlanHeader plan, bool keepId = false)
+    {
+        if (!keepId)
+            _currentPlanId = plan.Id > 0 ? plan.Id : _currentPlanId;
+
+        SprintName          = plan.Name;
+        SprintStartDateTime = plan.SprintStart.ToDateTime(TimeOnly.MinValue);
+        SprintEndDateTime   = plan.SprintEnd.ToDateTime(TimeOnly.MinValue);
+        ApplySprintRange();
+
+        // Reload epics from cache/Jira
+        LoadedEpics.Clear();
+        _taskCache.Clear();
+        var epicKeys = plan.LoadedEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var key in epicKeys)
+            await LoadEpicByKey(key);
+
+        // Restore custom tasks
+        _customTasks.Clear();
+        foreach (var ct in plan.CustomTasks)
+            _customTasks[ct.LocalId] = new CustomTaskEntry
+            {
+                Id = ct.LocalId, Name = ct.Name,
+                Category = ct.Category, Hours = ct.Hours, Color = ct.Color
+            };
+        _nextCustomTaskId = _customTasks.Count > 0 ? _customTasks.Keys.Min() - 1 : -1;
+
+        // Restore allocations (match member by stable Guid, fallback to name lookup)
+        Allocations.Clear();
+        foreach (var a in plan.Allocations)
+        {
+            var memberId = TeamMembers.Any(m => m.Id == a.MemberId)
+                ? a.MemberId
+                : TeamMembers.FirstOrDefault(m => m.Name == a.MemberName)?.Id ?? a.MemberId;
+            Allocations.Add(new TaskAllocation
+            {
+                TaskId = a.TaskId, TeamMemberId = memberId,
+                Date = a.Date, HoursAllocated = a.HoursAllocated, GroupId = a.GroupId
+            });
+        }
+
+        // Restore holidays & time-off
+        Holidays = plan.Holidays.Select(h => h.Date).ToHashSet();
+        MemberTimeOff.Clear();
+        foreach (var to in plan.TimeOffs)
+        {
+            if (!MemberTimeOff.ContainsKey(to.MemberId))
+                MemberTimeOff[to.MemberId] = new HashSet<DateOnly>();
+            MemberTimeOff[to.MemberId].Add(to.Date);
+        }
+    }
+
+    private async Task RestoreVersionAsync(SprintPlanVersion version)
+    {
+        _isSaving = true;
+        ErrorMessage = null;
+        try
+        {
+            var plan = System.Text.Json.JsonSerializer.Deserialize<SprintPlanHeader>(version.DataJson);
+            if (plan is null) { ErrorMessage = "Failed to read version data."; return; }
+            await ApplyPlanAsync(plan, keepId: true);
+            _showVersionsPanel = false;
+            InfoMessage = $"Restored version {version.VersionNumber} (saved {version.SavedAt.ToLocalTime():dd-MMM-yyyy HH:mm}). Save to keep this state.";
+        }
+        catch (Exception ex) { ErrorMessage = $"Restore failed: {ex.Message}"; }
         finally { _isSaving = false; }
     }
 
@@ -1164,18 +1276,22 @@
             return;
         }
 
-        var newAllocs = ScheduleTask(activeTaskId!.Value, memberId, totalHoursResolved, startDate);
+        var memberName = TeamMembers.First(x => x.Id == memberId).Name;
+        var newAllocs  = ScheduleTask(activeTaskId!.Value, memberId, totalHoursResolved, startDate);
+        var scheduledHours = newAllocs.Sum(a => a.HoursAllocated);
 
-        if (newAllocs.Count == 0)
+        if (scheduledHours < totalHoursResolved)
         {
-            ErrorMessage = $"No available capacity from {startDate:dd-MMM} within 365 days.";
+            // Capacity insufficient — ask user whether to schedule over the 6h/day limit
+            _overCapacityPending = new OverCapacityPending(
+                activeTaskId.Value, memberId, totalHoursResolved, startDate, taskLabel, memberName);
+            _showOverCapacityDialog = true;
             PendingPlacement = null;
             return;
         }
 
         Allocations.AddRange(newAllocs);
-        var lastDate   = newAllocs.Max(a => a.Date);
-        var memberName = TeamMembers.First(x => x.Id == memberId).Name;
+        var lastDate = newAllocs.Max(a => a.Date);
         InfoMessage = $"Scheduled '{taskLabel}' for {memberName}: {totalHoursResolved:0.#}h from {startDate:dd-MMM} → {lastDate:dd-MMM}.";
         SelectedTask = null;
         SelectedCustomTaskId = null;
@@ -1187,7 +1303,7 @@
     // ───────────────────────────────────────────────────────────
     private List<TaskAllocation> ScheduleTask(
         int taskId, Guid memberId, decimal totalHours, DateOnly startDate,
-        List<TaskAllocation>? provisional = null)
+        List<TaskAllocation>? provisional = null, bool forceOverCapacity = false)
     {
         var result    = new List<TaskAllocation>();
         var groupId   = Guid.NewGuid();
@@ -1199,9 +1315,18 @@
         {
             if (!IsDayOff(memberId, date))
             {
-                var committed = GetAllocatedHoursFromList(memberId, date, Allocations);
-                var pending   = provisional is not null ? GetAllocatedHoursFromList(memberId, date, provisional) : 0m;
-                var capacity  = Math.Max(0m, MaxHoursPerDay - committed - pending);
+                decimal capacity;
+                if (forceOverCapacity)
+                {
+                    // Ignore existing allocations — allow day to exceed 6h limit
+                    capacity = MaxHoursPerDay;
+                }
+                else
+                {
+                    var committed = GetAllocatedHoursFromList(memberId, date, Allocations);
+                    var pending   = provisional is not null ? GetAllocatedHoursFromList(memberId, date, provisional) : 0m;
+                    capacity = Math.Max(0m, MaxHoursPerDay - committed - pending);
+                }
 
                 if (capacity > 0m)
                 {
@@ -1218,6 +1343,37 @@
         }
 
         return result;
+    }
+
+    // ───────────────────────────────────────────────────────────
+    // Over-capacity dialog handlers
+    // ───────────────────────────────────────────────────────────
+    private void ConfirmOverCapacity()
+    {
+        if (_overCapacityPending is null) return;
+        var p = _overCapacityPending;
+        var forced = ScheduleTask(p.TaskId, p.MemberId, p.TotalHours, p.StartDate, forceOverCapacity: true);
+        if (forced.Count > 0)
+        {
+            Allocations.AddRange(forced);
+            var lastDate = forced.Max(a => a.Date);
+            InfoMessage = $"Scheduled '{p.TaskLabel}' for {p.MemberName}: {p.TotalHours:0.#}h from {p.StartDate:dd-MMM} → {lastDate:dd-MMM} (over capacity).";
+        }
+        else
+        {
+            ErrorMessage = $"Could not schedule '{p.TaskLabel}' — no working days available.";
+        }
+        SelectedTask = null;
+        SelectedCustomTaskId = null;
+        _overCapacityPending    = null;
+        _showOverCapacityDialog = false;
+    }
+
+    private void CancelOverCapacity()
+    {
+        _overCapacityPending    = null;
+        _showOverCapacityDialog = false;
+        InfoMessage = "Scheduling cancelled.";
     }
 
     // ───────────────────────────────────────────────────────────
@@ -2489,6 +2645,10 @@ private static decimal ParseJiraDurationToHours(string? input)
         font-size: 12px;
     }
 
+    /* Col-group widths — enforces uniform column width across every row */
+    .col-member { width: 130px; }
+    .col-date   { width: 54px; }
+
     /* Sticky first column */
     .cal-sticky-col {
         position: sticky;
@@ -2499,14 +2659,18 @@ private static decimal ParseJiraDurationToHours(string? input)
     }
 
     .cal-head-member {
-        padding: 10px 12px;
+        padding: 8px 10px;
         font-size: 12px;
         font-weight: 700;
         color: #374151;
         text-align: left;
         white-space: nowrap;
-        min-width: 160px;
+        width: 130px;
+        min-width: 130px;
+        max-width: 130px;
         background: #f8fafc;
+        vertical-align: bottom;
+        border-bottom: 2px solid #e5e7eb;
     }
 
     .cal-head-sub {
@@ -2581,7 +2745,9 @@ private static decimal ParseJiraDurationToHours(string? input)
     /* Member sticky cell */
     .cal-member-cell {
         padding: 6px 10px;
-        min-width: 160px;
+        width: 130px;
+        min-width: 130px;
+        max-width: 130px;
         vertical-align: top;
     }
 
@@ -2589,6 +2755,9 @@ private static decimal ParseJiraDurationToHours(string? input)
         font-weight: 600;
         font-size: 12px;
         color: #1f2937;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .cal-member-alloc {
@@ -2803,5 +2972,122 @@ private static decimal ParseJiraDurationToHours(string? input)
         opacity: 0.9;
     }
 
+    /* ─── Assignee badge in task list ─── */
+    .badge-assignee-name {
+        background: #dbeafe;
+        color: #1e40af;
+        border-radius: 10px;
+        padding: 1px 7px;
+        font-size: 10px;
+        font-weight: 600;
+        max-width: 90px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: inline-block;
+    }
+
+    /* ─── Over-capacity modal ─── */
+    .modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.45);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+    }
+
+    .modal-dialog {
+        background: #fff;
+        border-radius: 14px;
+        padding: 28px 32px;
+        max-width: 440px;
+        width: 90%;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.18);
+    }
+
+    .modal-title {
+        font-size: 17px;
+        font-weight: 700;
+        color: #111827;
+        margin-bottom: 12px;
+    }
+
+    .modal-body {
+        font-size: 14px;
+        color: #374151;
+        line-height: 1.55;
+        margin-bottom: 20px;
+    }
+
+    .modal-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+    }
+
+    /* ─── Version history panel ─── */
+    .spd-versions-panel {
+        background: #f8fafc;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 12px 16px;
+        font-size: 13px;
+    }
+
+    .versions-panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 10px;
+    }
+
+    .versions-panel-title {
+        font-weight: 700;
+        color: #374151;
+        font-size: 13px;
+    }
+
+    .versions-empty {
+        color: #9ca3af;
+        font-size: 13px;
+        margin: 0;
+    }
+
+    .versions-list {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .version-item {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 10px;
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+    }
+
+    .version-badge {
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        padding: 1px 8px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .version-date {
+        color: #6b7280;
+        font-size: 12px;
+        flex: 1;
+    }
 
 </style>

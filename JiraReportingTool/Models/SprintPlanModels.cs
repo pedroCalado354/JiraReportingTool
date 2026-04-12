@@ -96,3 +96,18 @@ public class SprintPlanTimeOff
     public Guid     MemberId     { get; set; }
     public DateOnly Date         { get; set; }
 }
+
+/// <summary>Point-in-time snapshot of a sprint plan, created on each save of an existing plan.</summary>
+public class SprintPlanVersion
+{
+    public int      Id            { get; set; }
+    public int      SprintPlanId  { get; set; }
+    public int      VersionNumber { get; set; }
+    public DateTime SavedAt       { get; set; } = DateTime.UtcNow;
+
+    [MaxLength(200)]
+    public string Label    { get; set; } = "";
+
+    /// <summary>JSON-serialized SprintPlanHeader (data-only, no circular nav properties).</summary>
+    public string DataJson { get; set; } = "";
+}
