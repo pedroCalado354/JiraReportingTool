@@ -86,7 +86,7 @@ public class JiraService : IJiraService
         // Fetch child issues using the modern "parent" field (Jira Cloud deprecated "Epic Link" — returns 410)
         var jql = Uri.EscapeDataString(
             $"issueType != Epic AND parent = \"{epicKey}\" ORDER BY created ASC");
-        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,labels,created,resolutiondate";
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,labels,created,resolutiondate,customfield_10020";
 
         var searchJson = await FetchAllPagesAsync(jql, fields);
         var (sprintReport, truncated) = ParseSprintReport(searchJson, "");
@@ -375,20 +375,33 @@ public class JiraService : IJiraService
                     .Where(l => !string.IsNullOrEmpty(l))
                     .ToList();
 
-            // Sprint metadata from first active sprint in customfield_10020
-            if (report.SprintName == "" &&
-                fields.TryGetProperty("customfield_10020", out var sprints) &&
+            // Sprint metadata from customfield_10020 (array of sprints the issue belongs to)
+            if (fields.TryGetProperty("customfield_10020", out var sprints) &&
                 sprints.ValueKind == JsonValueKind.Array)
             {
                 foreach (var s in sprints.EnumerateArray())
                 {
-                    if (!s.TryGetProperty("state", out var state) || state.GetString() != "active") continue;
-                    report.SprintName = s.TryGetProperty("name", out var sn) ? sn.GetString() ?? "" : "";
-                    if (s.TryGetProperty("startDate", out var sd) && DateTime.TryParse(sd.GetString(), out var sdParsed))
-                        report.StartDate = sdParsed;
-                    if (s.TryGetProperty("endDate", out var ed) && DateTime.TryParse(ed.GetString(), out var edParsed))
-                        report.EndDate = edParsed;
-                    break;
+                    if (!s.TryGetProperty("state", out var stateEl)) continue;
+                    var sprintState = stateEl.GetString() ?? "";
+                    var sprintNameVal = s.TryGetProperty("name", out var sn) ? sn.GetString() ?? "" : "";
+
+                    // Per-issue: prefer active sprint; fall back to first sprint in the list
+                    if (string.IsNullOrEmpty(issue.SprintName))
+                        issue.SprintName = sprintNameVal;
+                    if (sprintState == "active")
+                    {
+                        issue.SprintName = sprintNameVal;
+                        // Report-level: populate start/end from the first active sprint found
+                        if (report.SprintName == "")
+                        {
+                            report.SprintName = sprintNameVal;
+                            if (s.TryGetProperty("startDate", out var sd) && DateTime.TryParse(sd.GetString(), out var sdParsed))
+                                report.StartDate = sdParsed;
+                            if (s.TryGetProperty("endDate", out var ed) && DateTime.TryParse(ed.GetString(), out var edParsed))
+                                report.EndDate = edParsed;
+                        }
+                        break; // active sprint found — done for this issue
+                    }
                 }
             }
 

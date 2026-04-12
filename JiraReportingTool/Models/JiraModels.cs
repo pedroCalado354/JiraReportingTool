@@ -169,6 +169,7 @@ public class SprintIssue
     public int RemainingEstimateSeconds { get; set; }
     public string EpicKey { get; set; } = "";
     public string EpicName { get; set; } = "No Epic";
+    public string SprintName { get; set; } = "";
     public List<WorklogEntry> Worklogs { get; set; } = new();
     public List<string> Labels { get; set; } = new();
     public DateTime? Created { get; set; }

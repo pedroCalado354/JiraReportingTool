@@ -2,6 +2,7 @@
 @using JiraReportingTool.Models
 @rendermode InteractiveServer
 @inject IJiraService JiraService
+@inject IConfiguration Config
 
 <div class="epd-root">
 
@@ -671,10 +672,12 @@
                                 <th>Type</th>
                                 <th>Status</th>
                                 <th>Assignee</th>
+                                <th>Sprint</th>
                                 <th>Estimate</th>
                                 <th>Logged</th>
-                                <th>Remaining ≈</th>
+                                <th>Remaining</th>
                                 <th>Progress %</th>
+                                <th>Jira</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -703,6 +706,10 @@
                                             @(
                                                                         string.IsNullOrWhiteSpace(ei.Assignee) ? "—" : ei.Assignee
                                                                         )
+                                        </td>
+
+                                        <td class="td-sprint" title="@ei.SprintName">
+                                            @(string.IsNullOrWhiteSpace(ei.SprintName) ? "—" : ei.SprintName)
                                         </td>
 
                                         <td class="td-num">
@@ -738,11 +745,17 @@
                                                 <span>—</span>
                                             }
                                         </td>
+
+                                        <td class="td-jira-link" @onclick:stopPropagation="true">
+                                            <a href="@(Config["Jira:BaseUrl"])/browse/@ei.Key"
+                                               target="_blank" rel="noopener noreferrer"
+                                               title="Open @ei.Key in Jira">↗</a>
+                                        </td>
                                     </tr>
                                 @if (ei.IsExpanded && ei.Worklogs?.Count > 0)
                                 {
                                     <tr class="worklog-row">
-                                        <td colspan="10">
+                                        <td colspan="12">
                                             <div class="worklog-list">
                                                 @foreach (var wl in ei.Worklogs.OrderByDescending(w => w.Started))
                                                 {
@@ -763,13 +776,13 @@
                                 @if (ei.IsExpanded && (ei.Worklogs is null || ei.Worklogs.Count == 0))
                                 {
                                     <tr class="worklog-row">
-                                        <td colspan="9" class="td-empty">No worklogs recorded.</td>
+                                        <td colspan="12" class="td-empty">No worklogs recorded.</td>
                                     </tr>
                                 }
                             }
                             @if (!FilteredEpicIssues.Any())
                             {
-                                <tr><td colspan="9" class="td-empty">No issues match the current filters.</td></tr>
+                                <tr><td colspan="12" class="td-empty">No issues match the current filters.</td></tr>
                             }
                         </tbody>
                     </table>
@@ -1313,6 +1326,10 @@
     .td-summary { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #1f2937; }
     .td-num     { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .td-assignee { white-space: nowrap; color: #374151; }
+    .td-sprint   { max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6b7280; font-size: 12px; }
+    .td-jira-link { text-align: center; white-space: nowrap; }
+    .td-jira-link a { color: #4f81bd; font-size: 14px; text-decoration: none; }
+    .td-jira-link a:hover { color: #2563eb; }
     .td-expand  { width: 24px; color: #9ca3af; cursor: pointer; }
     .td-empty   { text-align: center; color: #9ca3af; padding: 20px !important; }
 
