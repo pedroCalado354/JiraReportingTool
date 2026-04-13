@@ -178,7 +178,7 @@
                     {
                         var ver = v;
                         <div class="version-item">
-                            <span class="version-badge">v@ver.VersionNumber</span>
+                            <span class="version-badge">@ver.VersionNumber</span>
                             <span class="version-date">@ver.SavedAt.ToLocalTime().ToString("dd MMM yyyy HH:mm")</span>
                             <button class="btn small" @onclick="() => RestoreVersionAsync(ver)" disabled="@_isSaving">
                                 Restore
