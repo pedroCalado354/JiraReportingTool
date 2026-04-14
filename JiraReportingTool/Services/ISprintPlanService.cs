@@ -20,4 +20,10 @@ public interface ISprintPlanService
 
     /// <summary>Returns all version snapshots for a plan, newest first.</summary>
     Task<List<SprintPlanVersion>> GetVersionsAsync(int planId);
+
+    /// <summary>Persists a single removal-log entry for an in-progress plan.</summary>
+    Task<SprintPlanRemovalLog> LogRemovalAsync(SprintPlanRemovalLog log);
+
+    /// <summary>Returns all removal log entries for a plan, newest first.</summary>
+    Task<List<SprintPlanRemovalLog>> GetRemovalLogsAsync(int planId);
 }

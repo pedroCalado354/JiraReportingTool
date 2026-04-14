@@ -111,3 +111,24 @@ public class SprintPlanVersion
     /// <summary>JSON-serialized SprintPlanHeader (data-only, no circular nav properties).</summary>
     public string DataJson { get; set; } = "";
 }
+
+/// <summary>Audit log entry created each time a task assignment is removed from the calendar during a sprint.</summary>
+public class SprintPlanRemovalLog
+{
+    public int  Id           { get; set; }
+    public int  SprintPlanId { get; set; }
+
+    /// <summary>GroupId of the removed allocation set — links back to the original block.</summary>
+    public Guid GroupId { get; set; }
+
+    [MaxLength(500)]
+    public string TaskLabel  { get; set; } = "";
+
+    [MaxLength(100)]
+    public string MemberName { get; set; } = "";
+
+    [MaxLength(1000)]
+    public string Reason     { get; set; } = "";
+
+    public DateTime RemovedAt { get; set; } = DateTime.UtcNow;
+}

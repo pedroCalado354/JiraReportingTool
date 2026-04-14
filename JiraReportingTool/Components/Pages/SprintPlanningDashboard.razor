@@ -153,6 +153,9 @@
                         title="View version history">
                     📋 History@(_planVersions.Count > 0 ? $" ({_planVersions.Count})" : "")
                 </button>
+                <button class="btn small" @onclick="OpenRemovalLogsAsync" title="View removal log">
+                    📝 Removal Log
+                </button>
                 <button class="btn danger small" @onclick="DeletePlanAsync" disabled="@_isSaving" title="Delete this sprint plan">
                     🗑 Delete
                 </button>
@@ -584,20 +587,87 @@
 
     @if (_showOverCapacityDialog && _overCapacityPending is not null)
     {
-        <div class="modal-overlay" @onclick="CancelOverCapacity">
-            <div class="modal-dialog" @onclick:stopPropagation="true">
-                <div class="modal-title">Over Capacity Warning</div>
-                <p class="modal-body">
-                    Adding <strong>@_overCapacityPending.TaskLabel</strong> to
-                    <strong>@_overCapacityPending.MemberName</strong> exceeds the
-                    @MaxHoursPerDay h/day limit — not enough free capacity from
-                    @($"{_overCapacityPending.StartDate:dd-MMM}").
-                    <br />Schedule anyway (days may exceed @MaxHoursPerDay h)?
-                </p>
-                <div class="modal-actions">
-                    <button class="btn primary" @onclick="ConfirmOverCapacity">Yes, schedule anyway</button>
-                    <button class="btn" @onclick="CancelOverCapacity">No, cancel</button>
+        <div class="modal-backdrop" @onclick="CancelOverCapacity"></div>
+        <div class="modal-dialog">
+            <div class="modal-title">Over Capacity Warning</div>
+            <p class="modal-body">
+                Adding <strong>@_overCapacityPending.TaskLabel</strong> to
+                <strong>@_overCapacityPending.MemberName</strong> exceeds the
+                @MaxHoursPerDay h/day limit — not enough free capacity from
+                @($"{_overCapacityPending.StartDate:dd-MMM}").
+                <br />Schedule anyway (days may exceed @MaxHoursPerDay h)?
+            </p>
+            <div class="modal-actions">
+                <button class="btn primary" @onclick="ConfirmOverCapacity">Yes, schedule anyway</button>
+                <button class="btn" @onclick="CancelOverCapacity">No, cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_showRemovalDialog)
+    {
+        <div class="modal-backdrop" @onclick="CancelRemoval"></div>
+        <div class="modal-dialog">
+            <div class="modal-title">Remove Assignment</div>
+            <p class="modal-body">
+                Remove <strong>@_removalPendingTaskLabel</strong> from
+                <strong>@_removalPendingMemberName</strong>?
+            </p>
+            <textarea class="modal-reason-input"
+                      placeholder="Reason for removal (optional)"
+                      @bind="_removalReason"
+                      rows="3"></textarea>
+            <div class="modal-actions">
+                <button class="btn danger" @onclick="ConfirmRemovalAsync">Remove</button>
+                <button class="btn" @onclick="CancelRemoval">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (_showRemovalLogsDialog)
+    {
+        <div class="modal-backdrop" @onclick="CloseRemovalLogs"></div>
+        <div class="modal-dialog modal-dialog-lg">
+            <div class="modal-header-row">
+                <span class="modal-title">Removal Log — @SprintName</span>
+                <button class="modal-close-btn" @onclick="CloseRemovalLogs">✕</button>
+            </div>
+            @if (_isLoadingLogs)
+            {
+                <p class="modal-body">Loading…</p>
+            }
+            else if (_removalLogs.Count == 0)
+            {
+                <p class="modal-body">No removals logged for this sprint plan.</p>
+            }
+            else
+            {
+                <div class="removal-logs-wrap">
+                    <table class="removal-logs-table">
+                        <thead>
+                            <tr>
+                                <th>Removed At</th>
+                                <th>Task</th>
+                                <th>Member</th>
+                                <th>Reason</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var log in _removalLogs)
+                            {
+                                <tr>
+                                    <td class="rl-date">@log.RemovedAt.ToString("dd-MMM HH:mm")</td>
+                                    <td class="rl-task">@log.TaskLabel</td>
+                                    <td class="rl-member">@log.MemberName</td>
+                                    <td class="rl-reason">@(string.IsNullOrWhiteSpace(log.Reason) ? "—" : log.Reason)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
                 </div>
+            }
+            <div class="modal-actions">
+                <button class="btn" @onclick="CloseRemovalLogs">Close</button>
             </div>
         </div>
     }
@@ -704,6 +774,18 @@
     private record OverCapacityPending(
         int TaskId, Guid MemberId, decimal TotalHours, DateOnly StartDate, string TaskLabel, string MemberName);
     private OverCapacityPending? _overCapacityPending;
+
+    // ── Removal dialog ──
+    private bool             _showRemovalDialog      = false;
+    private Guid             _removalPendingGroupId;
+    private string           _removalPendingTaskLabel  = "";
+    private string           _removalPendingMemberName = "";
+    private string _removalReason = "";
+
+    // ── Removal logs dialog ──
+    private bool                       _showRemovalLogsDialog = false;
+    private bool                       _isLoadingLogs         = false;
+    private List<SprintPlanRemovalLog> _removalLogs           = new();
 
     private const decimal MaxHoursPerDay = 6m;
     private const decimal HoursPerDay = 6m;
@@ -1553,9 +1635,62 @@
 
     private void RemoveBlock(Guid groupId)
     {
-        Allocations.RemoveAll(a => a.GroupId == groupId);
+        var sample = Allocations.FirstOrDefault(a => a.GroupId == groupId);
+        if (sample is null) return;
+
+        // No version history means the sprint is still being planned for the first time —
+        // remove silently without prompting for a reason or writing a log entry.
+        if (_planVersions.Count == 0)
+        {
+            Allocations.RemoveAll(a => a.GroupId == groupId);
+            InfoMessage = "Assignment removed.";
+            return;
+        }
+
+        _removalPendingGroupId    = groupId;
+        _removalPendingTaskLabel  = GetTaskLabel(sample.TaskId);
+        _removalPendingMemberName = TeamMembers.FirstOrDefault(m => m.Id == sample.TeamMemberId)?.Name ?? "Unknown";
+        _showRemovalDialog = true;
+        _removalReason = "";
+    }
+
+    private async Task ConfirmRemovalAsync()
+    {
+        _showRemovalDialog = false;
+
+        if (_currentPlanId.HasValue)
+        {
+            var log = await PlanService.LogRemovalAsync(new SprintPlanRemovalLog
+            {
+                SprintPlanId = _currentPlanId.Value,
+                GroupId      = _removalPendingGroupId,
+                TaskLabel    = _removalPendingTaskLabel,
+                MemberName   = _removalPendingMemberName,
+                Reason       = _removalReason,
+            });
+            _removalLogs.Insert(0, log);
+        }
+
+        Allocations.RemoveAll(a => a.GroupId == _removalPendingGroupId);
         InfoMessage = "Assignment removed.";
     }
+
+    private void CancelRemoval()
+    {
+        _showRemovalDialog = false;
+        _removalReason     = "";
+    }
+
+    private async Task OpenRemovalLogsAsync()
+    {
+        if (!_currentPlanId.HasValue) return;
+        _isLoadingLogs         = true;
+        _showRemovalLogsDialog = true;
+        _removalLogs = await PlanService.GetRemovalLogsAsync(_currentPlanId.Value);
+        _isLoadingLogs = false;
+    }
+
+    private void CloseRemovalLogs() => _showRemovalLogsDialog = false;
 
     // ───────────────────────────────────────────────────────────
     // Block positioning helpers
@@ -2987,18 +3122,53 @@ private static decimal ParseJiraDurationToHours(string? input)
         display: inline-block;
     }
 
+    /* ─── Modals ─── */
+    .modal-reason-input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 13px;
+        color: #374151;
+        resize: vertical;
+        margin-bottom: 16px;
+        font-family: inherit;
+    }
+
+    .modal-reason-input:focus {
+        outline: none;
+        border-color: #6366f1;
+        box-shadow: 0 0 0 2px rgba(99,102,241,0.15);
+    }
+
+    .btn.danger {
+        background: #ef4444;
+        color: #fff;
+        border: none;
+    }
+
+    .btn.danger:hover {
+        background: #dc2626;
+    }
+
     /* ─── Over-capacity modal ─── */
-    .modal-overlay {
+
+    .modal-backdrop {
+        pointer-events: auto;
         position: fixed;
         inset: 0;
         background: rgba(0, 0, 0, 0.45);
-        display: flex;
-        align-items: center;
-        justify-content: center;
         z-index: 1000;
     }
 
     .modal-dialog {
+        pointer-events: auto;
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 1001;
         background: #fff;
         border-radius: 14px;
         padding: 28px 32px;
@@ -3021,11 +3191,76 @@ private static decimal ParseJiraDurationToHours(string? input)
         margin-bottom: 20px;
     }
 
+    .modal-dialog.modal-dialog-lg {
+        max-width: 700px;
+    }
+
+    .modal-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+    }
+
+    .modal-header-row .modal-title { margin-bottom: 0; }
+
+    .modal-close-btn {
+        background: none;
+        border: none;
+        font-size: 16px;
+        cursor: pointer;
+        color: #6b7280;
+        padding: 2px 6px;
+        border-radius: 4px;
+        line-height: 1;
+    }
+
+    .modal-close-btn:hover { color: #111827; background: #f3f4f6; }
+
     .modal-actions {
         display: flex;
         gap: 10px;
         justify-content: flex-end;
     }
+
+    /* ─── Removal logs table ─── */
+    .removal-logs-wrap {
+        max-height: 360px;
+        overflow-y: auto;
+        margin-bottom: 16px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+    }
+
+    .removal-logs-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .removal-logs-table th {
+        background: #f3f4f6;
+        padding: 8px 10px;
+        text-align: left;
+        font-weight: 600;
+        color: #374151;
+        border-bottom: 1px solid #e5e7eb;
+        position: sticky;
+        top: 0;
+    }
+
+    .removal-logs-table td {
+        padding: 8px 10px;
+        border-bottom: 1px solid #f3f4f6;
+        color: #374151;
+        vertical-align: top;
+    }
+
+    .removal-logs-table tr:last-child td { border-bottom: none; }
+
+    .rl-date   { white-space: nowrap; color: #6b7280; font-size: 12px; }
+    .rl-member { white-space: nowrap; font-weight: 500; }
+    .rl-reason { color: #6b7280; font-style: italic; }
 
     /* ─── Version history panel ─── */
     .spd-versions-panel {

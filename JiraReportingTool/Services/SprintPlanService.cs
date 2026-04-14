@@ -104,4 +104,20 @@ public class SprintPlanService(AppDbContext db) : ISprintPlanService
           .Where(v => v.SprintPlanId == planId)
           .OrderByDescending(v => v.VersionNumber)
           .ToListAsync();
+
+    // ── Removal log ───────────────────────────────────────────────────────────
+
+    public async Task<SprintPlanRemovalLog> LogRemovalAsync(SprintPlanRemovalLog log)
+    {
+        log.RemovedAt = DateTime.UtcNow;
+        db.SprintPlanRemovalLogs.Add(log);
+        await db.SaveChangesAsync();
+        return log;
+    }
+
+    public Task<List<SprintPlanRemovalLog>> GetRemovalLogsAsync(int planId) =>
+        db.SprintPlanRemovalLogs
+          .Where(l => l.SprintPlanId == planId)
+          .OrderByDescending(l => l.RemovedAt)
+          .ToListAsync();
 }

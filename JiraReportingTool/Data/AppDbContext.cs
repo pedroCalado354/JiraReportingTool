@@ -19,6 +19,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<SprintPlanHoliday>    SprintPlanHolidays    => Set<SprintPlanHoliday>();
     public DbSet<SprintPlanTimeOff>    SprintPlanTimeOffs    => Set<SprintPlanTimeOff>();
     public DbSet<SprintPlanVersion>    SprintPlanVersions    => Set<SprintPlanVersion>();
+    public DbSet<SprintPlanRemovalLog> SprintPlanRemovalLogs => Set<SprintPlanRemovalLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -110,6 +111,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasOne<SprintPlanHeader>()
             .WithMany()
             .HasForeignKey(v => v.SprintPlanId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        // ── SprintPlanRemovalLog → SprintPlanHeader (cascade delete) ─────────
+        modelBuilder.Entity<SprintPlanRemovalLog>()
+            .HasOne<SprintPlanHeader>()
+            .WithMany()
+            .HasForeignKey(l => l.SprintPlanId)
             .OnDelete(DeleteBehavior.Cascade);
     }
 }
