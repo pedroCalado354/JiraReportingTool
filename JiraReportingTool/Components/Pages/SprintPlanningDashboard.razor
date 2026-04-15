@@ -290,10 +290,10 @@
                                                 @if (isAssigned)
                                                 {
                                                     <span class="badge-assigned">✓</span>
-                                                    @if (assignee is not null)
+                                                    @* @if (assignee is not null)
                                                     {
                                                         <span class="badge-assignee-name" title="@assignee">@assignee</span>
-                                                    }
+                                                    } *@
                                                 }
                                                 <span class="task-est-label">@FormatTaskHours(task)</span>
                                             </div>
@@ -567,7 +567,6 @@
                                                              @onclick:stopPropagation="true">
                                                             <div class="stacked-block-content">
                                                                 <span class="stacked-block-title">@GetTaskShortLabel(blk.TaskId)</span>
-                                                                <span class="stacked-block-hours">@($"{blkHours:0.#}h")</span>
                                                             </div>
                                                             <button class="btn-remove" @onclick="() => RemoveBlock(blk.GroupId)" @onclick:stopPropagation="true">✕</button>
                                                         </div>
@@ -739,6 +738,8 @@
 
     private List<TaskAllocation> Allocations { get; set; } = new();
     private Dictionary<int, SprintIssue> _taskCache = new();
+    // Fallback labels loaded from persisted SprintPlanAllocation.TaskLabel when _taskCache misses.
+    private Dictionary<int, string> _taskLabelFallback = new();
     private HashSet<DateOnly> Holidays { get; set; } = new();
     private Dictionary<Guid, HashSet<DateOnly>> MemberTimeOff { get; set; } = new();
     private bool TimeOffMode { get; set; } = false;
@@ -1035,6 +1036,7 @@
         SprintName        = "";
         LoadedEpics.Clear();
         _taskCache.Clear();
+        _taskLabelFallback.Clear();
         Allocations.Clear();
         _customTasks.Clear();
         Holidays.Clear();
@@ -1079,9 +1081,15 @@
         // Reload epics from cache/Jira
         LoadedEpics.Clear();
         _taskCache.Clear();
+        _taskLabelFallback.Clear();
         var epicKeys = plan.LoadedEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
         foreach (var key in epicKeys)
             await LoadEpicByKey(key);
+
+        // Seed fallback labels from persisted allocations so tasks missing from _taskCache still display correctly.
+        foreach (var a in plan.Allocations)
+            if (a.TaskId > 0 && !string.IsNullOrWhiteSpace(a.TaskLabel) && !_taskLabelFallback.ContainsKey(a.TaskId))
+                _taskLabelFallback[a.TaskId] = a.TaskLabel;
 
         // Restore custom tasks
         _customTasks.Clear();
@@ -1757,7 +1765,8 @@
     private string GetTaskLabel(int taskId)
     {
         if (_customTasks.TryGetValue(taskId, out var ct)) return $"{ct.Category}: {ct.Name} ({ct.Hours}h)";
-        if (!_taskCache.TryGetValue(taskId, out var t)) return $"Task #{taskId}";
+        if (!_taskCache.TryGetValue(taskId, out var t))
+            return _taskLabelFallback.TryGetValue(taskId, out var fb) ? fb : $"Task #{taskId}";
         return $"{t.Key} - {t.Summary} (Est: {t.OriginalEstimate})";
     }
 
@@ -1768,7 +1777,22 @@
             var n = ct.Name.Length > 22 ? ct.Name[..22] + "…" : ct.Name;
             return $"{ct.Category}: {n}";
         }
-        if (!_taskCache.TryGetValue(taskId, out var t)) return $"#{taskId}";
+        if (!_taskCache.TryGetValue(taskId, out var t))
+        {
+            if (!_taskLabelFallback.TryGetValue(taskId, out var fb)) return $"#{taskId}";
+            // Stored format: "KEY - SUMMARY (Est: X)" — extract key and summary for short display.
+            var sepIdx = fb.IndexOf(" - ", StringComparison.Ordinal);
+            if (sepIdx > 0)
+            {
+                var key  = fb[..sepIdx];
+                var rest = fb[(sepIdx + 3)..];
+                var estIdx = rest.LastIndexOf(" (Est:", StringComparison.Ordinal);
+                var summary = estIdx > 0 ? rest[..estIdx] : rest;
+                summary = summary.Length > 28 ? summary[..28] + "…" : summary;
+                return $"{key}: {summary}";
+            }
+            return fb.Length > 28 ? fb[..28] + "…" : fb;
+        }
         var s = t.Summary?.Length > 28 ? t.Summary[..28] + "…" : t.Summary ?? "";
         return $"{t.Key}: {s}";
     }
@@ -1776,14 +1800,32 @@
     private string GetTaskKeyFromCache(int taskId)
     {
         if (_customTasks.TryGetValue(taskId, out var ct)) return ct.Category;
-        return _taskCache.TryGetValue(taskId, out var t) ? t.Key : $"#{taskId}";
+        if (_taskCache.TryGetValue(taskId, out var t)) return t.Key;
+        if (_taskLabelFallback.TryGetValue(taskId, out var fb))
+        {
+            var sepIdx = fb.IndexOf(" - ", StringComparison.Ordinal);
+            return sepIdx > 0 ? fb[..sepIdx] : fb;
+        }
+        return $"#{taskId}";
     }
 
     private string GetTaskSummaryShort(int taskId)
     {
         if (_customTasks.TryGetValue(taskId, out var ct))
             return ct.Name.Length > 40 ? ct.Name[..40] + "…" : ct.Name;
-        if (!_taskCache.TryGetValue(taskId, out var t)) return "Unknown task";
+        if (!_taskCache.TryGetValue(taskId, out var t))
+        {
+            if (!_taskLabelFallback.TryGetValue(taskId, out var fb)) return "Unknown task";
+            var sepIdx = fb.IndexOf(" - ", StringComparison.Ordinal);
+            if (sepIdx > 0)
+            {
+                var rest   = fb[(sepIdx + 3)..];
+                var estIdx = rest.LastIndexOf(" (Est:", StringComparison.Ordinal);
+                var summary = estIdx > 0 ? rest[..estIdx] : rest;
+                return summary.Length > 40 ? summary[..40] + "…" : summary;
+            }
+            return fb.Length > 40 ? fb[..40] + "…" : fb;
+        }
         return t.Summary?.Length > 40 ? t.Summary[..40] + "…" : t.Summary ?? "";
     }
 
