@@ -603,6 +603,32 @@
         </div>
     }
 
+    @if (_showNoEstimateDialog && _noEstimatePending is not null)
+    {
+        <div class="modal-backdrop" @onclick="CancelNoEstimate"></div>
+        <div class="modal-dialog">
+            <div class="modal-title">No Estimate — Enter Hours</div>
+            <p class="modal-body">
+                <strong>@_noEstimatePending.TaskLabel</strong> has no estimate.
+                How many hours should be scheduled for <strong>@_noEstimatePending.MemberName</strong>
+                from <strong>@($"{_noEstimatePending.StartDate:dd-MMM}")</strong>?
+            </p>
+            <input class="modal-hours-input"
+                   type="number" min="0.5" step="0.5"
+                   placeholder="e.g. 4"
+                   @bind="_noEstimateHoursInput"
+                   @onkeydown="@(async e => { if (e.Key == "Enter") ConfirmNoEstimate(); })" />
+            @if (_noEstimateError is not null)
+            {
+                <p class="modal-error">@_noEstimateError</p>
+            }
+            <div class="modal-actions">
+                <button class="btn primary" @onclick="ConfirmNoEstimate">Schedule</button>
+                <button class="btn" @onclick="CancelNoEstimate">Cancel</button>
+            </div>
+        </div>
+    }
+
     @if (_showRemovalDialog)
     {
         <div class="modal-backdrop" @onclick="CancelRemoval"></div>
@@ -782,6 +808,13 @@
     private string           _removalPendingTaskLabel  = "";
     private string           _removalPendingMemberName = "";
     private string _removalReason = "";
+
+    // ── No-estimate dialog ──
+    private bool   _showNoEstimateDialog = false;
+    private record NoEstimatePending(int TaskId, Guid MemberId, DateOnly StartDate, string TaskLabel, string MemberName);
+    private NoEstimatePending? _noEstimatePending;
+    private string  _noEstimateHoursInput = "";
+    private string? _noEstimateError      = null;
 
     // ── Removal logs dialog ──
     private bool                       _showRemovalLogsDialog = false;
@@ -1361,8 +1394,12 @@
 
         if (totalHoursResolved <= 0m)
         {
-            ErrorMessage = $"'{taskLabel}' has no estimate — cannot schedule.";
-            PendingPlacement = null;
+            var memberName2 = TeamMembers.First(x => x.Id == memberId).Name;
+            _noEstimatePending    = new NoEstimatePending(activeTaskId!.Value, memberId, startDate, taskLabel, memberName2);
+            _noEstimateHoursInput = "";
+            _noEstimateError      = null;
+            _showNoEstimateDialog = true;
+            PendingPlacement      = null;
             return;
         }
 
@@ -1463,6 +1500,50 @@
     {
         _overCapacityPending    = null;
         _showOverCapacityDialog = false;
+        InfoMessage = "Scheduling cancelled.";
+    }
+
+    // ───────────────────────────────────────────────────────────
+    // No-estimate dialog handlers
+    // ───────────────────────────────────────────────────────────
+    private void ConfirmNoEstimate()
+    {
+        if (_noEstimatePending is null) return;
+
+        if (!decimal.TryParse(_noEstimateHoursInput, System.Globalization.NumberStyles.Any,
+                System.Globalization.CultureInfo.InvariantCulture, out var hours) || hours <= 0m)
+        {
+            _noEstimateError = "Please enter a valid number of hours greater than 0.";
+            return;
+        }
+
+        var p          = _noEstimatePending;
+        var newAllocs  = ScheduleTask(p.TaskId, p.MemberId, hours, p.StartDate);
+        var scheduled  = newAllocs.Sum(a => a.HoursAllocated);
+
+        if (scheduled < hours)
+        {
+            _showNoEstimateDialog = false;
+            _showOverCapacityDialog = true;
+            _overCapacityPending = new OverCapacityPending(p.TaskId, p.MemberId, hours, p.StartDate, p.TaskLabel, p.MemberName);
+            _noEstimatePending   = null;
+            return;
+        }
+
+        Allocations.AddRange(newAllocs);
+        var lastDate = newAllocs.Max(a => a.Date);
+        InfoMessage = $"Scheduled '{p.TaskLabel}' for {p.MemberName}: {hours:0.#}h from {p.StartDate:dd-MMM} → {lastDate:dd-MMM}.";
+        SelectedTask         = null;
+        SelectedCustomTaskId = null;
+        _noEstimatePending    = null;
+        _showNoEstimateDialog = false;
+    }
+
+    private void CancelNoEstimate()
+    {
+        _noEstimatePending    = null;
+        _showNoEstimateDialog = false;
+        _noEstimateError      = null;
         InfoMessage = "Scheduling cancelled.";
     }
 
@@ -3182,6 +3263,30 @@ private static decimal ParseJiraDurationToHours(string? input)
         outline: none;
         border-color: #6366f1;
         box-shadow: 0 0 0 2px rgba(99,102,241,0.15);
+    }
+
+    .modal-hours-input {
+        width: 100%;
+        box-sizing: border-box;
+        border: 1px solid #d1d5db;
+        border-radius: 8px;
+        padding: 8px 10px;
+        font-size: 14px;
+        color: #374151;
+        margin-bottom: 10px;
+        font-family: inherit;
+    }
+
+    .modal-hours-input:focus {
+        outline: none;
+        border-color: #6366f1;
+        box-shadow: 0 0 0 2px rgba(99,102,241,0.15);
+    }
+
+    .modal-error {
+        font-size: 12px;
+        color: #ef4444;
+        margin: 0 0 12px;
     }
 
     .btn.danger {
