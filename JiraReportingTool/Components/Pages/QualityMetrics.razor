@@ -96,7 +96,10 @@
         <!-- ── Epic cards ─────────────────────────────────────────────────────── -->
         @if (DrillEpicKey == null && SprintEpics.Any())
         {
-            <div class="qm-section-label">Epics in Sprint — click to explore all epic issues</div>
+            <div class="qm-section-label">
+                Epics in loaded scope
+                <span class="qm-section-note">Issue counts reflect the loaded sprint/filter only — click a card to see all epic issues across all sprints</span>
+            </div>
             <div class="qm-epic-grid">
                 @foreach (var epic in SprintEpics)
                 {
@@ -112,7 +115,7 @@
                         </div>
                         <div class="qm-epic-key">@epic.Key</div>
                         <div class="qm-epic-stats">
-                            <span>@epic.TotalIssues tasks</span>
+                            <span title="Issues within the loaded sprint or filter only">@epic.TotalIssues in scope</span>
                             @if (bugCount > 0)
                             { <span class="qm-epic-bug-count">@bugCount bug@(bugCount != 1 ? "s" : "")</span> }
                             else
@@ -137,7 +140,26 @@
                         @foreach (var a in AssigneeOptions)
                         { <option value="@a">@a</option> }
                     </select>
-                    @if (!string.IsNullOrEmpty(FilterAssignee))
+
+                    <div class="qm-filter-sep"></div>
+
+                    <label class="qm-label">Status</label>
+                    <select class="qm-select" @bind="FilterStatus" @bind:after="StateHasChanged">
+                        <option value="">All statuses</option>
+                        @foreach (var s in StatusOptions)
+                        { <option value="@s">@s</option> }
+                    </select>
+
+                    <div class="qm-filter-sep"></div>
+
+                    <label class="qm-label">Priority</label>
+                    <select class="qm-select" @bind="FilterPriority" @bind:after="StateHasChanged">
+                        <option value="">All priorities</option>
+                        @foreach (var p in PriorityOptions)
+                        { <option value="@p">@p</option> }
+                    </select>
+
+                    @if (!string.IsNullOrEmpty(FilterAssignee) || !string.IsNullOrEmpty(FilterStatus) || !string.IsNullOrEmpty(FilterPriority))
                     {
                         <button class="qm-btn-ghost" @onclick="ClearFilters">✕ Clear</button>
                     }
@@ -592,6 +614,8 @@
     // ── UI filters ────────────────────────────────────────────────────────────
     private string FilterAssignee = "";
     private string AssigneeSearch = "";
+    private string FilterStatus   = "";
+    private string FilterPriority = "";
 
     // ── Computed scope ────────────────────────────────────────────────────────
     private SprintReport? ActiveReport => DrillEpicKey != null ? EpicAllIssues : SprintData;
@@ -604,8 +628,18 @@
         .Where(a => string.IsNullOrEmpty(AssigneeSearch) || a.Contains(AssigneeSearch, StringComparison.OrdinalIgnoreCase))
         ?? Enumerable.Empty<string>();
 
+    private IEnumerable<string> StatusOptions => ActiveReport?.Issues
+        .Select(i => i.Status).Distinct().OrderBy(s => s)
+        ?? Enumerable.Empty<string>();
+
+    private IEnumerable<string> PriorityOptions => ActiveReport?.Issues
+        .Select(i => i.Priority).Distinct().OrderBy(p => PrioritySortOrder(p))
+        ?? Enumerable.Empty<string>();
+
     private List<SprintIssue> ActiveFilteredIssues => ActiveReport?.Issues
         .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee)
+        .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status   == FilterStatus)
+        .Where(i => string.IsNullOrEmpty(FilterPriority) || i.Priority == FilterPriority)
         .ToList() ?? [];
 
     // ── Issue type classification ─────────────────────────────────────────────
@@ -773,7 +807,7 @@
         IsLoading = true; ErrorMessage = null;
         SprintData = null; EpicAllIssues = null;
         DrillEpicKey = null; DrillEpicName = null;
-        FilterAssignee = ""; AssigneeSearch = "";
+        FilterAssignee = ""; AssigneeSearch = ""; FilterStatus = ""; FilterPriority = "";
         try
         {
             if (!string.IsNullOrEmpty(SelectedFilterId))
@@ -794,7 +828,7 @@
     private async Task DrillIntoEpic(EpicSummary epic)
     {
         DrillEpicKey = epic.Key; DrillEpicName = epic.DisplayName;
-        FilterAssignee = ""; AssigneeSearch = "";
+        FilterAssignee = ""; AssigneeSearch = ""; FilterStatus = ""; FilterPriority = "";
         EpicLoading = true; EpicAllIssues = null; ErrorMessage = null;
         StateHasChanged();
         try { EpicAllIssues = await JiraService.GetAllEpicIssuesAsync(epic.Key); }
@@ -805,12 +839,12 @@
     private void BackToSprint()
     {
         DrillEpicKey = null; DrillEpicName = null; EpicAllIssues = null;
-        FilterAssignee = ""; AssigneeSearch = ""; ErrorMessage = null;
+        FilterAssignee = ""; AssigneeSearch = ""; FilterStatus = ""; FilterPriority = ""; ErrorMessage = null;
     }
 
     private async Task HandleKeyUp(KeyboardEventArgs e) { if (e.Key == "Enter") await LoadData(); }
 
-    private void ClearFilters() { FilterAssignee = ""; AssigneeSearch = ""; }
+    private void ClearFilters() { FilterAssignee = ""; AssigneeSearch = ""; FilterStatus = ""; FilterPriority = ""; }
 
     // ── Display helpers ───────────────────────────────────────────────────────
     private static string BugRateClass(double r)  => r > 50 ? "qm-red" : r > 25 ? "qm-orange" : "qm-green";
@@ -951,6 +985,7 @@
         letter-spacing: .6px; margin: 20px 0 10px; display: flex; align-items: center; gap: 8px;
     }
     .qm-section-chip { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; text-transform: none; letter-spacing: 0; }
+    .qm-section-note { font-size: 11px; font-weight: 400; color: #9ca3af; text-transform: none; letter-spacing: 0; }
 
     /* ─── Chips / badges ─────────────────────────────────────────────────────── */
     .qm-chip { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; display: inline-block; }
@@ -1005,6 +1040,7 @@
         padding: 10px 16px; margin-bottom: 16px; gap: 12px; flex-wrap: wrap;
     }
     .qm-filter-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .qm-filter-sep { width: 1px; height: 20px; background: #e5e7eb; margin: 0 4px; flex-shrink: 0; }
     .qm-filter-count { font-size: 12px; color: #9ca3af; white-space: nowrap; }
 
     /* ─── Quality Health Banner ──────────────────────────────────────────────── */

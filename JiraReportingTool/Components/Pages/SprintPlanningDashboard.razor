@@ -219,8 +219,11 @@
                 <button class="view-toggle-btn @(ViewMode == "calendar" ? "active" : "")" @onclick="SetCalendarView">
                     Calendar
                 </button>
-                <button class="view-toggle-btn @(ViewMode == "workload" ? "active" : "")" @onclick="SetWorkloadView">
-                    Workload
+                <button class="view-toggle-btn @(ViewMode == "report" ? "active" : "")" @onclick="SetReportView">
+                    Report
+                </button>
+                <button class="view-toggle-btn @(ViewMode == "daily" ? "active" : "")" @onclick="SetDailyView">
+                    Daily
                 </button>
             </div>
         </div>
@@ -393,58 +396,218 @@
                 </div>
             }
 
-            @if (ViewMode == "workload")
+            @if (ViewMode == "report")
             {
-                <!-- ═ WORKLOAD VIEW ═══════════════════════════════════════════ -->
-                <div class="workload-container">
-                    @foreach (var teamGroup in GetFilteredMembersByTeam())
+                <!-- ═ REPORT VIEW ════════════════════════════════════════════ -->
+                <div class="rpt-container">
+                    @if (Allocations.Count == 0)
                     {
-                        var tName = teamGroup.Key;
-                        var tCapacity = GetTeamCapacityHours(tName);
-                        var tAllocated = GetTeamAllocatedHours(tName);
-                        var tPct = tCapacity > 0m ? (double)(tAllocated / tCapacity * 100m) : 0.0;
-                        <div class="wl-team-block">
-                            <div class="wl-team-header">
-                                <span class="wl-team-name">@tName</span>
-                                <span class="wl-team-stats">@($"{tAllocated:0.#}h / {tCapacity:0.#}h ({tPct:0}%)")</span>
-                            </div>
-                            @foreach (var member in teamGroup)
-                            {
-                                var mem = member;
-                                var mCapacity = GetMemberSprintCapacity(mem.Id);
-                                var mAllocated = GetMemberSprintAllocated(mem.Id);
-                                var mPct = mCapacity > 0m ? (double)(mAllocated / mCapacity * 100m) : 0.0;
-                                var mBlocks = GetMemberAssignedBlocks(mem.Id);
-                                <div class="wl-member-card">
-                                    <div class="wl-member-head">
-                                        <span class="wl-member-name">@mem.Name</span>
-                                        <span class="wl-member-util">@($"{mAllocated:0.#}h / {mCapacity:0.#}h ({mPct:0}%)")</span>
-                                    </div>
-                                    <div class="wl-bar-track">
-                                        <div class="wl-bar-fill @GetCapacityBarClass(mPct)" style="width:@(Math.Min(mPct, 100).ToString("F1", CultureInfo.InvariantCulture))%;"></div>
-                                    </div>
-                                    @if (mBlocks.Count > 0)
+                        <div class="empty-state">No tasks assigned yet — schedule tasks on the calendar first.</div>
+                    }
+                    else
+                    {
+                        <table class="rpt-table">
+                            <thead>
+                                <tr>
+                                    <th class="rpt-th rpt-th-assignee">Assignee</th>
+                                    <th class="rpt-th rpt-th-key">Key</th>
+                                    <th class="rpt-th rpt-th-title">Title</th>
+                                    <th class="rpt-th rpt-th-status">Status</th>
+                                    <th class="rpt-th rpt-th-est">Original Est.</th>
+                                    <th class="rpt-th rpt-th-est">Remaining</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var teamGroup in GetFilteredMembersByTeam())
+                                {
+                                    var rptTeamName = teamGroup.Key;
+                                    <tr class="rpt-team-row">
+                                        <td colspan="6" class="rpt-team-cell">@rptTeamName</td>
+                                    </tr>
+                                    @foreach (var mem in teamGroup)
                                     {
-                                        <div class="wl-chips">
-                                            @foreach (var blk in mBlocks)
+                                        var rptMem = mem;
+                                        var memberRows = GetReportRowsForMember(rptMem.Id);
+                                        @if (memberRows.Count == 0)
+                                        {
+                                            <tr class="rpt-row">
+                                                <td class="rpt-td rpt-td-assignee">@rptMem.Name</td>
+                                                <td class="rpt-td" colspan="5" style="color:#9ca3af;font-style:italic;">No tasks assigned</td>
+                                            </tr>
+                                        }
+                                        else
+                                        {
+                                            @foreach (var (row, idx) in memberRows.Select((r, i) => (r, i)))
                                             {
-                                                var b = blk;
-                                                var blkHours = Allocations.Where(a => a.GroupId == b.GroupId).Sum(a => a.HoursAllocated);
-                                                <div class="wl-chip">
-                                                    <span class="wl-chip-key">@GetTaskKeyFromCache(b.TaskId)</span>
-                                                    <span class="wl-chip-summary">@GetTaskSummaryShort(b.TaskId)</span>
-                                                    <span class="wl-chip-meta">@b.From.ToString("dd-MMM") → @b.To.ToString("dd-MMM") · @($"{blkHours:0.#}h")</span>
-                                                    <button class="wl-chip-remove" @onclick="() => RemoveBlock(b.GroupId)" title="Remove">✕</button>
-                                                </div>
+                                                <tr class="rpt-row">
+                                                    <td class="rpt-td rpt-td-assignee">@(idx == 0 ? rptMem.Name : "")</td>
+                                                    @if (row.IsCustom)
+                                                    {
+                                                        <td class="rpt-td rpt-td-key">
+                                                            <span class="rpt-custom-badge" style="background:@row.CustomColor">@row.CustomCategory</span>
+                                                        </td>
+                                                        <td class="rpt-td rpt-td-title">@row.Title</td>
+                                                        <td class="rpt-td rpt-td-dash">—</td>
+                                                        <td class="rpt-td rpt-td-dash">@($"{row.CustomHours:0.#}h")</td>
+                                                        <td class="rpt-td rpt-td-dash">—</td>
+                                                    }
+                                                    else
+                                                    {
+                                                        <td class="rpt-td rpt-td-key">
+                                                            <span class="rpt-jira-key">@row.Key</span>
+                                                        </td>
+                                                        <td class="rpt-td rpt-td-title">@row.Title</td>
+                                                        <td class="rpt-td">
+                                                            <span class="rpt-status-chip @GetStatusClass(row.Status)">@(string.IsNullOrEmpty(row.Status) ? "—" : row.Status)</span>
+                                                        </td>
+                                                        <td class="rpt-td rpt-td-est">@(string.IsNullOrEmpty(row.OriginalEstimate) || row.OriginalEstimate == "-" ? "—" : row.OriginalEstimate)</td>
+                                                        <td class="rpt-td rpt-td-est">@(string.IsNullOrEmpty(row.RemainingEstimate) || row.RemainingEstimate == "-" ? "—" : row.RemainingEstimate)</td>
+                                                    }
+                                                </tr>
                                             }
-                                        </div>
+                                        }
                                     }
-                                    else
-                                    {
-                                        <div class="wl-no-tasks">No tasks assigned</div>
-                                    }
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            }
+            else if (ViewMode == "daily")
+            {
+                <!-- ═ DAILY VIEW ══════════════════════════════════════════════ -->
+                <div class="daily-container">
+                    @{
+                        var dm = GetDailyMetrics();
+                    }
+
+                    <!-- Top KPI row -->
+                    <div class="daily-kpi-row">
+                        <div class="daily-kpi-card">
+                            <div class="daily-kpi-value @(dm.TaskPct >= 80 ? "kpi-green" : dm.TaskPct >= 40 ? "kpi-amber" : "kpi-red")">
+                                @($"{dm.TaskPct:0}%")
+                            </div>
+                            <div class="daily-kpi-label">Tasks Completed</div>
+                            <div class="daily-kpi-sub">@dm.DoneCount of @dm.TotalCount tasks</div>
+                        </div>
+                        <div class="daily-kpi-card">
+                            <div class="daily-kpi-value @(dm.HoursPct >= 80 ? "kpi-green" : dm.HoursPct >= 40 ? "kpi-amber" : "kpi-red")">
+                                @($"{dm.HoursPct:0}%")
+                            </div>
+                            <div class="daily-kpi-label">Estimated Work Done</div>
+                            <div class="daily-kpi-sub">Hours-based · custom tasks excluded</div>
+                        </div>
+                        <div class="daily-kpi-card">
+                            <div class="daily-kpi-value kpi-neutral">@dm.NoRemainingCount</div>
+                            <div class="daily-kpi-label">Missing Remaining Est.</div>
+                            <div class="daily-kpi-sub">In progress / to do with no remaining est.</div>
+                        </div>
+                        <div class="daily-kpi-card">
+                            <div class="daily-kpi-value @(dm.BlockedCount > 0 ? "kpi-red" : "kpi-green")">@dm.BlockedCount</div>
+                            <div class="daily-kpi-label">Blocked</div>
+                            <div class="daily-kpi-sub">Status contains "blocked"</div>
+                        </div>
+                    </div>
+
+                    <!-- Status breakdown -->
+                    <div class="daily-section">
+                        <div class="daily-section-title">Tasks by Status</div>
+                        <div class="daily-status-grid">
+                            @foreach (var (status, count) in dm.ByStatus.OrderByDescending(x => x.Value))
+                            {
+                                var sBadgeClass = GetStatusClass(status);
+                                <div class="daily-status-item">
+                                    <span class="rpt-status-chip @sBadgeClass">@status</span>
+                                    <span class="daily-status-count">@count</span>
                                 </div>
                             }
+                        </div>
+                    </div>
+
+                    <!-- Untouched tasks -->
+                    @if (dm.UntouchedTasks.Count > 0)
+                    {
+                        <div class="daily-section">
+                            <div class="daily-section-title">Untouched Tasks <span class="daily-section-sub">(remaining = original, not Done)</span></div>
+                            <table class="rpt-table">
+                                <thead>
+                                    <tr>
+                                        <th class="rpt-th rpt-th-key">Key</th>
+                                        <th class="rpt-th rpt-th-title">Title</th>
+                                        <th class="rpt-th rpt-th-status">Status</th>
+                                        <th class="rpt-th rpt-th-assignee">Assignee</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var t in dm.UntouchedTasks)
+                                    {
+                                        <tr class="rpt-row">
+                                            <td class="rpt-td rpt-td-key"><span class="rpt-jira-key">@t.Key</span></td>
+                                            <td class="rpt-td rpt-td-title">@t.Summary</td>
+                                            <td class="rpt-td"><span class="rpt-status-chip @GetStatusClass(t.Status)">@t.Status</span></td>
+                                            <td class="rpt-td rpt-td-assignee">@t.Assignee</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                    <!-- Missing remaining estimate -->
+                    @if (dm.NoRemainingTasks.Count > 0)
+                    {
+                        <div class="daily-section">
+                            <div class="daily-section-title">Missing Remaining Estimate <span class="daily-section-sub">(active tasks — need attention)</span></div>
+                            <table class="rpt-table">
+                                <thead>
+                                    <tr>
+                                        <th class="rpt-th rpt-th-key">Key</th>
+                                        <th class="rpt-th rpt-th-title">Title</th>
+                                        <th class="rpt-th rpt-th-status">Status</th>
+                                        <th class="rpt-th rpt-th-assignee">Assignee</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var t in dm.NoRemainingTasks)
+                                    {
+                                        <tr class="rpt-row">
+                                            <td class="rpt-td rpt-td-key"><span class="rpt-jira-key">@t.Key</span></td>
+                                            <td class="rpt-td rpt-td-title">@t.Summary</td>
+                                            <td class="rpt-td"><span class="rpt-status-chip @GetStatusClass(t.Status)">@t.Status</span></td>
+                                            <td class="rpt-td rpt-td-assignee">@t.Assignee</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                    <!-- Blocked tasks -->
+                    @if (dm.BlockedTasks.Count > 0)
+                    {
+                        <div class="daily-section">
+                            <div class="daily-section-title daily-section-title-danger">Blocked Tasks</div>
+                            <table class="rpt-table">
+                                <thead>
+                                    <tr>
+                                        <th class="rpt-th rpt-th-key">Key</th>
+                                        <th class="rpt-th rpt-th-title">Title</th>
+                                        <th class="rpt-th rpt-th-status">Status</th>
+                                        <th class="rpt-th rpt-th-assignee">Assignee</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var t in dm.BlockedTasks)
+                                    {
+                                        <tr class="rpt-row">
+                                            <td class="rpt-td rpt-td-key"><span class="rpt-jira-key">@t.Key</span></td>
+                                            <td class="rpt-td rpt-td-title">@t.Summary</td>
+                                            <td class="rpt-td"><span class="rpt-status-chip status-blocked">@t.Status</span></td>
+                                            <td class="rpt-td rpt-td-assignee">@t.Assignee</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
                         </div>
                     }
                 </div>
@@ -1672,7 +1835,144 @@
     private void SetTeamFilter(string team)   { ActiveTeamFilter = team; }
     private void ClearTeamFilter()            { ActiveTeamFilter = null; }
     private void SetCalendarView()            { ViewMode = "calendar"; }
-    private void SetWorkloadView()            { ViewMode = "workload"; }
+    private void SetReportView()              { ViewMode = "report"; }
+    private void SetDailyView()              { ViewMode = "daily"; }
+
+    // ── Report view helpers ──
+
+    private sealed class ReportRow
+    {
+        public bool   IsCustom          { get; init; }
+        public string Key               { get; init; } = "";
+        public string Title             { get; init; } = "";
+        public string Status            { get; init; } = "";
+        public string StatusCategoryKey { get; init; } = "";
+        public string OriginalEstimate  { get; init; } = "";
+        public string RemainingEstimate { get; init; } = "";
+        public string CustomColor       { get; init; } = "";
+        public string CustomCategory    { get; init; } = "";
+        public decimal CustomHours      { get; init; }
+    }
+
+    private List<ReportRow> GetReportRowsForMember(Guid memberId)
+    {
+        var rows = new List<ReportRow>();
+        var assignedGroups = Allocations
+            .Where(a => a.TeamMemberId == memberId)
+            .GroupBy(a => a.GroupId)
+            .Select(g => g.First().TaskId)
+            .Distinct();
+
+        foreach (var taskId in assignedGroups)
+        {
+            if (taskId < 0)
+            {
+                if (_customTasks.TryGetValue(taskId, out var ct))
+                    rows.Add(new ReportRow
+                    {
+                        IsCustom = true, Title = ct.Name,
+                        CustomColor = ct.Color, CustomCategory = ct.Category, CustomHours = ct.Hours
+                    });
+            }
+            else if (_taskCache.TryGetValue(taskId, out var issue))
+            {
+                rows.Add(new ReportRow
+                {
+                    IsCustom = false, Key = issue.Key, Title = issue.Summary,
+                    Status = issue.Status, StatusCategoryKey = issue.StatusCategoryKey,
+                    OriginalEstimate = issue.OriginalEstimate, RemainingEstimate = issue.RemainingEstimate
+                });
+            }
+            else if (_taskLabelFallback.TryGetValue(taskId, out var label))
+            {
+                rows.Add(new ReportRow { IsCustom = false, Title = label });
+            }
+        }
+
+        return rows
+            .OrderBy(r => r.IsCustom ? 3 : r.StatusCategoryKey switch
+            {
+                "indeterminate" => 0,
+                "new"           => 1,
+                "done"          => 2,
+                _               => 1
+            })
+            .ToList();
+    }
+
+    // ── Daily metrics helpers ──
+
+    private sealed class DailyMetrics
+    {
+        public int    TotalCount       { get; init; }
+        public int    DoneCount        { get; init; }
+        public double TaskPct          { get; init; }
+        public double HoursPct         { get; init; }
+        public int    NoRemainingCount { get; init; }
+        public int    BlockedCount     { get; init; }
+        public Dictionary<string, int> ByStatus    { get; init; } = new();
+        public List<SprintIssue>       UntouchedTasks   { get; init; } = new();
+        public List<SprintIssue>       NoRemainingTasks { get; init; } = new();
+        public List<SprintIssue>       BlockedTasks     { get; init; } = new();
+    }
+
+    private DailyMetrics GetDailyMetrics()
+    {
+        var assignedTaskIds = Allocations.Select(a => a.TaskId).Distinct().ToHashSet();
+
+        var jiraTasks = assignedTaskIds
+            .Where(id => id > 0 && _taskCache.ContainsKey(id))
+            .Select(id => _taskCache[id])
+            .ToList();
+
+        var customCount = assignedTaskIds.Count(id => id < 0);
+
+        int totalCount = jiraTasks.Count + customCount;
+        int doneCount  = jiraTasks.Count(t => t.StatusCategoryKey == "done");
+        double taskPct = totalCount == 0 ? 0 : (double)doneCount / totalCount * 100;
+
+        var jiraWithEst = jiraTasks.Where(t => t.OriginalEstimateSeconds > 0).ToList();
+        long totalOrigSec = jiraWithEst.Sum(t => (long)t.OriginalEstimateSeconds);
+        long totalRemSec  = jiraWithEst.Sum(t => (long)t.RemainingEstimateSeconds);
+        double hoursPct   = totalOrigSec == 0 ? 0
+            : Math.Clamp((double)(totalOrigSec - totalRemSec) / totalOrigSec * 100, 0, 100);
+
+        var byStatus = jiraTasks
+            .GroupBy(t => string.IsNullOrEmpty(t.Status) ? "Unknown" : t.Status)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var activeTasks = jiraTasks.Where(t => t.StatusCategoryKey != "done").ToList();
+
+        var noRemainingTasks = activeTasks
+            .Where(t => t.RemainingEstimateSeconds == 0 && t.OriginalEstimateSeconds > 0)
+            .OrderBy(t => t.Assignee).ThenBy(t => t.Key)
+            .ToList();
+
+        var untouchedTasks = activeTasks
+            .Where(t => t.OriginalEstimateSeconds > 0 &&
+                        t.RemainingEstimateSeconds == t.OriginalEstimateSeconds)
+            .OrderBy(t => t.Assignee).ThenBy(t => t.Key)
+            .ToList();
+
+        var blockedTasks = jiraTasks
+            .Where(t => t.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(t => t.Assignee).ThenBy(t => t.Key)
+            .ToList();
+
+        return new DailyMetrics
+        {
+            TotalCount       = totalCount,
+            DoneCount        = doneCount,
+            TaskPct          = taskPct,
+            HoursPct         = hoursPct,
+            NoRemainingCount = noRemainingTasks.Count,
+            BlockedCount     = blockedTasks.Count,
+            ByStatus         = byStatus,
+            UntouchedTasks   = untouchedTasks,
+            NoRemainingTasks = noRemainingTasks,
+            BlockedTasks     = blockedTasks,
+        };
+    }
 
     // ───────────────────────────────────────────────────────────
     // Visual layout (CalendarBlocks + lane packing)
@@ -2770,122 +3070,188 @@ private static decimal ParseJiraDurationToHours(string? input)
     .pl-pending { color: #92400e; }
 
     /* ─── Workload View ─── */
-    .workload-container {
+    /* ─── Report View ─── */
+    .rpt-container {
         background: #fff;
         border: 1px solid #e5e7eb;
         border-radius: 12px;
         overflow-y: auto;
         height: 73vh;
-        padding: 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 16px;
     }
 
-    .wl-team-block {
+    .rpt-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .rpt-th {
+        position: sticky;
+        top: 0;
+        background: #f8fafc;
+        padding: 9px 12px;
+        text-align: left;
+        font-size: 11px;
+        font-weight: 700;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        border-bottom: 1px solid #e5e7eb;
+        white-space: nowrap;
+    }
+
+    .rpt-th-assignee { width: 140px; }
+    .rpt-th-key      { width: 110px; }
+    .rpt-th-title    { }
+    .rpt-th-status   { width: 130px; }
+    .rpt-th-est      { width: 110px; text-align: right; }
+
+    .rpt-team-row { background: #f1f5f9; }
+
+    .rpt-team-cell {
+        padding: 6px 12px;
+        font-size: 11px;
+        font-weight: 700;
+        color: #475569;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        border-top: 2px solid #e2e8f0;
+    }
+
+    .rpt-row:hover { background: #f9fafb; }
+
+    .rpt-td {
+        padding: 8px 12px;
+        border-bottom: 1px solid #f3f4f6;
+        color: #1f2937;
+        vertical-align: middle;
+    }
+
+    .rpt-td-assignee { font-weight: 600; color: #374151; white-space: nowrap; }
+    .rpt-td-key      { white-space: nowrap; }
+    .rpt-td-title    { max-width: 320px; }
+    .rpt-td-est      { text-align: right; font-size: 12px; color: #6b7280; white-space: nowrap; }
+    .rpt-td-dash     { color: #9ca3af; text-align: right; }
+
+    .rpt-jira-key {
+        font-weight: 700;
+        color: #1d4ed8;
+        font-size: 12px;
+    }
+
+    .rpt-custom-badge {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #fff;
+    }
+
+    .rpt-status-chip {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .status-blocked { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+
+    /* ─── Daily View ─── */
+    .daily-container {
+        background: #f8fafc;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        overflow-y: auto;
+        height: 73vh;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .daily-kpi-row {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 12px;
+    }
+
+    .daily-kpi-card {
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 14px 16px;
+        text-align: center;
+    }
+
+    .daily-kpi-value {
+        font-size: 28px;
+        font-weight: 800;
+        line-height: 1.1;
+        margin-bottom: 4px;
+    }
+
+    .kpi-green   { color: #16a34a; }
+    .kpi-amber   { color: #d97706; }
+    .kpi-red     { color: #dc2626; }
+    .kpi-neutral { color: #374151; }
+
+    .daily-kpi-label {
+        font-size: 12px;
+        font-weight: 700;
+        color: #374151;
+        margin-bottom: 2px;
+    }
+
+    .daily-kpi-sub {
+        font-size: 11px;
+        color: #9ca3af;
+    }
+
+    .daily-section {
+        background: #fff;
         border: 1px solid #e5e7eb;
         border-radius: 10px;
         overflow: hidden;
     }
 
-    .wl-team-header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 8px 14px;
+    .daily-section-title {
+        padding: 9px 14px;
+        font-size: 12px;
+        font-weight: 700;
+        color: #374151;
         background: #f8fafc;
         border-bottom: 1px solid #e5e7eb;
     }
 
-    .wl-team-name {
-        font-weight: 700;
-        font-size: 13px;
-        color: #1f2937;
+    .daily-section-title-danger { color: #dc2626; }
+
+    .daily-section-sub {
+        font-weight: 400;
+        color: #9ca3af;
+        font-size: 11px;
     }
 
-    .wl-team-stats {
-        font-size: 12px;
-        color: #6b7280;
-    }
-
-    .wl-member-card {
-        padding: 10px 14px;
-        border-bottom: 1px solid #f3f4f6;
-    }
-
-        .wl-member-card:last-child { border-bottom: none; }
-
-    .wl-member-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        margin-bottom: 5px;
-    }
-
-    .wl-member-name {
-        font-weight: 600;
-        font-size: 13px;
-        color: #1f2937;
-    }
-
-    .wl-member-util {
-        font-size: 12px;
-        color: #6b7280;
-    }
-
-    .wl-bar-track {
-        height: 6px;
-        background: #f3f4f6;
-        border-radius: 3px;
-        overflow: hidden;
-        margin-bottom: 8px;
-    }
-
-    .wl-bar-fill {
-        height: 100%;
-        border-radius: 3px;
-        transition: width 0.3s;
-    }
-
-    .bar-low  { background: #34d399; }
-    .bar-mid  { background: #fbbf24; }
-    .bar-high { background: #f97316; }
-    .bar-over { background: #ef4444; }
-
-    .wl-chips {
+    .daily-status-grid {
         display: flex;
         flex-wrap: wrap;
-        gap: 5px;
+        gap: 8px;
+        padding: 12px 14px;
     }
 
-    .wl-chip {
+    .daily-status-item {
         display: flex;
         align-items: center;
         gap: 6px;
-        background: #eff6ff;
-        border: 1px solid #bfdbfe;
-        border-radius: 6px;
-        padding: 4px 8px;
-        font-size: 11px;
     }
 
-    .wl-chip-key    { font-weight: 700; color: #1d4ed8; }
-    .wl-chip-summary { color: #374151; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .wl-chip-meta   { color: #6b7280; white-space: nowrap; }
-
-    .wl-chip-remove {
-        border: none;
-        background: none;
-        color: #9ca3af;
-        cursor: pointer;
-        font-size: 11px;
-        padding: 0;
-        line-height: 1;
+    .daily-status-count {
+        font-weight: 700;
+        font-size: 14px;
+        color: #1f2937;
     }
-
-        .wl-chip-remove:hover { color: #dc2626; }
-
-    .wl-no-tasks { font-size: 12px; color: #9ca3af; font-style: italic; }
 
     /* ─── Calendar ─── */
     .cal-scroll {
