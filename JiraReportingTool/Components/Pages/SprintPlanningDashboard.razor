@@ -400,6 +400,10 @@
             {
                 <!-- ═ REPORT VIEW ════════════════════════════════════════════ -->
                 <div class="rpt-container">
+                    @if (_isRefreshingReport)
+                    {
+                        <div class="rpt-loading">Fetching latest data from Jira…</div>
+                    }
                     @if (Allocations.Count == 0)
                     {
                         <div class="empty-state">No tasks assigned yet — schedule tasks on the calendar first.</div>
@@ -460,8 +464,8 @@
                                                         <td class="rpt-td">
                                                             <span class="rpt-status-chip @GetStatusClass(row.Status)">@(string.IsNullOrEmpty(row.Status) ? "—" : row.Status)</span>
                                                         </td>
-                                                        <td class="rpt-td rpt-td-est">@(string.IsNullOrEmpty(row.OriginalEstimate) || row.OriginalEstimate == "-" ? "—" : row.OriginalEstimate)</td>
-                                                        <td class="rpt-td rpt-td-est">@(string.IsNullOrEmpty(row.RemainingEstimate) || row.RemainingEstimate == "-" ? "—" : row.RemainingEstimate)</td>
+                                                        <td class="rpt-td rpt-td-est">@FormatEstimate(row.OriginalEstimate, row.OriginalEstimateSeconds)</td>
+                                                        <td class="rpt-td rpt-td-est">@FormatEstimate(row.RemainingEstimate, row.RemainingEstimateSeconds)</td>
                                                     }
                                                 </tr>
                                             }
@@ -477,6 +481,10 @@
             {
                 <!-- ═ DAILY VIEW ══════════════════════════════════════════════ -->
                 <div class="daily-container">
+                    @if (_isRefreshingReport)
+                    {
+                        <div class="rpt-loading">Fetching latest data from Jira…</div>
+                    }
                     @{
                         var dm = GetDailyMetrics();
                     }
@@ -1233,6 +1241,7 @@
         LoadedEpics.Clear();
         _taskCache.Clear();
         _taskLabelFallback.Clear();
+        _reportIssues.Clear();
         Allocations.Clear();
         _customTasks.Clear();
         Holidays.Clear();
@@ -1278,6 +1287,7 @@
         LoadedEpics.Clear();
         _taskCache.Clear();
         _taskLabelFallback.Clear();
+        _reportIssues.Clear();
         var epicKeys = plan.LoadedEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
         foreach (var key in epicKeys)
             await LoadEpicByKey(key);
@@ -1835,23 +1845,112 @@
     private void SetTeamFilter(string team)   { ActiveTeamFilter = team; }
     private void ClearTeamFilter()            { ActiveTeamFilter = null; }
     private void SetCalendarView()            { ViewMode = "calendar"; }
-    private void SetReportView()              { ViewMode = "report"; }
-    private void SetDailyView()              { ViewMode = "daily"; }
+    private async Task SetReportView()        { ViewMode = "report"; await RefreshReportDataAsync(); }
+    private async Task SetDailyView()         { ViewMode = "daily";  await RefreshReportDataAsync(); }
+
+    // ── Report / Daily shared data ──
+    // Keyed by Jira issue key (e.g. "JM-14506") — populated on Report/Daily view switch.
+    // Using key instead of DB ID avoids stale ID issues caused by epic cache invalidation.
+    private Dictionary<string, SprintIssue> _reportIssues = new(StringComparer.OrdinalIgnoreCase);
+    private bool _isRefreshingReport = false;
+
+    private string? GetJiraKeyForTaskId(int taskId)
+    {
+        if (_taskCache.TryGetValue(taskId, out var cached) && !string.IsNullOrEmpty(cached.Key))
+            return cached.Key;
+        if (_taskLabelFallback.TryGetValue(taskId, out var label))
+        {
+            // Stored format: "KEY - SUMMARY (Est: X)" — split on " - " to get the key
+            var dashIdx = label.IndexOf(" - ", StringComparison.Ordinal);
+            if (dashIdx > 0) return label[..dashIdx].Trim();
+            // Older format fallback: "KEY: SUMMARY"
+            var colonIdx = label.IndexOf(':');
+            if (colonIdx > 0) return label[..colonIdx].Trim();
+        }
+        return null;
+    }
+
+    private static string FormatEstimate(string estimateStr, int estimateSeconds)
+    {
+        if (!string.IsNullOrEmpty(estimateStr) && estimateStr != "-") return estimateStr;
+        if (estimateSeconds <= 0) return "—";
+        const int sPerMin = 60, sPerHour = 3600, sPerDay = 28800, sPerWeek = 144000;
+        var w = estimateSeconds / sPerWeek; estimateSeconds %= sPerWeek;
+        var d = estimateSeconds / sPerDay;  estimateSeconds %= sPerDay;
+        var h = estimateSeconds / sPerHour; estimateSeconds %= sPerHour;
+        var m = estimateSeconds / sPerMin;
+        var parts = new List<string>();
+        if (w > 0) parts.Add($"{w}w");
+        if (d > 0) parts.Add($"{d}d");
+        if (h > 0) parts.Add($"{h}h");
+        if (m > 0) parts.Add($"{m}m");
+        return parts.Count > 0 ? string.Join(" ", parts) : "—";
+    }
+
+    private async Task RefreshReportDataAsync()
+    {
+        _isRefreshingReport = true;
+        _reportIssues.Clear();
+        StateHasChanged();
+        try
+        {
+            // Fetch all issues for every loaded epic (broader than GetEpicReportAsync —
+            // covers both classic Epic Link and next-gen parent relationships)
+            foreach (var epicKey in LoadedEpics.Keys.ToList())
+            {
+                try
+                {
+                    var epicReport = await JiraService.GetAllEpicIssuesAsync(epicKey);
+                    foreach (var issue in epicReport.Issues)
+                        if (!string.IsNullOrEmpty(issue.Key))
+                            _reportIssues[issue.Key] = issue;
+                }
+                catch { }
+            }
+
+            // Fallback: any allocated task still not found (moved/orphaned issues)
+            var covered = _reportIssues.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var missingKeys = Allocations
+                .Select(a => a.TaskId).Where(id => id > 0).Distinct()
+                .Select(GetJiraKeyForTaskId)
+                .Where(k => k != null && !covered.Contains(k!))
+                .Distinct()
+                .Cast<string>().ToList();
+
+            if (missingKeys.Count > 0)
+            {
+                try
+                {
+                    var fallbackReport = await JiraService.GetIssuesByKeysAsync(missingKeys);
+                    foreach (var issue in fallbackReport.Issues)
+                        if (!string.IsNullOrEmpty(issue.Key))
+                            _reportIssues[issue.Key] = issue;
+                }
+                catch { }
+            }
+        }
+        finally
+        {
+            _isRefreshingReport = false;
+        }
+    }
 
     // ── Report view helpers ──
 
     private sealed class ReportRow
     {
-        public bool   IsCustom          { get; init; }
-        public string Key               { get; init; } = "";
-        public string Title             { get; init; } = "";
-        public string Status            { get; init; } = "";
-        public string StatusCategoryKey { get; init; } = "";
-        public string OriginalEstimate  { get; init; } = "";
-        public string RemainingEstimate { get; init; } = "";
-        public string CustomColor       { get; init; } = "";
-        public string CustomCategory    { get; init; } = "";
-        public decimal CustomHours      { get; init; }
+        public bool   IsCustom                { get; init; }
+        public string Key                     { get; init; } = "";
+        public string Title                   { get; init; } = "";
+        public string Status                  { get; init; } = "";
+        public string StatusCategoryKey       { get; init; } = "";
+        public string OriginalEstimate        { get; init; } = "";
+        public int    OriginalEstimateSeconds { get; init; }
+        public string RemainingEstimate       { get; init; } = "";
+        public int    RemainingEstimateSeconds { get; init; }
+        public string CustomColor             { get; init; } = "";
+        public string CustomCategory          { get; init; } = "";
+        public decimal CustomHours            { get; init; }
     }
 
     private List<ReportRow> GetReportRowsForMember(Guid memberId)
@@ -1873,19 +1972,41 @@
                         IsCustom = true, Title = ct.Name,
                         CustomColor = ct.Color, CustomCategory = ct.Category, CustomHours = ct.Hours
                     });
+                continue;
             }
-            else if (_taskCache.TryGetValue(taskId, out var issue))
+
+            var jiraKey = GetJiraKeyForTaskId(taskId);
+
+            // Primary: fresh data fetched into _reportIssues on view switch
+            SprintIssue? issue = null;
+            if (jiraKey != null) _reportIssues.TryGetValue(jiraKey, out issue);
+
+            // Fallback: data from initial epic load (may be stale / have empty Status)
+            if (issue == null) _taskCache.TryGetValue(taskId, out issue);
+
+            if (issue != null)
             {
                 rows.Add(new ReportRow
                 {
-                    IsCustom = false, Key = issue.Key, Title = issue.Summary,
+                    IsCustom = false,
+                    Key = issue.Key, Title = issue.Summary,
                     Status = issue.Status, StatusCategoryKey = issue.StatusCategoryKey,
-                    OriginalEstimate = issue.OriginalEstimate, RemainingEstimate = issue.RemainingEstimate
+                    OriginalEstimate = issue.OriginalEstimate,
+                    OriginalEstimateSeconds = issue.OriginalEstimateSeconds,
+                    RemainingEstimate = issue.RemainingEstimate,
+                    RemainingEstimateSeconds = issue.RemainingEstimateSeconds
                 });
             }
-            else if (_taskLabelFallback.TryGetValue(taskId, out var label))
+            else if (jiraKey != null || _taskLabelFallback.ContainsKey(taskId))
             {
-                rows.Add(new ReportRow { IsCustom = false, Title = label });
+                // Key known but no Jira data available (Jira unreachable, etc.)
+                var label = _taskLabelFallback.GetValueOrDefault(taskId, $"Task #{taskId}");
+                // Parse title from "KEY - SUMMARY (Est: X)" format
+                var di = label.IndexOf(" - ", StringComparison.Ordinal);
+                var rawTitle = di > 0 ? label[(di + 3)..] : label;
+                var ei = rawTitle.LastIndexOf(" (Est:", StringComparison.Ordinal);
+                var title = ei > 0 ? rawTitle[..ei].Trim() : rawTitle.Trim();
+                rows.Add(new ReportRow { IsCustom = false, Key = jiraKey ?? "", Title = title });
             }
         }
 
@@ -1920,9 +2041,17 @@
     {
         var assignedTaskIds = Allocations.Select(a => a.TaskId).Distinct().ToHashSet();
 
+        // Use _reportIssues (fresh data) when available; fall back to _taskCache
         var jiraTasks = assignedTaskIds
-            .Where(id => id > 0 && _taskCache.ContainsKey(id))
-            .Select(id => _taskCache[id])
+            .Where(id => id > 0)
+            .Select(id =>
+            {
+                var key = GetJiraKeyForTaskId(id);
+                if (key != null && _reportIssues.TryGetValue(key, out var ri)) return ri;
+                return _taskCache.TryGetValue(id, out var ci) ? ci : null;
+            })
+            .Where(t => t != null)
+            .Select(t => t!)
             .ToList();
 
         var customCount = assignedTaskIds.Count(id => id < 0);
@@ -3070,6 +3199,16 @@ private static decimal ParseJiraDurationToHours(string? input)
     .pl-pending { color: #92400e; }
 
     /* ─── Workload View ─── */
+    /* ─── Report / Daily shared ─── */
+    .rpt-loading {
+        padding: 8px 14px;
+        background: #eff6ff;
+        border-bottom: 1px solid #bfdbfe;
+        color: #1d4ed8;
+        font-size: 12px;
+        font-weight: 600;
+    }
+
     /* ─── Report View ─── */
     .rpt-container {
         background: #fff;
@@ -3403,6 +3542,11 @@ private static decimal ParseJiraDurationToHours(string? input)
         border-radius: 2px;
         transition: width 0.3s;
     }
+
+    .bar-low  { background: #34d399; }
+    .bar-mid  { background: #fbbf24; }
+    .bar-high { background: #f97316; }
+    .bar-over { background: #ef4444; }
 
     /* Calendar cells */
     .cell {

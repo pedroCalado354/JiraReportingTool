@@ -27,6 +27,9 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
     public Task<SprintReport> GetDeliveryDataByFilterAsync(string filterJql)
         => api.GetDeliveryDataByFilterAsync(filterJql);
 
+    public Task<SprintReport> GetIssuesByKeysAsync(List<string> issueKeys)
+        => api.GetIssuesByKeysAsync(issueKeys);
+
     public Task<SprintReport> GetEpicSprintForecastAsync(string epicKey, int sprintId)
         => api.GetEpicSprintForecastAsync(epicKey, sprintId);
 

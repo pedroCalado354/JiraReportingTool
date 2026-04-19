@@ -15,4 +15,10 @@ public interface IJiraService
     Task<SprintReport> GetDeliveryDataByFilterAsync(string filterJql);
     Task<List<JiraFilter>> GetMyFiltersAsync();
     Task<SprintReport> GetAllEpicIssuesAsync(string epicKey);
+
+    /// <summary>
+    /// Fetches current Status and time-tracking data for a specific set of issue keys in one JQL query.
+    /// Used to refresh Report/Daily view data without re-loading full epics.
+    /// </summary>
+    Task<SprintReport> GetIssuesByKeysAsync(List<string> issueKeys);
 }

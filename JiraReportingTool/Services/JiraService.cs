@@ -490,6 +490,17 @@ public class JiraService : IJiraService
         return report;
     }
 
+    public async Task<SprintReport> GetIssuesByKeysAsync(List<string> issueKeys)
+    {
+        if (issueKeys.Count == 0) return new SprintReport();
+        var keyList = string.Join(",", issueKeys.Select(k => $"\"{k}\""));
+        var jql = Uri.EscapeDataString($"key in ({keyList}) ORDER BY key ASC");
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,labels,created,resolutiondate";
+        var json = await FetchAllPagesAsync(jql, fields);
+        var (report, _) = ParseSprintReport(json, "");
+        return report;
+    }
+
     // Jira API v3 returns comments in Atlassian Document Format (ADF)
     private static string ExtractAdfText(JsonElement wl)
     {
