@@ -127,40 +127,40 @@
             <table class="table table-hover mb-0 align-middle">
                 <thead class="table-light">
                     <tr>
-                        <th>Assignee</th>
-                        <th class="text-center">Score</th>
+                        <th class="sortable @(SI("Assignee", _sortColPS, _sortAscPS))" @onclick='() => SortPS("Assignee")'>Assignee</th>
+                        <th class="text-center sortable @(SI("Score", _sortColPS, _sortAscPS))" @onclick='() => SortPS("Score")'>Score</th>
                         <th style="min-width:180px">Breakdown</th>
-                        <th class="text-end" style="white-space:nowrap">
+                        <th class="text-end sortable @(SI("Accuracy", _sortColPS, _sortAscPS))" style="white-space:nowrap" @onclick='() => SortPS("Accuracy")'>
                             Accuracy
                             <div class="fw-normal text-muted" style="font-size:0.7rem">/ 30 pts</div>
                         </th>
-                        <th class="text-end" style="white-space:nowrap">
+                        <th class="text-end sortable @(SI("Delivery", _sortColPS, _sortAscPS))" style="white-space:nowrap" @onclick='() => SortPS("Delivery")'>
                             Delivery Rate
                             <div class="fw-normal text-muted" style="font-size:0.7rem">/ 25 pts</div>
                         </th>
-                        <th class="text-end" style="white-space:nowrap">
+                        <th class="text-end sortable @(SI("Throughput", _sortColPS, _sortAscPS))" style="white-space:nowrap" @onclick='() => SortPS("Throughput")'>
                             Throughput
                             <div class="fw-normal text-muted" style="font-size:0.7rem">/ 20 pts</div>
                         </th>
-                        <th class="text-end" style="white-space:nowrap">
+                        <th class="text-end sortable @(SI("Consistency", _sortColPS, _sortAscPS))" style="white-space:nowrap" @onclick='() => SortPS("Consistency")'>
                             Consistency
                             <div class="fw-normal text-muted" style="font-size:0.7rem">/ 10 pts</div>
                         </th>
-                        <th class="text-end" style="white-space:nowrap">
+                        <th class="text-end sortable @(SI("Regularity", _sortColPS, _sortAscPS))" style="white-space:nowrap" @onclick='() => SortPS("Regularity")'>
                             Regularity
                             <div class="fw-normal text-muted" style="font-size:0.7rem">/ 10 pts</div>
                         </th>
-                        <th class="text-end" style="white-space:nowrap">
+                        <th class="text-end sortable @(SI("CycleTime", _sortColPS, _sortAscPS))" style="white-space:nowrap" @onclick='() => SortPS("CycleTime")'>
                             Cycle Time
                             <div class="fw-normal text-muted" style="font-size:0.7rem">/ 5 pts</div>
                         </th>
-                        <th class="text-end">Issues</th>
-                        <th class="text-end">Done</th>
-                        <th class="text-end" style="white-space:nowrap">Hours Done</th>
+                        <th class="text-end sortable @(SI("Issues", _sortColPS, _sortAscPS))" @onclick='() => SortPS("Issues")'>Issues</th>
+                        <th class="text-end sortable @(SI("Done",   _sortColPS, _sortAscPS))" @onclick='() => SortPS("Done")'>Done</th>
+                        <th class="text-end sortable @(SI("Hours",  _sortColPS, _sortAscPS))" style="white-space:nowrap" @onclick='() => SortPS("Hours")'>Hours Done</th>
                     </tr>
                 </thead>
                 <tbody>
-                    @foreach (var s in filteredScores.OrderByDescending(x => x.TotalScore))
+                    @foreach (var s in ApplySortPS(filteredScores))
                     {
                         var badgeColor = s.TotalScore >= 80 ? "#06d6a0" : s.TotalScore >= 60 ? "#fb8500" : "#ef233c";
                         <tr>
@@ -293,6 +293,26 @@
 
     private List<int> ParsedSprintIds = [];
     private List<SprintReport> SprintReports = [];
+
+    private string _sortColPS = ""; private bool _sortAscPS = true;
+    private void SortPS(string c) { if (_sortColPS == c) _sortAscPS = !_sortAscPS; else { _sortColPS = c; _sortAscPS = true; } }
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
+
+    private IEnumerable<AssigneeScore> ApplySortPS(IEnumerable<AssigneeScore> scores) => _sortColPS switch
+    {
+        "Assignee"    => _sortAscPS ? scores.OrderBy(x => x.Assignee)               : scores.OrderByDescending(x => x.Assignee),
+        "Score"       => _sortAscPS ? scores.OrderBy(x => x.TotalScore)             : scores.OrderByDescending(x => x.TotalScore),
+        "Accuracy"    => _sortAscPS ? scores.OrderBy(x => x.EstimateAccuracyScore)  : scores.OrderByDescending(x => x.EstimateAccuracyScore),
+        "Delivery"    => _sortAscPS ? scores.OrderBy(x => x.DeliveryRateScore)      : scores.OrderByDescending(x => x.DeliveryRateScore),
+        "Throughput"  => _sortAscPS ? scores.OrderBy(x => x.ThroughputScore)        : scores.OrderByDescending(x => x.ThroughputScore),
+        "Consistency" => _sortAscPS ? scores.OrderBy(x => x.ConsistencyScore)       : scores.OrderByDescending(x => x.ConsistencyScore),
+        "Regularity"  => _sortAscPS ? scores.OrderBy(x => x.WorklogRegularityScore) : scores.OrderByDescending(x => x.WorklogRegularityScore),
+        "CycleTime"   => _sortAscPS ? scores.OrderBy(x => x.CycleTimeScore)         : scores.OrderByDescending(x => x.CycleTimeScore),
+        "Issues"      => _sortAscPS ? scores.OrderBy(x => x.TotalIssues)            : scores.OrderByDescending(x => x.TotalIssues),
+        "Done"        => _sortAscPS ? scores.OrderBy(x => x.DoneIssues)             : scores.OrderByDescending(x => x.DoneIssues),
+        "Hours"       => _sortAscPS ? scores.OrderBy(x => x.DoneHours)              : scores.OrderByDescending(x => x.DoneHours),
+        _             => scores.OrderByDescending(x => x.TotalScore),
+    };
 
     private async Task HandleKeyUp(KeyboardEventArgs e)
     {

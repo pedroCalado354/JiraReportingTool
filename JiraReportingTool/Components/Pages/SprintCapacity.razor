@@ -239,18 +239,18 @@
                             <table class="table table-sm align-middle small mb-0">
                                 <thead class="table-light">
                                     <tr>
-                                        <th style="width:90px">Key</th>
-                                        <th style="width:160px">Epic</th>
-                                        <th>Summary</th>
-                                        <th style="width:120px">Status</th>
-                                        <th style="width:75px">Estimate</th>
-                                        <th style="width:75px">Logged</th>
-                                        <th style="width:85px">Remaining</th>
+                                        <th class="sortable @(SI("Key", _sortColSC, _sortAscSC))" style="width:90px" @onclick='() => SortSC("Key")'>Key</th>
+                                        <th class="sortable @(SI("Epic", _sortColSC, _sortAscSC))" style="width:160px" @onclick='() => SortSC("Epic")'>Epic</th>
+                                        <th class="sortable @(SI("Summary", _sortColSC, _sortAscSC))" @onclick='() => SortSC("Summary")'>Summary</th>
+                                        <th class="sortable @(SI("Status", _sortColSC, _sortAscSC))" style="width:120px" @onclick='() => SortSC("Status")'>Status</th>
+                                        <th class="sortable @(SI("Estimate", _sortColSC, _sortAscSC))" style="width:75px" @onclick='() => SortSC("Estimate")'>Estimate</th>
+                                        <th class="sortable @(SI("Logged", _sortColSC, _sortAscSC))" style="width:75px" @onclick='() => SortSC("Logged")'>Logged</th>
+                                        <th class="sortable @(SI("Remaining", _sortColSC, _sortAscSC))" style="width:85px" @onclick='() => SortSC("Remaining")'>Remaining</th>
                                         <th style="width:70px" class="text-center">Fits?</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    @foreach (var issue in ms.Issues.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }))
+                                    @foreach (var issue in ApplySortSC(ms.Issues))
                                     {
                                         var issueFits = issue.StatusCategoryKey == "done"
                                             || issue.RemainingEstimateSeconds == 0
@@ -335,6 +335,22 @@
     private string? ErrorMessage;
     private SprintReport? Report;
     private HashSet<string> ExpandedMembers = new();
+
+    private string _sortColSC = ""; private bool _sortAscSC = true;
+    private void SortSC(string c) { if (_sortColSC == c) _sortAscSC = !_sortAscSC; else { _sortColSC = c; _sortAscSC = true; } }
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
+
+    private IEnumerable<SprintIssue> ApplySortSC(IEnumerable<SprintIssue> issues) => _sortColSC switch
+    {
+        "Key"       => _sortAscSC ? issues.OrderBy(i => i.Key)                     : issues.OrderByDescending(i => i.Key),
+        "Epic"      => _sortAscSC ? issues.OrderBy(i => i.EpicKey)                 : issues.OrderByDescending(i => i.EpicKey),
+        "Summary"   => _sortAscSC ? issues.OrderBy(i => i.Summary)                 : issues.OrderByDescending(i => i.Summary),
+        "Status"    => _sortAscSC ? issues.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }) : issues.OrderByDescending(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }),
+        "Estimate"  => _sortAscSC ? issues.OrderBy(i => i.OriginalEstimateSeconds) : issues.OrderByDescending(i => i.OriginalEstimateSeconds),
+        "Logged"    => _sortAscSC ? issues.OrderBy(i => i.TimeSpentSeconds)         : issues.OrderByDescending(i => i.TimeSpentSeconds),
+        "Remaining" => _sortAscSC ? issues.OrderBy(i => i.RemainingEstimateSeconds) : issues.OrderByDescending(i => i.RemainingEstimateSeconds),
+        _           => issues.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }),
+    };
 
     // ── Filters ──────────────────────────────────────────────────────────────
     private HashSet<string> FilterAssignees = new(StringComparer.OrdinalIgnoreCase);

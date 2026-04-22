@@ -186,13 +186,13 @@
                 <table class="wh-table">
                     <thead>
                         <tr>
-                            <th>Date</th>
-                            <th>Day</th>
-                            <th>Member</th>
-                            <th class="text-right">Hours</th>
-                            <th>Task</th>
-                            <th>Summary</th>
-                            <th>Epic</th>
+                            <th class="sortable @(SI("Date",    _sortColWH, _sortAscWH))" @onclick='() => SortWH("Date")'>Date</th>
+                            <th class="sortable @(SI("Day",     _sortColWH, _sortAscWH))" @onclick='() => SortWH("Day")'>Day</th>
+                            <th class="sortable @(SI("Member",  _sortColWH, _sortAscWH))" @onclick='() => SortWH("Member")'>Member</th>
+                            <th class="text-right sortable @(SI("Hours",   _sortColWH, _sortAscWH))" @onclick='() => SortWH("Hours")'>Hours</th>
+                            <th class="sortable @(SI("Task",    _sortColWH, _sortAscWH))" @onclick='() => SortWH("Task")'>Task</th>
+                            <th class="sortable @(SI("Summary", _sortColWH, _sortAscWH))" @onclick='() => SortWH("Summary")'>Summary</th>
+                            <th class="sortable @(SI("Epic",    _sortColWH, _sortAscWH))" @onclick='() => SortWH("Epic")'>Epic</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -635,6 +635,10 @@
     private string? ErrorMessage;
     private bool _renderCharts;
 
+    private string _sortColWH = ""; private bool _sortAscWH = true;
+    private void SortWH(string c) { if (_sortColWH == c) _sortAscWH = !_sortAscWH; else { _sortColWH = c; _sortAscWH = true; } }
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
+
     private List<int> ParsedSprintIds = [];
     private List<SprintReport> SprintReports = [];
 
@@ -673,14 +677,29 @@
         .OrderByDescending(w => w.Date).ThenBy(w => w.Author)
         .ToList();
 
-    private List<WorklogRow> FilteredWorklogs => AllWorklogs
-        .Where(w =>
-            !string.IsNullOrEmpty(w.Author) &&
-            (SelectedMembers.Count == 0 || SelectedMembers.Contains(w.Author)) &&
-            (SelectedEpics.Count == 0   || SelectedEpics.Contains(w.EpicKey)) &&
-            (!DateFrom.HasValue || w.Date >= DateFrom.Value.Date) &&
-            (!DateTo.HasValue   || w.Date <= DateTo.Value.Date))
-        .ToList();
+    private List<WorklogRow> FilteredWorklogs
+    {
+        get
+        {
+            var q = AllWorklogs.Where(w =>
+                !string.IsNullOrEmpty(w.Author) &&
+                (SelectedMembers.Count == 0 || SelectedMembers.Contains(w.Author)) &&
+                (SelectedEpics.Count == 0   || SelectedEpics.Contains(w.EpicKey)) &&
+                (!DateFrom.HasValue || w.Date >= DateFrom.Value.Date) &&
+                (!DateTo.HasValue   || w.Date <= DateTo.Value.Date));
+            return (_sortColWH switch
+            {
+                "Date"    => _sortAscWH ? q.OrderBy(w => w.Date)                : q.OrderByDescending(w => w.Date),
+                "Day"     => _sortAscWH ? q.OrderBy(w => (int)w.Date.DayOfWeek) : q.OrderByDescending(w => (int)w.Date.DayOfWeek),
+                "Member"  => _sortAscWH ? q.OrderBy(w => w.Author)              : q.OrderByDescending(w => w.Author),
+                "Hours"   => _sortAscWH ? q.OrderBy(w => w.TimeSpentSeconds)    : q.OrderByDescending(w => w.TimeSpentSeconds),
+                "Task"    => _sortAscWH ? q.OrderBy(w => w.IssueKey)            : q.OrderByDescending(w => w.IssueKey),
+                "Summary" => _sortAscWH ? q.OrderBy(w => w.IssueSummary)        : q.OrderByDescending(w => w.IssueSummary),
+                "Epic"    => _sortAscWH ? q.OrderBy(w => w.EpicName)            : q.OrderByDescending(w => w.EpicName),
+                _         => q.OrderByDescending(w => w.Date).ThenBy(w => w.Author),
+            }).ToList();
+        }
+    }
 
     // ── KPI properties ────────────────────────────────────────────────────────
     private double TotalHours        => FilteredWorklogs.Sum(w => w.TimeSpentSeconds) / 3600.0;

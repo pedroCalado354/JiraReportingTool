@@ -393,11 +393,11 @@
                     <table class="qm-table">
                         <thead>
                             <tr>
-                                <th>Assignee</th>
-                                <th class="tc">Issues</th>
-                                <th class="tc">Bugs</th>
-                                <th class="tc">Bug Rate</th>
-                                <th class="tc">Avg Fix Time</th>
+                                <th class="sortable @(SI("Assignee", _sortColBR, _sortAscBR))" @onclick='() => SortBR("Assignee")'>Assignee</th>
+                                <th class="tc sortable @(SI("Issues", _sortColBR, _sortAscBR))" @onclick='() => SortBR("Issues")'>Issues</th>
+                                <th class="tc sortable @(SI("Bugs", _sortColBR, _sortAscBR))" @onclick='() => SortBR("Bugs")'>Bugs</th>
+                                <th class="tc sortable @(SI("BugRate", _sortColBR, _sortAscBR))" @onclick='() => SortBR("BugRate")'>Bug Rate</th>
+                                <th class="tc sortable @(SI("AvgFix", _sortColBR, _sortAscBR))" @onclick='() => SortBR("AvgFix")'>Avg Fix Time</th>
                                 <th class="tc">Stale Bugs</th>
                                 <th style="width:130px">Rate Bar</th>
                             </tr>
@@ -464,13 +464,13 @@
                         <table class="qm-table">
                             <thead>
                                 <tr>
-                                    <th style="width:100px">Key</th>
-                                    <th>Summary</th>
-                                    <th style="width:80px">Priority</th>
-                                    <th style="width:130px">Assignee</th>
-                                    <th class="tc" style="width:90px">Age</th>
-                                    <th style="width:110px">Status</th>
-                                    <th class="tc" style="width:100px">Last Activity</th>
+                                    <th class="sortable @(SI("Key", _sortColOBA, _sortAscOBA))" style="width:100px" @onclick='() => SortOBA("Key")'>Key</th>
+                                    <th class="sortable @(SI("Summary", _sortColOBA, _sortAscOBA))" @onclick='() => SortOBA("Summary")'>Summary</th>
+                                    <th class="sortable @(SI("Priority", _sortColOBA, _sortAscOBA))" style="width:80px" @onclick='() => SortOBA("Priority")'>Priority</th>
+                                    <th class="sortable @(SI("Assignee", _sortColOBA, _sortAscOBA))" style="width:130px" @onclick='() => SortOBA("Assignee")'>Assignee</th>
+                                    <th class="tc sortable @(SI("Age", _sortColOBA, _sortAscOBA))" style="width:90px" @onclick='() => SortOBA("Age")'>Age</th>
+                                    <th class="sortable @(SI("Status", _sortColOBA, _sortAscOBA))" style="width:110px" @onclick='() => SortOBA("Status")'>Status</th>
+                                    <th class="tc sortable @(SI("LastAct", _sortColOBA, _sortAscOBA))" style="width:100px" @onclick='() => SortOBA("LastAct")'>Last Activity</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -510,13 +510,13 @@
                         <table class="qm-table">
                             <thead>
                                 <tr>
-                                    <th style="width:100px">Key</th>
-                                    <th>Summary</th>
-                                    <th style="width:80px">Priority</th>
-                                    <th style="width:130px">Assignee</th>
-                                    <th style="width:110px">Reported</th>
-                                    <th style="width:110px">Resolved</th>
-                                    <th class="tc" style="width:90px">Fix Time</th>
+                                    <th class="sortable @(SI("Key", _sortColBFT, _sortAscBFT))" style="width:100px" @onclick='() => SortBFT("Key")'>Key</th>
+                                    <th class="sortable @(SI("Summary", _sortColBFT, _sortAscBFT))" @onclick='() => SortBFT("Summary")'>Summary</th>
+                                    <th class="sortable @(SI("Priority", _sortColBFT, _sortAscBFT))" style="width:80px" @onclick='() => SortBFT("Priority")'>Priority</th>
+                                    <th class="sortable @(SI("Assignee", _sortColBFT, _sortAscBFT))" style="width:130px" @onclick='() => SortBFT("Assignee")'>Assignee</th>
+                                    <th class="sortable @(SI("Reported", _sortColBFT, _sortAscBFT))" style="width:110px" @onclick='() => SortBFT("Reported")'>Reported</th>
+                                    <th class="sortable @(SI("Resolved", _sortColBFT, _sortAscBFT))" style="width:110px" @onclick='() => SortBFT("Resolved")'>Resolved</th>
+                                    <th class="tc sortable @(SI("FixTime", _sortColBFT, _sortAscBFT))" style="width:90px" @onclick='() => SortBFT("FixTime")'>Fix Time</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -552,12 +552,12 @@
                         <table class="qm-table">
                             <thead>
                                 <tr>
-                                    <th style="width:100px">Key</th>
-                                    <th>Summary</th>
-                                    <th style="width:80px">Priority</th>
-                                    <th style="width:110px">Status</th>
-                                    <th style="width:130px">Assignee</th>
-                                    <th style="width:120px">Epic</th>
+                                    <th class="sortable @(SI("Key", _sortColAB, _sortAscAB))" style="width:100px" @onclick='() => SortAB("Key")'>Key</th>
+                                    <th class="sortable @(SI("Summary", _sortColAB, _sortAscAB))" @onclick='() => SortAB("Summary")'>Summary</th>
+                                    <th class="sortable @(SI("Priority", _sortColAB, _sortAscAB))" style="width:80px" @onclick='() => SortAB("Priority")'>Priority</th>
+                                    <th class="sortable @(SI("Status", _sortColAB, _sortAscAB))" style="width:110px" @onclick='() => SortAB("Status")'>Status</th>
+                                    <th class="sortable @(SI("Assignee", _sortColAB, _sortAscAB))" style="width:130px" @onclick='() => SortAB("Assignee")'>Assignee</th>
+                                    <th class="sortable @(SI("Epic", _sortColAB, _sortAscAB))" style="width:120px" @onclick='() => SortAB("Epic")'>Epic</th>
                                     <th class="tc" style="width:90px">Fix Time</th>
                                 </tr>
                             </thead>
@@ -604,6 +604,19 @@
     private string SprintId = "";
     private bool IsLoading;
     private string? ErrorMessage;
+
+    // ── Table sort state ───────────────────────────────────────────────────────
+    private string _sortColBR  = ""; private bool _sortAscBR  = true;
+    private string _sortColOBA = ""; private bool _sortAscOBA = true;
+    private string _sortColBFT = ""; private bool _sortAscBFT = true;
+    private string _sortColAB  = ""; private bool _sortAscAB  = true;
+
+    private void SortBR (string c) { if (_sortColBR  == c) _sortAscBR  = !_sortAscBR;  else { _sortColBR  = c; _sortAscBR  = true; } }
+    private void SortOBA(string c) { if (_sortColOBA == c) _sortAscOBA = !_sortAscOBA; else { _sortColOBA = c; _sortAscOBA = true; } }
+    private void SortBFT(string c) { if (_sortColBFT == c) _sortAscBFT = !_sortAscBFT; else { _sortColBFT = c; _sortAscBFT = true; } }
+    private void SortAB (string c) { if (_sortColAB  == c) _sortAscAB  = !_sortAscAB;  else { _sortColAB  = c; _sortAscAB  = true; } }
+
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
 
     // ── Saved filters ─────────────────────────────────────────────────────────
     private List<JiraFilter> MyFilters = [];
@@ -662,11 +675,23 @@
     private double OverallBugRate => ActiveFilteredIssues.Count == 0 ? 0
         : (double)ActiveBugCount / ActiveFilteredIssues.Count * 100;
 
-    private List<SprintIssue> ActiveBugs => ActiveFilteredIssues
-        .Where(IsBug)
-        .OrderBy(i => i.StatusCategoryKey == "done" ? 1 : 0)
-        .ThenBy(i => PrioritySortOrder(i.Priority))
-        .ToList();
+    private List<SprintIssue> ActiveBugs
+    {
+        get
+        {
+            var q = ActiveFilteredIssues.Where(IsBug);
+            return (_sortColAB switch
+            {
+                "Key"      => _sortAscAB ? q.OrderBy(i => i.Key)                         : q.OrderByDescending(i => i.Key),
+                "Summary"  => _sortAscAB ? q.OrderBy(i => i.Summary)                     : q.OrderByDescending(i => i.Summary),
+                "Priority" => _sortAscAB ? q.OrderBy(i => PrioritySortOrder(i.Priority)) : q.OrderByDescending(i => PrioritySortOrder(i.Priority)),
+                "Status"   => _sortAscAB ? q.OrderBy(i => i.Status)                      : q.OrderByDescending(i => i.Status),
+                "Assignee" => _sortAscAB ? q.OrderBy(i => i.Assignee)                    : q.OrderByDescending(i => i.Assignee),
+                "Epic"     => _sortAscAB ? q.OrderBy(i => i.EpicKey)                     : q.OrderByDescending(i => i.EpicKey),
+                _          => q.OrderBy(i => i.StatusCategoryKey == "done" ? 1 : 0).ThenBy(i => PrioritySortOrder(i.Priority)),
+            }).ToList();
+        }
+    }
 
     private double CompletionRate => ActiveFilteredIssues.Count == 0 ? 0
         : (double)ActiveFilteredIssues.Count(i => i.StatusCategoryKey == "done") / ActiveFilteredIssues.Count * 100;
@@ -705,41 +730,83 @@
         return days * 6.0;
     }
 
-    private List<(SprintIssue Bug, double Hours)> ResolvedBugsWithTime =>
-        ActiveFilteredIssues
-            .Where(b => IsBug(b) && b.StatusCategoryKey == "done" && b.ResolutionDate.HasValue && b.Created.HasValue)
-            .Select(b => (b, WorkingHours(b.Created!.Value, b.ResolutionDate!.Value)))
-            .Where(x => x.Item2 >= 0)
-            .OrderByDescending(x => x.Item2)
-            .ToList();
+    private List<(SprintIssue Bug, double Hours)> ResolvedBugsWithTime
+    {
+        get
+        {
+            var q = ActiveFilteredIssues
+                .Where(b => IsBug(b) && b.StatusCategoryKey == "done" && b.ResolutionDate.HasValue && b.Created.HasValue)
+                .Select(b => (b, WorkingHours(b.Created!.Value, b.ResolutionDate!.Value)))
+                .Where(x => x.Item2 >= 0);
+            return (_sortColBFT switch
+            {
+                "Key"      => _sortAscBFT ? q.OrderBy(x => x.Item1.Key)                         : q.OrderByDescending(x => x.Item1.Key),
+                "Summary"  => _sortAscBFT ? q.OrderBy(x => x.Item1.Summary)                     : q.OrderByDescending(x => x.Item1.Summary),
+                "Priority" => _sortAscBFT ? q.OrderBy(x => PrioritySortOrder(x.Item1.Priority)) : q.OrderByDescending(x => PrioritySortOrder(x.Item1.Priority)),
+                "Assignee" => _sortAscBFT ? q.OrderBy(x => x.Item1.Assignee)                    : q.OrderByDescending(x => x.Item1.Assignee),
+                "Reported" => _sortAscBFT ? q.OrderBy(x => x.Item1.Created)                     : q.OrderByDescending(x => x.Item1.Created),
+                "Resolved" => _sortAscBFT ? q.OrderBy(x => x.Item1.ResolutionDate)              : q.OrderByDescending(x => x.Item1.ResolutionDate),
+                "FixTime"  => _sortAscBFT ? q.OrderBy(x => x.Item2)                             : q.OrderByDescending(x => x.Item2),
+                _          => q.OrderByDescending(x => x.Item2),
+            }).ToList();
+        }
+    }
 
     private double AvgFixTimeHours => ResolvedBugsWithTime.Count > 0
         ? ResolvedBugsWithTime.Average(x => x.Hours) : -1;
 
     // ── Open bug ages ─────────────────────────────────────────────────────────
-    private List<(SprintIssue Bug, int AgeDays)> OpenBugAges => ActiveBugs
-        .Where(b => b.StatusCategoryKey != "done" && b.Created.HasValue)
-        .Select(b => (b, (int)(DateTime.Today - b.Created!.Value.Date).TotalDays))
-        .OrderByDescending(x => x.Item2)
-        .ToList();
+    private List<(SprintIssue Bug, int AgeDays)> OpenBugAges
+    {
+        get
+        {
+            var q = ActiveBugs
+                .Where(b => b.StatusCategoryKey != "done" && b.Created.HasValue)
+                .Select(b => (b, (int)(DateTime.Today - b.Created!.Value.Date).TotalDays));
+            return (_sortColOBA switch
+            {
+                "Key"      => _sortAscOBA ? q.OrderBy(x => x.Item1.Key)                         : q.OrderByDescending(x => x.Item1.Key),
+                "Summary"  => _sortAscOBA ? q.OrderBy(x => x.Item1.Summary)                     : q.OrderByDescending(x => x.Item1.Summary),
+                "Priority" => _sortAscOBA ? q.OrderBy(x => PrioritySortOrder(x.Item1.Priority)) : q.OrderByDescending(x => PrioritySortOrder(x.Item1.Priority)),
+                "Assignee" => _sortAscOBA ? q.OrderBy(x => x.Item1.Assignee)                    : q.OrderByDescending(x => x.Item1.Assignee),
+                "Age"      => _sortAscOBA ? q.OrderBy(x => x.Item2)                             : q.OrderByDescending(x => x.Item2),
+                "Status"   => _sortAscOBA ? q.OrderBy(x => x.Item1.Status)                      : q.OrderByDescending(x => x.Item1.Status),
+                "LastAct"  => _sortAscOBA ? q.OrderBy(x => x.Item1.DaysSinceLastWorklog)        : q.OrderByDescending(x => x.Item1.DaysSinceLastWorklog),
+                _          => q.OrderByDescending(x => x.Item2),
+            }).ToList();
+        }
+    }
 
     // ── Per-assignee stats ────────────────────────────────────────────────────
     private record AssigneeBugMetric(string Assignee, int TotalTasks, int BugCount, double BugRate, double AvgFixHours);
 
-    private List<AssigneeBugMetric> AssigneeBugRates => ActiveFilteredIssues
-        .GroupBy(i => i.Assignee)
-        .Select(g =>
+    private List<AssigneeBugMetric> AssigneeBugRates
+    {
+        get
         {
-            var bugs     = g.Where(IsBug).ToList();
-            var resolved = bugs.Where(b => b.StatusCategoryKey == "done" && b.ResolutionDate.HasValue && b.Created.HasValue).ToList();
-            var total    = g.Count();
-            return new AssigneeBugMetric(
-                g.Key, total, bugs.Count,
-                total == 0 ? 0 : (double)bugs.Count / total * 100,
-                resolved.Count > 0 ? resolved.Average(b => WorkingHours(b.Created!.Value, b.ResolutionDate!.Value)) : -1);
-        })
-        .OrderByDescending(m => m.BugRate).ThenByDescending(m => m.BugCount)
-        .ToList();
+            var q = ActiveFilteredIssues
+                .GroupBy(i => i.Assignee)
+                .Select(g =>
+                {
+                    var bugs     = g.Where(IsBug).ToList();
+                    var resolved = bugs.Where(b => b.StatusCategoryKey == "done" && b.ResolutionDate.HasValue && b.Created.HasValue).ToList();
+                    var total    = g.Count();
+                    return new AssigneeBugMetric(
+                        g.Key, total, bugs.Count,
+                        total == 0 ? 0 : (double)bugs.Count / total * 100,
+                        resolved.Count > 0 ? resolved.Average(b => WorkingHours(b.Created!.Value, b.ResolutionDate!.Value)) : -1);
+                });
+            return (_sortColBR switch
+            {
+                "Assignee" => _sortAscBR ? q.OrderBy(m => m.Assignee)    : q.OrderByDescending(m => m.Assignee),
+                "Issues"   => _sortAscBR ? q.OrderBy(m => m.TotalTasks)  : q.OrderByDescending(m => m.TotalTasks),
+                "Bugs"     => _sortAscBR ? q.OrderBy(m => m.BugCount)    : q.OrderByDescending(m => m.BugCount),
+                "BugRate"  => _sortAscBR ? q.OrderBy(m => m.BugRate)     : q.OrderByDescending(m => m.BugRate),
+                "AvgFix"   => _sortAscBR ? q.OrderBy(m => m.AvgFixHours) : q.OrderByDescending(m => m.AvgFixHours),
+                _          => q.OrderByDescending(m => m.BugRate).ThenByDescending(m => m.BugCount),
+            }).ToList();
+        }
+    }
 
     private int HighBugRateCount => AssigneeBugRates.Count(m => m.BugRate > 50);
 

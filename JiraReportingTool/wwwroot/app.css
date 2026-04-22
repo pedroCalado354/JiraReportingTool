@@ -58,3 +58,9 @@ h1:focus {
 .form-floating > .form-control-plaintext:focus::placeholder, .form-floating > .form-control:focus::placeholder {
     text-align: start;
 }
+
+/* ─── Sortable table headers ─────────────────────────────────────────────── */
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { filter: brightness(0.93); }
+th.sort-asc::after  { content: " ▲"; font-size: 0.7em; opacity: 0.8; }
+th.sort-desc::after { content: " ▼"; font-size: 0.7em; opacity: 0.8; }

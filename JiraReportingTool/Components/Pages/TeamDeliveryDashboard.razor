@@ -310,23 +310,21 @@
                     <table class="table table-hover align-middle mb-0 small">
                         <thead class="table-light">
                             <tr>
-                                <th>Epic</th>
-                                <th>Key</th>
-                                <th>Task</th>
-                                <th>Assignee</th>
-                                <th style="width:80px">Status</th>
-                                <th style="width:80px">Type</th>
-                                <th style="width:75px">Est.</th>
-                                <th style="width:75px">Logged</th>
-                                <th style="width:75px">Remaining</th>
+                                <th class="sortable @(SI("Epic",      _sortColTD, _sortAscTD))" @onclick='() => SortTD("Epic")'>Epic</th>
+                                <th class="sortable @(SI("Key",       _sortColTD, _sortAscTD))" @onclick='() => SortTD("Key")'>Key</th>
+                                <th class="sortable @(SI("Task",      _sortColTD, _sortAscTD))" @onclick='() => SortTD("Task")'>Task</th>
+                                <th class="sortable @(SI("Assignee",  _sortColTD, _sortAscTD))" @onclick='() => SortTD("Assignee")'>Assignee</th>
+                                <th class="sortable @(SI("Status",    _sortColTD, _sortAscTD))" style="width:80px" @onclick='() => SortTD("Status")'>Status</th>
+                                <th class="sortable @(SI("Type",      _sortColTD, _sortAscTD))" style="width:80px" @onclick='() => SortTD("Type")'>Type</th>
+                                <th class="sortable @(SI("Estimate",  _sortColTD, _sortAscTD))" style="width:75px" @onclick='() => SortTD("Estimate")'>Est.</th>
+                                <th class="sortable @(SI("Logged",    _sortColTD, _sortAscTD))" style="width:75px" @onclick='() => SortTD("Logged")'>Logged</th>
+                                <th class="sortable @(SI("Remaining", _sortColTD, _sortAscTD))" style="width:75px" @onclick='() => SortTD("Remaining")'>Remaining</th>
                                 <th style="width:110px">Progress</th>
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var epic in FilteredEpics)
+                            @foreach (var issue in SortedTaskIssues)
                             {
-                                @foreach (var issue in epic.Issues)
-                                {
                                     var pct = IssueProgress(issue);
                                     <tr>
                                         <td class="text-muted text-nowrap small">@(string.IsNullOrEmpty(issue.EpicKey) ? "—" : issue.EpicKey)</td>
@@ -350,7 +348,6 @@
                                             </div>
                                         </td>
                                     </tr>
-                                }
                             }
                         </tbody>
                     </table>
@@ -419,18 +416,18 @@
                     <table class="table table-hover align-middle small mb-0">
                         <thead class="table-light">
                             <tr>
-                                <th>Epic</th>
-                                <th>Tasks</th>
-                                <th>Done</th>
-                                <th>Planned (h)</th>
-                                <th>Logged (h)</th>
-                                <th>Remaining (h)</th>
-                                <th>Variance</th>
-                                <th>Status</th>
+                                <th class="sortable @(SI("Epic",      _sortColVD, _sortAscVD))" @onclick='() => SortVD("Epic")'>Epic</th>
+                                <th class="sortable @(SI("Tasks",     _sortColVD, _sortAscVD))" @onclick='() => SortVD("Tasks")'>Tasks</th>
+                                <th class="sortable @(SI("Done",      _sortColVD, _sortAscVD))" @onclick='() => SortVD("Done")'>Done</th>
+                                <th class="sortable @(SI("Planned",   _sortColVD, _sortAscVD))" @onclick='() => SortVD("Planned")'>Planned (h)</th>
+                                <th class="sortable @(SI("Logged",    _sortColVD, _sortAscVD))" @onclick='() => SortVD("Logged")'>Logged (h)</th>
+                                <th class="sortable @(SI("Remaining", _sortColVD, _sortAscVD))" @onclick='() => SortVD("Remaining")'>Remaining (h)</th>
+                                <th class="sortable @(SI("Variance",  _sortColVD, _sortAscVD))" @onclick='() => SortVD("Variance")'>Variance</th>
+                                <th class="sortable @(SI("Status",    _sortColVD, _sortAscVD))" @onclick='() => SortVD("Status")'>Status</th>
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var epic in FilteredEpics)
+                            @foreach (var epic in ApplySortVD(FilteredEpics))
                             {
                                 var v = EpicFilteredVariancePct(epic);
                                 var epicOver = EpicFilteredIsOverBudget(epic);
@@ -548,10 +545,9 @@
                         @if (ExpandedMembers.Contains(person))
                         {
                             var personLogs = FilteredIssues
-                                .SelectMany(i => i.Worklogs.Select(w => new { Issue = i, Log = w }))
+                                .SelectMany(i => i.Worklogs.Select(w => new WorkloadRow(i, w)))
                                 .Where(x => x.Log.Author.Equals(person, StringComparison.OrdinalIgnoreCase)
                                          && WorklogInRange(x.Log))
-                                .OrderByDescending(x => x.Log.Started)
                                 .ToList();
 
                             <div class="card-footer bg-light p-0">
@@ -571,15 +567,15 @@
                                         <table class="table table-sm align-middle mb-0 small">
                                             <thead class="table-light">
                                                 <tr>
-                                                    <th>Date</th>
-                                                    <th>Issue</th>
-                                                    <th>Summary</th>
-                                                    <th>Time Logged</th>
-                                                    <th>Comment</th>
+                                                    <th class="sortable @(SI("Date",    _sortColWL, _sortAscWL))" @onclick='() => SortWL("Date")'>Date</th>
+                                                    <th class="sortable @(SI("Issue",   _sortColWL, _sortAscWL))" @onclick='() => SortWL("Issue")'>Issue</th>
+                                                    <th class="sortable @(SI("Summary", _sortColWL, _sortAscWL))" @onclick='() => SortWL("Summary")'>Summary</th>
+                                                    <th class="sortable @(SI("Time",    _sortColWL, _sortAscWL))" @onclick='() => SortWL("Time")'>Time Logged</th>
+                                                    <th class="sortable @(SI("Comment", _sortColWL, _sortAscWL))" @onclick='() => SortWL("Comment")'>Comment</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                @foreach (var x in personLogs)
+                                                @foreach (var x in ApplySortWL(personLogs))
                                                 {
                                                     <tr>
                                                         <td class="text-nowrap text-muted">@x.Log.Started.ToString("MMM d, HH:mm")</td>
@@ -611,18 +607,18 @@
                                         <table class="table table-sm align-middle mb-0 small">
                                             <thead class="table-light">
                                                 <tr>
-                                                    <th>Epic</th>
-                                                    <th>Key</th>
-                                                    <th>Summary</th>
-                                                    <th>Status</th>
-                                                    <th>Type</th>
+                                                    <th class="sortable @(SI("Epic",      _sortColAI, _sortAscAI))" @onclick='() => SortAI("Epic")'>Epic</th>
+                                                    <th class="sortable @(SI("Key",       _sortColAI, _sortAscAI))" @onclick='() => SortAI("Key")'>Key</th>
+                                                    <th class="sortable @(SI("Summary",   _sortColAI, _sortAscAI))" @onclick='() => SortAI("Summary")'>Summary</th>
+                                                    <th class="sortable @(SI("Status",    _sortColAI, _sortAscAI))" @onclick='() => SortAI("Status")'>Status</th>
+                                                    <th class="sortable @(SI("Type",      _sortColAI, _sortAscAI))" @onclick='() => SortAI("Type")'>Type</th>
                                                     <th>My Logged</th>
-                                                    <th>Remaining</th>
+                                                    <th class="sortable @(SI("Remaining", _sortColAI, _sortAscAI))" @onclick='() => SortAI("Remaining")'>Remaining</th>
                                                     <th>Progress</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                @foreach (var issue in issues)
+                                                @foreach (var issue in ApplySortAI(issues))
                                                 {
                                                     var pct = IssueProgress(issue);
                                                     var myLogged = issue.Worklogs
@@ -709,14 +705,14 @@
                         <table class="table table-sm align-middle small">
                             <thead class="table-light">
                                 <tr>
-                                    <th>Key</th>
-                                    <th>Summary</th>
-                                    <th>Assignee</th>
-                                    <th>Status</th>
-                                    <th>Type</th>
+                                    <th class="sortable @(SI("Key",       _sortColRI, _sortAscRI))" @onclick='() => SortRI("Key")'>Key</th>
+                                    <th class="sortable @(SI("Summary",   _sortColRI, _sortAscRI))" @onclick='() => SortRI("Summary")'>Summary</th>
+                                    <th class="sortable @(SI("Assignee",  _sortColRI, _sortAscRI))" @onclick='() => SortRI("Assignee")'>Assignee</th>
+                                    <th class="sortable @(SI("Status",    _sortColRI, _sortAscRI))" @onclick='() => SortRI("Status")'>Status</th>
+                                    <th class="sortable @(SI("Type",      _sortColRI, _sortAscRI))" @onclick='() => SortRI("Type")'>Type</th>
                                     <th>Risk Reason</th>
-                                    <th>Idle (days)</th>
-                                    <th>Remaining</th>
+                                    <th class="sortable @(SI("Idle",      _sortColRI, _sortAscRI))" @onclick='() => SortRI("Idle")'>Idle (days)</th>
+                                    <th class="sortable @(SI("Remaining", _sortColRI, _sortAscRI))" @onclick='() => SortRI("Remaining")'>Remaining</th>
                                     <th>Days left</th>
                                 </tr>
                             </thead>
@@ -968,6 +964,77 @@
     private string? ErrorMessage;
     private SprintReport? Report;
 
+    // ── Table sort state ──────────────────────────────────────────────────────
+    private string _sortColTD = ""; private bool _sortAscTD = true;
+    private string _sortColVD = ""; private bool _sortAscVD = true;
+    private string _sortColWL = ""; private bool _sortAscWL = true;
+    private string _sortColAI = ""; private bool _sortAscAI = true;
+    private string _sortColRI = ""; private bool _sortAscRI = true;
+
+    private void SortTD(string c) { if (_sortColTD == c) _sortAscTD = !_sortAscTD; else { _sortColTD = c; _sortAscTD = true; } }
+    private void SortVD(string c) { if (_sortColVD == c) _sortAscVD = !_sortAscVD; else { _sortColVD = c; _sortAscVD = true; } }
+    private void SortWL(string c) { if (_sortColWL == c) _sortAscWL = !_sortAscWL; else { _sortColWL = c; _sortAscWL = true; } }
+    private void SortAI(string c) { if (_sortColAI == c) _sortAscAI = !_sortAscAI; else { _sortColAI = c; _sortAscAI = true; } }
+    private void SortRI(string c) { if (_sortColRI == c) _sortAscRI = !_sortAscRI; else { _sortColRI = c; _sortAscRI = true; } }
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
+
+    private record WorkloadRow(SprintIssue Issue, WorklogEntry Log);
+
+    private IEnumerable<SprintIssue> SortedTaskIssues
+    {
+        get
+        {
+            var q = FilteredEpics.SelectMany(e => e.Issues);
+            return _sortColTD switch
+            {
+                "Epic"      => _sortAscTD ? q.OrderBy(i => i.EpicKey)                 : q.OrderByDescending(i => i.EpicKey),
+                "Key"       => _sortAscTD ? q.OrderBy(i => i.Key)                     : q.OrderByDescending(i => i.Key),
+                "Task"      => _sortAscTD ? q.OrderBy(i => i.Summary)                 : q.OrderByDescending(i => i.Summary),
+                "Assignee"  => _sortAscTD ? q.OrderBy(i => i.Assignee)                : q.OrderByDescending(i => i.Assignee),
+                "Status"    => _sortAscTD ? q.OrderBy(i => i.StatusCategoryKey)       : q.OrderByDescending(i => i.StatusCategoryKey),
+                "Type"      => _sortAscTD ? q.OrderBy(i => i.IssueType)               : q.OrderByDescending(i => i.IssueType),
+                "Estimate"  => _sortAscTD ? q.OrderBy(i => i.OriginalEstimateSeconds) : q.OrderByDescending(i => i.OriginalEstimateSeconds),
+                "Logged"    => _sortAscTD ? q.OrderBy(i => i.TimeSpentSeconds)        : q.OrderByDescending(i => i.TimeSpentSeconds),
+                "Remaining" => _sortAscTD ? q.OrderBy(i => i.RemainingEstimateSeconds): q.OrderByDescending(i => i.RemainingEstimateSeconds),
+                _           => q.OrderBy(i => i.EpicKey).ThenBy(i => i.Key),
+            };
+        }
+    }
+
+    private IEnumerable<EpicSummary> ApplySortVD(IEnumerable<EpicSummary> epics) => _sortColVD switch
+    {
+        "Epic"      => _sortAscVD ? epics.OrderBy(e => e.DisplayName)              : epics.OrderByDescending(e => e.DisplayName),
+        "Tasks"     => _sortAscVD ? epics.OrderBy(e => e.TotalIssues)              : epics.OrderByDescending(e => e.TotalIssues),
+        "Done"      => _sortAscVD ? epics.OrderBy(e => e.DoneCount)                : epics.OrderByDescending(e => e.DoneCount),
+        "Planned"   => _sortAscVD ? epics.OrderBy(e => e.TotalEstimateSeconds)     : epics.OrderByDescending(e => e.TotalEstimateSeconds),
+        "Logged"    => _sortAscVD ? epics.OrderBy(e => EpicFilteredSpent(e))       : epics.OrderByDescending(e => EpicFilteredSpent(e)),
+        "Remaining" => _sortAscVD ? epics.OrderBy(e => e.TotalRemainingSeconds)    : epics.OrderByDescending(e => e.TotalRemainingSeconds),
+        "Variance"  => _sortAscVD ? epics.OrderBy(e => EpicFilteredVariancePct(e)) : epics.OrderByDescending(e => EpicFilteredVariancePct(e)),
+        "Status"    => _sortAscVD ? epics.OrderBy(e => EpicFilteredIsOverBudget(e)): epics.OrderByDescending(e => EpicFilteredIsOverBudget(e)),
+        _           => epics.OrderBy(e => string.IsNullOrEmpty(e.Key) ? "ZZZ" : e.Key),
+    };
+
+    private IEnumerable<WorkloadRow> ApplySortWL(IEnumerable<WorkloadRow> rows) => _sortColWL switch
+    {
+        "Date"    => _sortAscWL ? rows.OrderBy(x => x.Log.Started)          : rows.OrderByDescending(x => x.Log.Started),
+        "Issue"   => _sortAscWL ? rows.OrderBy(x => x.Issue.Key)            : rows.OrderByDescending(x => x.Issue.Key),
+        "Summary" => _sortAscWL ? rows.OrderBy(x => x.Issue.Summary)        : rows.OrderByDescending(x => x.Issue.Summary),
+        "Time"    => _sortAscWL ? rows.OrderBy(x => x.Log.TimeSpentSeconds) : rows.OrderByDescending(x => x.Log.TimeSpentSeconds),
+        "Comment" => _sortAscWL ? rows.OrderBy(x => x.Log.Comment)          : rows.OrderByDescending(x => x.Log.Comment),
+        _         => rows.OrderByDescending(x => x.Log.Started),
+    };
+
+    private IEnumerable<SprintIssue> ApplySortAI(IEnumerable<SprintIssue> issues) => _sortColAI switch
+    {
+        "Epic"      => _sortAscAI ? issues.OrderBy(i => i.EpicKey)                 : issues.OrderByDescending(i => i.EpicKey),
+        "Key"       => _sortAscAI ? issues.OrderBy(i => i.Key)                     : issues.OrderByDescending(i => i.Key),
+        "Summary"   => _sortAscAI ? issues.OrderBy(i => i.Summary)                 : issues.OrderByDescending(i => i.Summary),
+        "Status"    => _sortAscAI ? issues.OrderBy(i => i.Status)                  : issues.OrderByDescending(i => i.Status),
+        "Type"      => _sortAscAI ? issues.OrderBy(i => i.IssueType)               : issues.OrderByDescending(i => i.IssueType),
+        "Remaining" => _sortAscAI ? issues.OrderBy(i => i.RemainingEstimateSeconds): issues.OrderByDescending(i => i.RemainingEstimateSeconds),
+        _           => issues,
+    };
+
     // ── Days left override ────────────────────────────────────────────────────
     private string OverrideDaysLeftInput = "";
     private int EffectiveDaysRemaining =>
@@ -1076,7 +1143,17 @@
                 if (reasons.Any())
                     result.Add(new(issue, reasons));
             }
-            return result.OrderByDescending(r => r.Reasons.Count).ThenBy(r => r.Issue.Assignee).ToList();
+            return (_sortColRI switch
+            {
+                "Key"       => _sortAscRI ? result.OrderBy(r => r.Issue.Key)                     : result.OrderByDescending(r => r.Issue.Key),
+                "Summary"   => _sortAscRI ? result.OrderBy(r => r.Issue.Summary)                 : result.OrderByDescending(r => r.Issue.Summary),
+                "Assignee"  => _sortAscRI ? result.OrderBy(r => r.Issue.Assignee)                : result.OrderByDescending(r => r.Issue.Assignee),
+                "Status"    => _sortAscRI ? result.OrderBy(r => r.Issue.Status)                  : result.OrderByDescending(r => r.Issue.Status),
+                "Type"      => _sortAscRI ? result.OrderBy(r => r.Issue.IssueType)               : result.OrderByDescending(r => r.Issue.IssueType),
+                "Idle"      => _sortAscRI ? result.OrderBy(r => r.Issue.DaysSinceLastWorklog)    : result.OrderByDescending(r => r.Issue.DaysSinceLastWorklog),
+                "Remaining" => _sortAscRI ? result.OrderBy(r => r.Issue.RemainingEstimateSeconds): result.OrderByDescending(r => r.Issue.RemainingEstimateSeconds),
+                _           => result.OrderByDescending(r => r.Reasons.Count).ThenBy(r => r.Issue.Assignee),
+            }).ToList();
         }
     }
 

@@ -52,15 +52,15 @@ else
         <table class="table table-sm table-hover align-middle mb-4">
             <thead class="table-light">
                 <tr>
-                    <th>Sprint</th>
-                    <th>Type</th>
-                    <th>Last Synced</th>
-                    <th>Status</th>
+                    <th class="sortable @(SI("Sprint", _sortColDS, _sortAscDS))" @onclick='() => SortDS("Sprint")'>Sprint</th>
+                    <th class="sortable @(SI("Type",   _sortColDS, _sortAscDS))" @onclick='() => SortDS("Type")'>Type</th>
+                    <th class="sortable @(SI("Synced", _sortColDS, _sortAscDS))" @onclick='() => SortDS("Synced")'>Last Synced</th>
+                    <th class="sortable @(SI("Status", _sortColDS, _sortAscDS))" @onclick='() => SortDS("Status")'>Status</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var r in _sprints)
+                @foreach (var r in SortedSprints)
                 {
                     <tr>
                         <td>@(string.IsNullOrEmpty(r.SprintName) ? r.ReportIdentifier : r.SprintName)</td>
@@ -101,15 +101,15 @@ else
         <table class="table table-sm table-hover align-middle mb-4">
             <thead class="table-light">
                 <tr>
-                    <th>Key</th>
-                    <th>Summary</th>
-                    <th>Last Synced</th>
-                    <th>Status</th>
+                    <th class="sortable @(SI("Key",     _sortColDE, _sortAscDE))" @onclick='() => SortDE("Key")'>Key</th>
+                    <th class="sortable @(SI("Summary", _sortColDE, _sortAscDE))" @onclick='() => SortDE("Summary")'>Summary</th>
+                    <th class="sortable @(SI("Synced",  _sortColDE, _sortAscDE))" @onclick='() => SortDE("Synced")'>Last Synced</th>
+                    <th class="sortable @(SI("Status",  _sortColDE, _sortAscDE))" @onclick='() => SortDE("Status")'>Status</th>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
-                @foreach (var e in _epics)
+                @foreach (var e in SortedEpics)
                 {
                     <tr>
                         <td><code>@e.Key</code></td>
@@ -148,6 +148,44 @@ else
     string? _message;
     string? _error;
     int _ttl;
+
+    private string _sortColDS = ""; private bool _sortAscDS = true;
+    private string _sortColDE = ""; private bool _sortAscDE = true;
+    private void SortDS(string c) { if (_sortColDS == c) _sortAscDS = !_sortAscDS; else { _sortColDS = c; _sortAscDS = true; } }
+    private void SortDE(string c) { if (_sortColDE == c) _sortAscDE = !_sortAscDE; else { _sortColDE = c; _sortAscDE = true; } }
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
+
+    private IEnumerable<SprintReport> SortedSprints
+    {
+        get
+        {
+            var q = _sprints ?? Enumerable.Empty<SprintReport>();
+            return _sortColDS switch
+            {
+                "Sprint" => _sortAscDS ? q.OrderBy(r => r.SprintName ?? r.ReportIdentifier) : q.OrderByDescending(r => r.SprintName ?? r.ReportIdentifier),
+                "Type"   => _sortAscDS ? q.OrderBy(r => r.ReportIdentifier)                 : q.OrderByDescending(r => r.ReportIdentifier),
+                "Synced" => _sortAscDS ? q.OrderBy(r => r.SyncedAt)                         : q.OrderByDescending(r => r.SyncedAt),
+                "Status" => _sortAscDS ? q.OrderBy(r => r.SyncedAt)                         : q.OrderByDescending(r => r.SyncedAt),
+                _        => q,
+            };
+        }
+    }
+
+    private IEnumerable<JiraEpicReport> SortedEpics
+    {
+        get
+        {
+            var q = _epics ?? Enumerable.Empty<JiraEpicReport>();
+            return _sortColDE switch
+            {
+                "Key"     => _sortAscDE ? q.OrderBy(e => e.Key)      : q.OrderByDescending(e => e.Key),
+                "Summary" => _sortAscDE ? q.OrderBy(e => e.Summary)  : q.OrderByDescending(e => e.Summary),
+                "Synced"  => _sortAscDE ? q.OrderBy(e => e.SyncedAt) : q.OrderByDescending(e => e.SyncedAt),
+                "Status"  => _sortAscDE ? q.OrderBy(e => e.SyncedAt) : q.OrderByDescending(e => e.SyncedAt),
+                _         => q,
+            };
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {

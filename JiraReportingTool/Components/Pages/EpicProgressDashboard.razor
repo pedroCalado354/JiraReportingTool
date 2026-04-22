@@ -618,16 +618,16 @@
                     <table class="issues-table">
                         <thead>
                             <tr>
-                                <th>Key</th>
-                                <th>Summary</th>
-                                <th>Type</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                                <th>Assignee</th>
-                                <th>Estimate</th>
-                                <th>Logged</th>
-                                <th>Remaining</th>
-                                <th>Last Activity</th>
+                                <th class="sortable @(SI("Key",       _sortColSI, _sortAscSI))" @onclick='() => SortSI("Key")'>Key</th>
+                                <th class="sortable @(SI("Summary",   _sortColSI, _sortAscSI))" @onclick='() => SortSI("Summary")'>Summary</th>
+                                <th class="sortable @(SI("Type",      _sortColSI, _sortAscSI))" @onclick='() => SortSI("Type")'>Type</th>
+                                <th class="sortable @(SI("Priority",  _sortColSI, _sortAscSI))" @onclick='() => SortSI("Priority")'>Priority</th>
+                                <th class="sortable @(SI("Status",    _sortColSI, _sortAscSI))" @onclick='() => SortSI("Status")'>Status</th>
+                                <th class="sortable @(SI("Assignee",  _sortColSI, _sortAscSI))" @onclick='() => SortSI("Assignee")'>Assignee</th>
+                                <th class="sortable @(SI("Estimate",  _sortColSI, _sortAscSI))" @onclick='() => SortSI("Estimate")'>Estimate</th>
+                                <th class="sortable @(SI("Logged",    _sortColSI, _sortAscSI))" @onclick='() => SortSI("Logged")'>Logged</th>
+                                <th class="sortable @(SI("Remaining", _sortColSI, _sortAscSI))" @onclick='() => SortSI("Remaining")'>Remaining</th>
+                                <th class="sortable @(SI("LastAct",   _sortColSI, _sortAscSI))" @onclick='() => SortSI("LastAct")'>Last Activity</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -667,15 +667,15 @@
                         <thead>
                             <tr>
                                 <th></th>
-                                <th>Key</th>
-                                <th>Summary</th>
-                                <th>Type</th>
-                                <th>Status</th>
-                                <th>Assignee</th>
-                                <th>Sprint</th>
-                                <th>Estimate</th>
-                                <th>Logged</th>
-                                <th>Remaining</th>
+                                <th class="sortable @(SI("Key",       _sortColEI, _sortAscEI))" @onclick='() => SortEI("Key")'>Key</th>
+                                <th class="sortable @(SI("Summary",   _sortColEI, _sortAscEI))" @onclick='() => SortEI("Summary")'>Summary</th>
+                                <th class="sortable @(SI("Type",      _sortColEI, _sortAscEI))" @onclick='() => SortEI("Type")'>Type</th>
+                                <th class="sortable @(SI("Status",    _sortColEI, _sortAscEI))" @onclick='() => SortEI("Status")'>Status</th>
+                                <th class="sortable @(SI("Assignee",  _sortColEI, _sortAscEI))" @onclick='() => SortEI("Assignee")'>Assignee</th>
+                                <th class="sortable @(SI("Sprint",    _sortColEI, _sortAscEI))" @onclick='() => SortEI("Sprint")'>Sprint</th>
+                                <th class="sortable @(SI("Estimate",  _sortColEI, _sortAscEI))" @onclick='() => SortEI("Estimate")'>Estimate</th>
+                                <th class="sortable @(SI("Logged",    _sortColEI, _sortAscEI))" @onclick='() => SortEI("Logged")'>Logged</th>
+                                <th class="sortable @(SI("Remaining", _sortColEI, _sortAscEI))" @onclick='() => SortEI("Remaining")'>Remaining</th>
                                 <th>Progress %</th>
                                 <th>Jira</th>
                             </tr>
@@ -826,6 +826,13 @@
     private string FilterType     { get; set; } = "";
     private string FilterAssignee { get; set; } = "";
 
+    // Table sort state
+    private string _sortColSI = ""; private bool _sortAscSI = true;
+    private string _sortColEI = ""; private bool _sortAscEI = true;
+    private void SortSI(string c) { if (_sortColSI == c) _sortAscSI = !_sortAscSI; else { _sortColSI = c; _sortAscSI = true; } }
+    private void SortEI(string c) { if (_sortColEI == c) _sortAscEI = !_sortAscEI; else { _sortColEI = c; _sortAscEI = true; } }
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
+
     // ───────────────────────────────────────────────────────────
     // Derived filter source lists
     // ───────────────────────────────────────────────────────────
@@ -847,19 +854,56 @@
     // ───────────────────────────────────────────────────────────
     // Filtered issue collections
     // ───────────────────────────────────────────────────────────
-    private IEnumerable<SprintIssue> FilteredEpicIssues =>
-        (EpicData?.Issues ?? Enumerable.Empty<SprintIssue>())
-        .Where(i => string.IsNullOrEmpty(FilterText)     || MatchesText(i.Key, i.Summary, FilterText))
-        .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status == FilterStatus)
-        .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
-        .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee);
+    private IEnumerable<SprintIssue> FilteredEpicIssues
+    {
+        get
+        {
+            var q = (EpicData?.Issues ?? Enumerable.Empty<SprintIssue>())
+                .Where(i => string.IsNullOrEmpty(FilterText)     || MatchesText(i.Key, i.Summary, FilterText))
+                .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status == FilterStatus)
+                .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
+                .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee);
+            return _sortColEI switch
+            {
+                "Key"       => _sortAscEI ? q.OrderBy(i => i.Key)                     : q.OrderByDescending(i => i.Key),
+                "Summary"   => _sortAscEI ? q.OrderBy(i => i.Summary)                 : q.OrderByDescending(i => i.Summary),
+                "Type"      => _sortAscEI ? q.OrderBy(i => i.IssueType)               : q.OrderByDescending(i => i.IssueType),
+                "Status"    => _sortAscEI ? q.OrderBy(i => i.Status)                  : q.OrderByDescending(i => i.Status),
+                "Assignee"  => _sortAscEI ? q.OrderBy(i => i.Assignee)                : q.OrderByDescending(i => i.Assignee),
+                "Sprint"    => _sortAscEI ? q.OrderBy(i => i.SprintName)              : q.OrderByDescending(i => i.SprintName),
+                "Estimate"  => _sortAscEI ? q.OrderBy(i => i.OriginalEstimateSeconds) : q.OrderByDescending(i => i.OriginalEstimateSeconds),
+                "Logged"    => _sortAscEI ? q.OrderBy(i => i.TimeSpentSeconds)        : q.OrderByDescending(i => i.TimeSpentSeconds),
+                "Remaining" => _sortAscEI ? q.OrderBy(i => i.RemainingEstimateSeconds): q.OrderByDescending(i => i.RemainingEstimateSeconds),
+                _           => q,
+            };
+        }
+    }
 
-    private IEnumerable<SprintIssue> FilteredSprintIssues =>
-        (SprintData?.Issues ?? Enumerable.Empty<SprintIssue>())
-        .Where(i => string.IsNullOrEmpty(FilterText)     || MatchesText(i.Key, i.Summary, FilterText))
-        .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status == FilterStatus)
-        .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
-        .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee);
+    private IEnumerable<SprintIssue> FilteredSprintIssues
+    {
+        get
+        {
+            var q = (SprintData?.Issues ?? Enumerable.Empty<SprintIssue>())
+                .Where(i => string.IsNullOrEmpty(FilterText)     || MatchesText(i.Key, i.Summary, FilterText))
+                .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status == FilterStatus)
+                .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
+                .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee);
+            return _sortColSI switch
+            {
+                "Key"       => _sortAscSI ? q.OrderBy(i => i.Key)                     : q.OrderByDescending(i => i.Key),
+                "Summary"   => _sortAscSI ? q.OrderBy(i => i.Summary)                 : q.OrderByDescending(i => i.Summary),
+                "Type"      => _sortAscSI ? q.OrderBy(i => i.IssueType)               : q.OrderByDescending(i => i.IssueType),
+                "Priority"  => _sortAscSI ? q.OrderBy(i => i.Priority)                : q.OrderByDescending(i => i.Priority),
+                "Status"    => _sortAscSI ? q.OrderBy(i => i.Status)                  : q.OrderByDescending(i => i.Status),
+                "Assignee"  => _sortAscSI ? q.OrderBy(i => i.Assignee)                : q.OrderByDescending(i => i.Assignee),
+                "Estimate"  => _sortAscSI ? q.OrderBy(i => i.OriginalEstimateSeconds) : q.OrderByDescending(i => i.OriginalEstimateSeconds),
+                "Logged"    => _sortAscSI ? q.OrderBy(i => i.TimeSpentSeconds)        : q.OrderByDescending(i => i.TimeSpentSeconds),
+                "Remaining" => _sortAscSI ? q.OrderBy(i => i.RemainingEstimateSeconds): q.OrderByDescending(i => i.RemainingEstimateSeconds),
+                "LastAct"   => _sortAscSI ? q.OrderBy(i => i.DaysSinceLastWorklog)    : q.OrderByDescending(i => i.DaysSinceLastWorklog),
+                _           => q,
+            };
+        }
+    }
 
     private static bool MatchesText(string key, string summary, string text) =>
         key.Contains(text, StringComparison.OrdinalIgnoreCase) ||

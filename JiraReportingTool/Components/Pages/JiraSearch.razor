@@ -85,15 +85,15 @@
                     <table class="table table-hover align-middle small mb-0">
                         <thead class="table-light">
                             <tr>
-                                <th style="width:110px">Key</th>
-                                <th>Summary</th>
-                                <th style="width:130px">Status</th>
-                                <th style="width:160px">Assignee</th>
-                                <th style="width:130px">Created</th>
+                                <th class="sortable @(SI("Key",      _sortColJS, _sortAscJS))" style="width:110px" @onclick='() => SortJS("Key")'>Key</th>
+                                <th class="sortable @(SI("Summary",  _sortColJS, _sortAscJS))" @onclick='() => SortJS("Summary")'>Summary</th>
+                                <th class="sortable @(SI("Status",   _sortColJS, _sortAscJS))" style="width:130px" @onclick='() => SortJS("Status")'>Status</th>
+                                <th class="sortable @(SI("Assignee", _sortColJS, _sortAscJS))" style="width:160px" @onclick='() => SortJS("Assignee")'>Assignee</th>
+                                <th class="sortable @(SI("Created",  _sortColJS, _sortAscJS))" style="width:130px" @onclick='() => SortJS("Created")'>Created</th>
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var issue in group.OrderBy(i => i.Key))
+                            @foreach (var issue in ApplySortJS(group))
                             {
                                 <tr>
                                     <td class="fw-semibold text-nowrap">
@@ -130,6 +130,20 @@
     private bool _loading;
     private readonly List<JiraIssueViewModel> _issues = [];
     private readonly List<string> _errors = [];
+
+    private string _sortColJS = "Key"; private bool _sortAscJS = true;
+    private void SortJS(string c) { if (_sortColJS == c) _sortAscJS = !_sortAscJS; else { _sortColJS = c; _sortAscJS = true; } }
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
+
+    private IEnumerable<JiraIssueViewModel> ApplySortJS(IEnumerable<JiraIssueViewModel> issues) => _sortColJS switch
+    {
+        "Key"      => _sortAscJS ? issues.OrderBy(i => i.Key)      : issues.OrderByDescending(i => i.Key),
+        "Summary"  => _sortAscJS ? issues.OrderBy(i => i.Summary)  : issues.OrderByDescending(i => i.Summary),
+        "Status"   => _sortAscJS ? issues.OrderBy(i => i.Status)   : issues.OrderByDescending(i => i.Status),
+        "Assignee" => _sortAscJS ? issues.OrderBy(i => i.Assignee) : issues.OrderByDescending(i => i.Assignee),
+        "Created"  => _sortAscJS ? issues.OrderBy(i => i.Created)  : issues.OrderByDescending(i => i.Created),
+        _          => issues.OrderBy(i => i.Key),
+    };
 
     private string _baseUrl => Config["Jira:BaseUrl"]?.TrimEnd('/') ?? "";
 

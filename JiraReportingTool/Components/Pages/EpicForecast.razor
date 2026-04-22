@@ -311,14 +311,14 @@
         <table class="table table-sm align-middle small">
             <thead class="table-light">
                 <tr>
-                    <th>Key</th>
-                    <th>Summary</th>
-                    <th>Assignee</th>
-                    <th>Type</th>
-                    <th>Status</th>
-                    <th>Estimate</th>
-                    <th>Logged</th>
-                    <th>Remaining</th>
+                    <th class="sortable @(SI("Key",       _sortColEF, _sortAscEF))" @onclick='() => SortEF("Key")'>Key</th>
+                    <th class="sortable @(SI("Summary",   _sortColEF, _sortAscEF))" @onclick='() => SortEF("Summary")'>Summary</th>
+                    <th class="sortable @(SI("Assignee",  _sortColEF, _sortAscEF))" @onclick='() => SortEF("Assignee")'>Assignee</th>
+                    <th class="sortable @(SI("Type",      _sortColEF, _sortAscEF))" @onclick='() => SortEF("Type")'>Type</th>
+                    <th class="sortable @(SI("Status",    _sortColEF, _sortAscEF))" @onclick='() => SortEF("Status")'>Status</th>
+                    <th class="sortable @(SI("Estimate",  _sortColEF, _sortAscEF))" @onclick='() => SortEF("Estimate")'>Estimate</th>
+                    <th class="sortable @(SI("Logged",    _sortColEF, _sortAscEF))" @onclick='() => SortEF("Logged")'>Logged</th>
+                    <th class="sortable @(SI("Remaining", _sortColEF, _sortAscEF))" @onclick='() => SortEF("Remaining")'>Remaining</th>
                     <th>Progress</th>
                     <th class="text-center">Feasible?</th>
                 </tr>
@@ -490,6 +490,10 @@
     private string SprintId = "";
     private double HoursPerDay = 6;
     private bool IsLoading = false;
+
+    private string _sortColEF = ""; private bool _sortAscEF = true;
+    private void SortEF(string c) { if (_sortColEF == c) _sortAscEF = !_sortAscEF; else { _sortColEF = c; _sortAscEF = true; } }
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
     private bool IsLoadingEpics = false;
     private bool NoEpicsFound = false;
     private string? ErrorMessage;
@@ -592,15 +596,25 @@
         .OrderByDescending(a => a.RemainingHours)
         .ToList();
 
-    private IEnumerable<SprintIssue> SortedIssues =>
-FilteredIssues
-    .OrderBy(i => i.StatusCategoryKey switch
+    private IEnumerable<SprintIssue> SortedIssues
     {
-        "indeterminate" => 0,
-        "new" => 1,
-        _ => 2
-    })
-    .ThenByDescending(i => i.RemainingEstimateSeconds);
+        get
+        {
+            var q = FilteredIssues;
+            return _sortColEF switch
+            {
+                "Key"       => _sortAscEF ? q.OrderBy(i => i.Key)                     : q.OrderByDescending(i => i.Key),
+                "Summary"   => _sortAscEF ? q.OrderBy(i => i.Summary)                 : q.OrderByDescending(i => i.Summary),
+                "Assignee"  => _sortAscEF ? q.OrderBy(i => i.Assignee)                : q.OrderByDescending(i => i.Assignee),
+                "Type"      => _sortAscEF ? q.OrderBy(i => i.IssueType)               : q.OrderByDescending(i => i.IssueType),
+                "Status"    => _sortAscEF ? q.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }) : q.OrderByDescending(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }),
+                "Estimate"  => _sortAscEF ? q.OrderBy(i => i.OriginalEstimateSeconds) : q.OrderByDescending(i => i.OriginalEstimateSeconds),
+                "Logged"    => _sortAscEF ? q.OrderBy(i => i.TimeSpentSeconds)        : q.OrderByDescending(i => i.TimeSpentSeconds),
+                "Remaining" => _sortAscEF ? q.OrderBy(i => i.RemainingEstimateSeconds): q.OrderByDescending(i => i.RemainingEstimateSeconds),
+                _           => q.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }).ThenByDescending(i => i.RemainingEstimateSeconds),
+            };
+        }
+    }
     // ── Load ─────────────────────────────────────────────────────────────────
     private async Task LoadSprintEpics()
     {
