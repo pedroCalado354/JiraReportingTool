@@ -1130,6 +1130,7 @@
 
         var report = await JiraService.GetEpicReportAsync(key);
         var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
+        tasks = tasks.Where(g=> g.IssueType != "Bug").ToList();
 
         foreach (var t in tasks) _taskCache[t.Id] = t;
 

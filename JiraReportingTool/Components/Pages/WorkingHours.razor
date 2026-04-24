@@ -236,6 +236,75 @@
                 </table>
             </div>
         </div>
+
+        <!-- ═══ DONE FEATURES ════════════════════════════════════════ -->
+        <div class="wh-table-card">
+            <div class="wh-table-header">
+                <span class="wh-table-title">Done Features</span>
+                <span class="wh-table-meta">@DoneFeatures.Count issues · @DoneTotalSP SP · @DoneTotalHours.ToString("F1") h logged</span>
+            </div>
+            <div class="wh-table-wrap">
+                <table class="wh-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable @(SI("Key",      _sortColDF, _sortAscDF))" @onclick='() => SortDF("Key")'>Key</th>
+                            <th class="sortable @(SI("Summary",  _sortColDF, _sortAscDF))" @onclick='() => SortDF("Summary")'>Summary</th>
+                            <th class="sortable @(SI("Type",     _sortColDF, _sortAscDF))" @onclick='() => SortDF("Type")'>Type</th>
+                            <th class="sortable @(SI("Assignee", _sortColDF, _sortAscDF))" @onclick='() => SortDF("Assignee")'>Assignee</th>
+                            @if (ShowSprintColDF)
+                            {
+                                <th class="sortable @(SI("Sprint", _sortColDF, _sortAscDF))" @onclick='() => SortDF("Sprint")'>Sprint</th>
+                            }
+                            <th class="sortable @(SI("Epic",     _sortColDF, _sortAscDF))" @onclick='() => SortDF("Epic")'>Epic</th>
+                            <th class="text-right sortable @(SI("SP",    _sortColDF, _sortAscDF))" @onclick='() => SortDF("SP")'>SP</th>
+                            <th class="text-right sortable @(SI("Hours", _sortColDF, _sortAscDF))" @onclick='() => SortDF("Hours")'>Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in DoneFeatures)
+                        {
+                            <tr>
+                                <td><span class="wh-issue-badge">@r.Key</span></td>
+                                <td class="wh-td-summary"><span title="@r.Summary">@r.Summary</span></td>
+                                <td><span class="wh-type-badge">@r.IssueType</span></td>
+                                <td class="wh-td-member">@r.Assignee</td>
+                                @if (ShowSprintColDF)
+                                {
+                                    <td class="wh-td-day">@r.SprintName</td>
+                                }
+                                <td class="wh-td-epic">
+                                    @if (!string.IsNullOrEmpty(r.EpicKey))
+                                    {
+                                        <span class="wh-epic-key">@r.EpicKey</span>
+                                        @if (!string.IsNullOrEmpty(r.EpicName) && r.EpicName != "No Epic")
+                                        {
+                                            <span class="wh-epic-name">@r.EpicName</span>
+                                        }
+                                    }
+                                    else { <span class="wh-td-muted">—</span> }
+                                </td>
+                                <td class="text-right wh-td-hours">@(r.StoryPoints.HasValue ? r.StoryPoints.Value.ToString() : "—")</td>
+                                <td class="text-right wh-td-hours">@r.HoursLogged.ToString("F2")</td>
+                            </tr>
+                        }
+                        @if (DoneFeatures.Count == 0)
+                        {
+                            <tr><td colspan="@(ShowSprintColDF ? 8 : 7)" class="wh-empty-row">No done features match the current filters.</td></tr>
+                        }
+                    </tbody>
+                    @if (DoneFeatures.Count > 0)
+                    {
+                        <tfoot>
+                            <tr class="wh-tfoot-row">
+                                <td colspan="@(ShowSprintColDF ? 6 : 5)">Total</td>
+                                <td class="text-right">@DoneTotalSP</td>
+                                <td class="text-right">@DoneTotalHours.ToString("F2")</td>
+                            </tr>
+                        </tfoot>
+                    }
+                </table>
+            </div>
+        </div>
     }
 
 </div>
@@ -598,6 +667,17 @@
         white-space: nowrap;
     }
 
+    .wh-type-badge {
+        background: #f0fdf4;
+        border: 1px solid #bbf7d0;
+        border-radius: 5px;
+        padding: 1px 7px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #166534;
+        white-space: nowrap;
+    }
+
     .wh-epic-key {
         font-size: 11px;
         font-weight: 700;
@@ -637,6 +717,8 @@
 
     private string _sortColWH = ""; private bool _sortAscWH = true;
     private void SortWH(string c) { if (_sortColWH == c) _sortAscWH = !_sortAscWH; else { _sortColWH = c; _sortAscWH = true; } }
+    private string _sortColDF = ""; private bool _sortAscDF = true;
+    private void SortDF(string c) { if (_sortColDF == c) _sortAscDF = !_sortAscDF; else { _sortColDF = c; _sortAscDF = true; } }
     private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
 
     private List<int> ParsedSprintIds = [];
@@ -669,6 +751,16 @@
         string IssueKey, string IssueSummary, string IssueType,
         string EpicKey, string EpicName);
 
+    private static bool IsFeatureIssue(SprintIssue i) =>
+        !i.IssueType.Contains("Bug",    StringComparison.OrdinalIgnoreCase) &&
+        !i.IssueType.Contains("Defect", StringComparison.OrdinalIgnoreCase) &&
+        !i.IssueType.Contains("Epic",   StringComparison.OrdinalIgnoreCase);
+
+    private sealed record DoneFeatureRow(
+        string Key, string Summary, string IssueType,
+        string Assignee, string EpicKey, string EpicName,
+        int? StoryPoints, double HoursLogged, string SprintName);
+
     private List<WorklogRow> AllWorklogs => SprintReports
         .SelectMany(r => r.Issues)
         .SelectMany(i => i.Worklogs.Select(w => new WorklogRow(
@@ -700,6 +792,45 @@
             }).ToList();
         }
     }
+
+    private List<DoneFeatureRow> DoneFeatures
+    {
+        get
+        {
+            var q = SprintReports
+                .SelectMany(r => r.Issues.Select(i => (Issue: i, SprintName: r.SprintName)))
+                .Where(x => x.Issue.StatusCategoryKey == "done" && IsFeatureIssue(x.Issue))
+                .Where(x => SelectedEpics.Count == 0 || SelectedEpics.Contains(x.Issue.EpicKey))
+                .Where(x => SelectedMembers.Count == 0 || SelectedMembers.Contains(x.Issue.Assignee))
+                .DistinctBy(x => x.Issue.Key)
+                .Select(x => new DoneFeatureRow(
+                    x.Issue.Key,
+                    x.Issue.Summary,
+                    x.Issue.IssueType,
+                    x.Issue.Assignee,
+                    x.Issue.EpicKey,
+                    x.Issue.EpicName,
+                    x.Issue.StoryPoints,
+                    x.Issue.Worklogs.Sum(w => w.TimeSpentSeconds) / 3600.0,
+                    x.SprintName));
+            return (_sortColDF switch
+            {
+                "Key"      => _sortAscDF ? q.OrderBy(r => r.Key)           : q.OrderByDescending(r => r.Key),
+                "Summary"  => _sortAscDF ? q.OrderBy(r => r.Summary)       : q.OrderByDescending(r => r.Summary),
+                "Type"     => _sortAscDF ? q.OrderBy(r => r.IssueType)     : q.OrderByDescending(r => r.IssueType),
+                "Assignee" => _sortAscDF ? q.OrderBy(r => r.Assignee)      : q.OrderByDescending(r => r.Assignee),
+                "Sprint"   => _sortAscDF ? q.OrderBy(r => r.SprintName)    : q.OrderByDescending(r => r.SprintName),
+                "Epic"     => _sortAscDF ? q.OrderBy(r => r.EpicName)      : q.OrderByDescending(r => r.EpicName),
+                "SP"       => _sortAscDF ? q.OrderBy(r => r.StoryPoints)   : q.OrderByDescending(r => r.StoryPoints),
+                "Hours"    => _sortAscDF ? q.OrderBy(r => r.HoursLogged)   : q.OrderByDescending(r => r.HoursLogged),
+                _          => q.OrderBy(r => r.Key),
+            }).ToList();
+        }
+    }
+
+    private double DoneTotalSP    => DoneFeatures.Sum(r => r.StoryPoints ?? 0);
+    private double DoneTotalHours => DoneFeatures.Sum(r => r.HoursLogged);
+    private bool   ShowSprintColDF => SprintReports.Count > 1;
 
     // ── KPI properties ────────────────────────────────────────────────────────
     private double TotalHours        => FilteredWorklogs.Sum(w => w.TimeSpentSeconds) / 3600.0;

@@ -386,20 +386,24 @@
                 </div>
             }
 
-            <!-- ── Bug Rate by Assignee ────────────────────────────────────────────── -->
-            <div class="qm-section-label">Bug Rate by Assignee</div>
+            <!-- ── Bug Effort by Assignee ─────────────────────────────────────────── -->
+            <div class="qm-section-label">
+                Bug Effort by Assignee
+                <span class="qm-section-note">hours logged on bugs ÷ total hours logged · includes every member who worked on a bug, regardless of current assignment</span>
+            </div>
             <div class="qm-card">
                 <div class="qm-table-wrap">
                     <table class="qm-table">
                         <thead>
                             <tr>
                                 <th class="sortable @(SI("Assignee", _sortColBR, _sortAscBR))" @onclick='() => SortBR("Assignee")'>Assignee</th>
-                                <th class="tc sortable @(SI("Issues", _sortColBR, _sortAscBR))" @onclick='() => SortBR("Issues")'>Issues</th>
-                                <th class="tc sortable @(SI("Bugs", _sortColBR, _sortAscBR))" @onclick='() => SortBR("Bugs")'>Bugs</th>
-                                <th class="tc sortable @(SI("BugRate", _sortColBR, _sortAscBR))" @onclick='() => SortBR("BugRate")'>Bug Rate</th>
+                                <th class="tc sortable @(SI("Issues", _sortColBR, _sortAscBR))" @onclick='() => SortBR("Issues")' title="Distinct issues the member logged time on">Issues Worked</th>
+                                <th class="tc sortable @(SI("Bugs", _sortColBR, _sortAscBR))" @onclick='() => SortBR("Bugs")' title="Distinct bugs the member logged time on">Bugs Worked</th>
+                                <th class="tc sortable @(SI("BugHrs", _sortColBR, _sortAscBR))" @onclick='() => SortBR("BugHrs")' title="Hours logged on bug issues">Bug Hrs</th>
+                                <th class="tc sortable @(SI("BugEffort", _sortColBR, _sortAscBR))" @onclick='() => SortBR("BugEffort")' title="Bug hours ÷ total logged hours">Bug Effort</th>
                                 <th class="tc sortable @(SI("AvgFix", _sortColBR, _sortAscBR))" @onclick='() => SortBR("AvgFix")'>Avg Fix Time</th>
                                 <th class="tc">Stale Bugs</th>
-                                <th style="width:130px">Rate Bar</th>
+                                <th style="width:130px">Effort Bar</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -408,26 +412,28 @@
                                 var stale = ActiveBugs.Count(b => b.Assignee == m.Assignee && b.StatusCategoryKey != "done" && b.DaysSinceLastWorklog >= 5);
                                 <tr>
                                     <td class="qm-td-name">@m.Assignee</td>
-                                    <td class="tc">@m.TotalTasks</td>
-                                    <td class="tc @(m.BugCount > 0 ? "qm-red qm-bold" : "qm-muted")">@m.BugCount</td>
+                                    <td class="tc">@m.IssuesWorked</td>
+                                    <td class="tc @(m.BugsWorked > 0 ? "qm-red qm-bold" : "qm-muted")">@m.BugsWorked</td>
+                                    <td class="tc qm-muted">@FormatHours(m.BugHours)</td>
                                     <td class="tc">
-                                        <span class="qm-chip @(m.BugRate > 50 ? "qm-chip-red" : m.BugRate > 25 ? "qm-chip-orange" : "qm-chip-green")">
-                                            @m.BugRate.ToString("0.0")%
+                                        <span class="qm-chip @(m.BugEffortRate > 50 ? "qm-chip-red" : m.BugEffortRate > 25 ? "qm-chip-orange" : "qm-chip-green")"
+                                              title="@FormatHours(m.BugHours) bugs / @FormatHours(m.TotalHours) total">
+                                            @m.BugEffortRate.ToString("0.0")%
                                         </span>
                                     </td>
                                     <td class="tc qm-muted">@(m.AvgFixHours < 0 ? "—" : FormatFixTime(m.AvgFixHours))</td>
                                     <td class="tc @(stale > 0 ? "qm-orange qm-bold" : "qm-muted")">@(stale > 0 ? stale.ToString() : "—")</td>
                                     <td>
                                         <div class="qm-table-bar">
-                                            <div style="width:@Math.Min((int)m.BugRate,100)%;height:100%;border-radius:3px"
-                                                 class="@(m.BugRate > 50 ? "qm-fill-red" : m.BugRate > 25 ? "qm-fill-orange" : "qm-fill-green")"></div>
+                                            <div style="width:@Math.Min((int)m.BugEffortRate,100)%;height:100%;border-radius:3px"
+                                                 class="@(m.BugEffortRate > 50 ? "qm-fill-red" : m.BugEffortRate > 25 ? "qm-fill-orange" : "qm-fill-green")"></div>
                                         </div>
                                     </td>
                                 </tr>
                             }
                             @if (!AssigneeBugRates.Any())
                             {
-                                <tr><td colspan="7" class="qm-empty-row">No issues match current filters.</td></tr>
+                                <tr><td colspan="8" class="qm-empty-row">No logged hours found for the current filters.</td></tr>
                             }
                         </tbody>
                         @if (AssigneeBugRates.Count > 1)
@@ -437,9 +443,11 @@
                                     <td class="qm-td-name">Total</td>
                                     <td class="tc">@ActiveFilteredIssues.Count</td>
                                     <td class="tc qm-red qm-bold">@ActiveBugCount</td>
+                                    <td class="tc qm-muted">@FormatHours(BugFixHours)</td>
                                     <td class="tc">
-                                        <span class="qm-chip @(OverallBugRate > 50 ? "qm-chip-red" : OverallBugRate > 25 ? "qm-chip-orange" : "qm-chip-green")">
-                                            @OverallBugRate.ToString("0.0")%
+                                        <span class="qm-chip @(BugFixEffortRatio > 50 ? "qm-chip-red" : BugFixEffortRatio > 25 ? "qm-chip-orange" : "qm-chip-green")"
+                                              title="Overall: @FormatHours(BugFixHours) bugs / @FormatHours(TotalLoggedHours) total">
+                                            @(BugFixEffortRatio < 0 ? "N/A" : BugFixEffortRatio.ToString("0.0") + "%")
                                         </span>
                                     </td>
                                     <td class="tc qm-muted">@(AvgFixTimeHours < 0 ? "—" : FormatFixTime(AvgFixTimeHours))</td>
@@ -778,37 +786,55 @@
     }
 
     // ── Per-assignee stats ────────────────────────────────────────────────────
-    private record AssigneeBugMetric(string Assignee, int TotalTasks, int BugCount, double BugRate, double AvgFixHours);
+    private record AssigneeBugMetric(string Assignee, int IssuesWorked, int BugsWorked, double BugHours, double TotalHours, double BugEffortRate, double AvgFixHours);
 
     private List<AssigneeBugMetric> AssigneeBugRates
     {
         get
         {
-            var q = ActiveFilteredIssues
-                .GroupBy(i => i.Assignee)
+            // Use EffortIssues so we scan all issues regardless of current assignee,
+            // then filter worklogs by author when an assignee filter is active.
+            var allIssues = EffortIssues.ToList();
+            var q = allIssues
+                .SelectMany(i => i.Worklogs
+                    .Where(w => !string.IsNullOrEmpty(w.Author))
+                    .Where(w => string.IsNullOrEmpty(FilterAssignee) || w.Author == FilterAssignee)
+                    .Select(w => (Author: w.Author, IssueKey: i.Key, IsBugIssue: IsBug(i), Hours: w.TimeSpentSeconds / 3600.0)))
+                .GroupBy(x => x.Author)
                 .Select(g =>
                 {
-                    var bugs     = g.Where(IsBug).ToList();
-                    var resolved = bugs.Where(b => b.StatusCategoryKey == "done" && b.ResolutionDate.HasValue && b.Created.HasValue).ToList();
-                    var total    = g.Count();
+                    var bugHrs   = g.Where(x => x.IsBugIssue).Sum(x => x.Hours);
+                    var totalHrs = g.Sum(x => x.Hours);
+                    // Avg fix time: resolved bugs where this author is still the assignee
+                    var resolvedBugs = allIssues
+                        .Where(i => IsBug(i) && i.StatusCategoryKey == "done" && i.Assignee == g.Key
+                                 && i.ResolutionDate.HasValue && i.Created.HasValue)
+                        .ToList();
                     return new AssigneeBugMetric(
-                        g.Key, total, bugs.Count,
-                        total == 0 ? 0 : (double)bugs.Count / total * 100,
-                        resolved.Count > 0 ? resolved.Average(b => WorkingHours(b.Created!.Value, b.ResolutionDate!.Value)) : -1);
+                        g.Key,
+                        g.Select(x => x.IssueKey).Distinct().Count(),
+                        g.Where(x => x.IsBugIssue).Select(x => x.IssueKey).Distinct().Count(),
+                        bugHrs,
+                        totalHrs,
+                        totalHrs == 0 ? 0 : bugHrs / totalHrs * 100,
+                        resolvedBugs.Count > 0
+                            ? resolvedBugs.Average(b => WorkingHours(b.Created!.Value, b.ResolutionDate!.Value))
+                            : -1);
                 });
             return (_sortColBR switch
             {
-                "Assignee" => _sortAscBR ? q.OrderBy(m => m.Assignee)    : q.OrderByDescending(m => m.Assignee),
-                "Issues"   => _sortAscBR ? q.OrderBy(m => m.TotalTasks)  : q.OrderByDescending(m => m.TotalTasks),
-                "Bugs"     => _sortAscBR ? q.OrderBy(m => m.BugCount)    : q.OrderByDescending(m => m.BugCount),
-                "BugRate"  => _sortAscBR ? q.OrderBy(m => m.BugRate)     : q.OrderByDescending(m => m.BugRate),
-                "AvgFix"   => _sortAscBR ? q.OrderBy(m => m.AvgFixHours) : q.OrderByDescending(m => m.AvgFixHours),
-                _          => q.OrderByDescending(m => m.BugRate).ThenByDescending(m => m.BugCount),
+                "Assignee"  => _sortAscBR ? q.OrderBy(m => m.Assignee)      : q.OrderByDescending(m => m.Assignee),
+                "Issues"    => _sortAscBR ? q.OrderBy(m => m.IssuesWorked)  : q.OrderByDescending(m => m.IssuesWorked),
+                "Bugs"      => _sortAscBR ? q.OrderBy(m => m.BugsWorked)    : q.OrderByDescending(m => m.BugsWorked),
+                "BugHrs"    => _sortAscBR ? q.OrderBy(m => m.BugHours)      : q.OrderByDescending(m => m.BugHours),
+                "BugEffort" => _sortAscBR ? q.OrderBy(m => m.BugEffortRate) : q.OrderByDescending(m => m.BugEffortRate),
+                "AvgFix"    => _sortAscBR ? q.OrderBy(m => m.AvgFixHours)   : q.OrderByDescending(m => m.AvgFixHours),
+                _           => q.OrderByDescending(m => m.BugEffortRate).ThenByDescending(m => m.BugHours),
             }).ToList();
         }
     }
 
-    private int HighBugRateCount => AssigneeBugRates.Count(m => m.BugRate > 50);
+    private int HighBugRateCount => AssigneeBugRates.Count(m => m.BugEffortRate > 50);
 
     // ── Bug priority breakdown ────────────────────────────────────────────────
     private record PriorityBucket(string Priority, int Open, int InProgress, int Resolved);
@@ -832,8 +858,24 @@
     };
 
     // ── Effort ────────────────────────────────────────────────────────────────
-    private double BugFixHours      => ActiveFilteredIssues.Where(IsBug).Sum(i => i.Worklogs.Sum(w => w.TimeSpentSeconds)) / 3600.0;
-    private double FeatureDevHours  => ActiveFilteredIssues.Where(IsFeatureWork).Sum(i => i.Worklogs.Sum(w => w.TimeSpentSeconds)) / 3600.0;
+    // When an assignee filter is active we must scan ALL issues and filter worklogs
+    // by author, because a person's logged hours are on issues they may no longer
+    // be assigned to.  Status/priority filters still apply to the issue scope.
+    private IEnumerable<SprintIssue> EffortIssues =>
+        (ActiveReport?.Issues ?? Enumerable.Empty<SprintIssue>())
+        .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.Status   == FilterStatus)
+        .Where(i => string.IsNullOrEmpty(FilterPriority) || i.Priority == FilterPriority);
+
+    private double BugFixHours => EffortIssues.Where(IsBug)
+        .Sum(i => i.Worklogs
+            .Where(w => string.IsNullOrEmpty(FilterAssignee) || w.Author == FilterAssignee)
+            .Sum(w => w.TimeSpentSeconds)) / 3600.0;
+
+    private double FeatureDevHours => EffortIssues.Where(IsFeatureWork)
+        .Sum(i => i.Worklogs
+            .Where(w => string.IsNullOrEmpty(FilterAssignee) || w.Author == FilterAssignee)
+            .Sum(w => w.TimeSpentSeconds)) / 3600.0;
+
     private double TotalLoggedHours => BugFixHours + FeatureDevHours;
     private double BugFixEffortRatio => TotalLoggedHours == 0 ? -1 : BugFixHours / TotalLoggedHours * 100;
     private double BugOverheadPct   => FeatureDevHours == 0 ? -1 : BugFixHours / FeatureDevHours * 100;
@@ -844,16 +886,19 @@
         get
         {
             if (ActiveFilteredIssues.Count == 0) return 100;
-            var bugComp    = (1.0 - Math.Min(OverallBugRate, 100) / 100.0) * 60;
-            var effortComp = BugFixEffortRatio < 0 ? 40.0 : (1.0 - Math.Min(BugFixEffortRatio, 100) / 100.0) * 40;
-            return Math.Clamp((int)(bugComp + effortComp), 0, 100);
+            // Quadratic penalties: damage grows faster than linearly.
+            // 10% bug rate → loses ~19% of bug points.  50% → loses 75%.  75% → loses 94%.
+            var bugScore    = Math.Pow(Math.Max(0.0, 1.0 - Math.Min(OverallBugRate,   100.0) / 100.0), 2);
+            var effortScore = BugFixEffortRatio < 0 ? 1.0
+                            : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(BugFixEffortRatio, 100.0) / 100.0), 2);
+            return Math.Clamp((int)(bugScore * 60 + effortScore * 40), 0, 100);
         }
     }
 
-    private string QualityBand      => QualityScore >= 80 ? "good" : QualityScore >= 55 ? "fair" : "poor";
-    private string QualityBandLabel => QualityScore >= 80
+    private string QualityBand      => QualityScore >= 75 ? "good" : QualityScore >= 50 ? "fair" : "poor";
+    private string QualityBandLabel => QualityScore >= 75
         ? "Good — low bug density and efficient delivery"
-        : QualityScore >= 55 ? "Fair — moderate bug pressure, monitor closely"
+        : QualityScore >= 50 ? "Fair — moderate bug pressure, monitor closely"
         : "Poor — high bug rate or significant effort lost to bugs";
 
     // ── Epic helpers ──────────────────────────────────────────────────────────
