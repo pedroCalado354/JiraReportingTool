@@ -99,8 +99,8 @@
         </div>
         <div class="stat-card @(BlockedStatCount > 0 ? "stat-red" : (ScheduledJiraTaskCount > 0 ? "stat-green" : ""))">
             <div class="stat-value">@BlockedStatCount</div>
-            <div class="stat-label">Blocked</div>
-            <div class="stat-sub">tasks blocked</div>
+            <div class="stat-label">On Hold</div>
+            <div class="stat-sub">status = On Hold</div>
         </div>
         <div class="stat-card">
             <div class="stat-value">@InProgressCount</div>
@@ -419,6 +419,8 @@
                                     <th class="rpt-th rpt-th-est">Remaining</th>
                                     <th class="rpt-th rpt-th-logged">Time Logged</th>
                                     <th class="rpt-th rpt-th-pct">% Done</th>
+                                    <th class="rpt-th rpt-th-feasible">Feasible</th>
+                                    <th class="rpt-th rpt-th-activity">Last Activity</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -426,7 +428,7 @@
                                 {
                                     var rptTeamName = teamGroup.Key;
                                     <tr class="rpt-team-row">
-                                        <td colspan="8" class="rpt-team-cell">@rptTeamName</td>
+                                        <td colspan="10" class="rpt-team-cell">@rptTeamName</td>
                                     </tr>
                                     @foreach (var mem in teamGroup)
                                     {
@@ -436,7 +438,7 @@
                                         {
                                             <tr class="rpt-row">
                                                 <td class="rpt-td rpt-td-assignee">@rptMem.Name</td>
-                                                <td class="rpt-td" colspan="7" style="color:#9ca3af;font-style:italic;">No tasks assigned</td>
+                                                <td class="rpt-td" colspan="9" style="color:#9ca3af;font-style:italic;">No tasks assigned</td>
                                             </tr>
                                         }
                                         else
@@ -456,6 +458,8 @@
                                                         <td class="rpt-td rpt-td-dash">—</td>
                                                         <td class="rpt-td rpt-td-dash">—</td>
                                                         <td class="rpt-td rpt-td-dash">—</td>
+                                                        <td class="rpt-td rpt-td-dash">—</td>
+                                                        <td class="rpt-td rpt-td-dash">—</td>
                                                     }
                                                     else
                                                     {
@@ -471,6 +475,19 @@
                                                         <td class="rpt-td rpt-td-est">@FormatEstimate(row.TimeSpent, row.TimeSpentSeconds)</td>
                                                         <td class="rpt-td rpt-td-pct">
                                                             <span class="risk-badge @GetCompletionBadgeClass(row)">@GetCompletionPct(row)</span>
+                                                        </td>
+                                                        <td class="rpt-td rpt-td-feasible">
+                                                            <span class="feas-badge @GetFeasibilityClass(row)">@GetFeasibilityLabel(row)</span>
+                                                        </td>
+                                                        <td class="rpt-td rpt-td-activity">
+                                                            @if (row.LastActivityDate.HasValue)
+                                                            {
+                                                                <span>@row.LastActivityDate.Value.ToString("dd MMM, HH:mm")</span>
+                                                            }
+                                                            else
+                                                            {
+                                                                <span class="rpt-activity-never">Never</span>
+                                                            }
                                                         </td>
                                                     }
                                                 </tr>
@@ -518,9 +535,77 @@
                         </div>
                         <div class="daily-kpi-card">
                             <div class="daily-kpi-value @(dm.BlockedCount > 0 ? "kpi-red" : "kpi-green")">@dm.BlockedCount</div>
-                            <div class="daily-kpi-label">Blocked</div>
-                            <div class="daily-kpi-sub">Status contains "blocked"</div>
+                            <div class="daily-kpi-label">On Hold</div>
+                            <div class="daily-kpi-sub">Status = "On Hold"</div>
                         </div>
+                    </div>
+
+                    <!-- Today's Activity -->
+                    @{
+                        var todayActivity = GetTodayActivity();
+                        var todayAuthors = todayActivity.Select(x => x.Author).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        var noActivityToday = Allocations
+                            .Where(a => a.TaskId > 0)
+                            .Select(a => TeamMembers.FirstOrDefault(m => m.Id == a.TeamMemberId)?.Name)
+                            .Where(n => n != null)
+                            .Distinct()
+                            .Where(name => !todayAuthors.Any(a => a.Contains(name!, StringComparison.OrdinalIgnoreCase)))
+                            .OrderBy(n => n)
+                            .ToList();
+                    }
+                    <div class="daily-section">
+                        <div class="daily-section-title">
+                            Today's Activity
+                            <span class="daily-section-sub">— worklogs from @DateTime.Today.ToString("dd MMM")</span>
+                        </div>
+                        @if (_reportIssues.Count == 0)
+                        {
+                            <div class="daily-empty-note">No Jira data loaded — switch to Report view first to refresh.</div>
+                        }
+                        else if (!todayActivity.Any())
+                        {
+                            <div class="daily-empty-note">No worklogs found for today.</div>
+                        }
+                        else
+                        {
+                            <table class="rpt-table">
+                                <thead>
+                                    <tr>
+                                        <th class="rpt-th rpt-th-assignee">Author</th>
+                                        <th class="rpt-th rpt-th-est">Logged Today</th>
+                                        <th class="rpt-th rpt-th-key">Task</th>
+                                        <th class="rpt-th rpt-th-title">Summary</th>
+                                        <th class="rpt-th" style="width:80px;text-align:center">In Calendar</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var (author, totalSec, lines) in todayActivity)
+                                    {
+                                        @foreach (var (line, idx) in lines.Select((l, i) => (l, i)))
+                                        {
+                                            <tr class="rpt-row">
+                                                <td class="rpt-td rpt-td-assignee">@(idx == 0 ? author : "")</td>
+                                                <td class="rpt-td rpt-td-est">
+                                                    @if (idx == 0)
+                                                    {
+                                                        <span class="risk-badge risk-green">@FmtSec(totalSec)</span>
+                                                    }
+                                                </td>
+                                                <td class="rpt-td rpt-td-key"><span class="rpt-jira-key">@line.IssueKey</span></td>
+                                                <td class="rpt-td rpt-td-title">@line.IssueSummary</td>
+                                                <td class="rpt-td" style="text-align:center;font-size:14px;color:@(line.IsInCalendar ? "#16a34a" : "#9ca3af")">
+                                                    @(line.IsInCalendar ? "✓" : "—")
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                        }
+                        @if (noActivityToday.Any())
+                        {
+                            <div class="daily-no-activity">No activity today: @string.Join(" · ", noActivityToday)</div>
+                        }
                     </div>
 
                     <!-- Status breakdown -->
@@ -596,11 +681,11 @@
                         </div>
                     }
 
-                    <!-- Blocked tasks -->
+                    <!-- On Hold tasks -->
                     @if (dm.BlockedTasks.Count > 0)
                     {
                         <div class="daily-section">
-                            <div class="daily-section-title daily-section-title-danger">Blocked Tasks</div>
+                            <div class="daily-section-title daily-section-title-danger">On Hold Tasks</div>
                             <table class="rpt-table">
                                 <thead>
                                     <tr>
@@ -616,7 +701,7 @@
                                         <tr class="rpt-row">
                                             <td class="rpt-td rpt-td-key"><span class="rpt-jira-key">@t.Key</span></td>
                                             <td class="rpt-td rpt-td-title">@t.Summary</td>
-                                            <td class="rpt-td"><span class="rpt-status-chip status-blocked">@t.Status</span></td>
+                                            <td class="rpt-td"><span class="rpt-status-chip status-on-hold">@t.Status</span></td>
                                             <td class="rpt-td rpt-td-assignee">@t.Assignee</td>
                                         </tr>
                                     }
@@ -1059,7 +1144,7 @@
 
     private int DoneTaskCount      => GetScheduledIssues().Count(t => t.StatusCategoryKey == "done");
     private int InProgressCount    => GetScheduledIssues().Count(t => t.StatusCategoryKey == "indeterminate");
-    private int BlockedStatCount   => GetScheduledIssues().Count(t => t.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase));
+    private int BlockedStatCount   => GetScheduledIssues().Count(t => string.Equals(t.Status, "On Hold", StringComparison.OrdinalIgnoreCase));
     private int MissingEstCount    => GetScheduledIssues().Count(t =>
         t.StatusCategoryKey != "done" && t.OriginalEstimateSeconds > 0 && t.RemainingEstimateSeconds == 0);
 
@@ -1114,6 +1199,61 @@
         if (pct >= 80) return "risk-green";
         if (pct >= 40) return "risk-amber";
         return row.TimeSpentSeconds > 0 ? "risk-red" : "risk-gray";
+    }
+
+    // ── Feasibility ──
+    private string GetFeasibilityLabel(ReportRow row)
+    {
+        if (row.IsCustom) return "—";
+        if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "✓ Done";
+        if (row.RemainingEstimateSeconds == 0) return "No Estimate";
+        return row.RemainingEstimateSeconds <= (long)RemainingWorkingDays * 6 * 3600
+            ? "✓ Feasible" : "✗ Not Feasible";
+    }
+
+    private string GetFeasibilityClass(ReportRow row)
+    {
+        if (row.IsCustom) return "feas-na";
+        if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "feas-done";
+        if (row.RemainingEstimateSeconds == 0) return "feas-unknown";
+        return row.RemainingEstimateSeconds <= (long)RemainingWorkingDays * 6 * 3600
+            ? "feas-ok" : "feas-fail";
+    }
+
+    // ── Today's Activity ──
+    private record TodayLogLine(string IssueKey, string IssueSummary, int SecondsLogged, bool IsInCalendar);
+
+    private List<(string Author, int TotalSec, List<TodayLogLine> Lines)> GetTodayActivity()
+    {
+        if (_reportIssues.Count == 0) return [];
+        var today = DateTime.Today;
+        var calendarKeys = Allocations
+            .Where(a => a.TaskId > 0)
+            .Select(a => GetJiraKeyForTaskId(a.TaskId))
+            .Where(k => k != null)
+            .Select(k => k!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return _reportIssues.Values
+            .SelectMany(issue => issue.Worklogs
+                .Where(w => w.Started.Date == today)
+                .Select(w => (w.Author, Line: new TodayLogLine(
+                    issue.Key, issue.Summary, w.TimeSpentSeconds, calendarKeys.Contains(issue.Key)))))
+            .GroupBy(x => x.Author, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (
+                g.Key,
+                g.Sum(x => x.Line.SecondsLogged),
+                g.Select(x => x.Line).OrderByDescending(l => l.SecondsLogged).ToList()))
+            .OrderByDescending(x => x.Item2)
+            .ToList();
+    }
+
+    private static string FmtSec(int seconds)
+    {
+        if (seconds <= 0) return "0h";
+        var h = seconds / 3600;
+        var m = (seconds % 3600) / 60;
+        return h > 0 && m > 0 ? $"{h}h {m}m" : h > 0 ? $"{h}h" : $"{m}m";
     }
 
     // ───────────────────────────────────────────────────────────
@@ -2038,11 +2178,12 @@
         public int    OriginalEstimateSeconds { get; init; }
         public string RemainingEstimate       { get; init; } = "";
         public int    RemainingEstimateSeconds { get; init; }
-        public string TimeSpent               { get; init; } = "";
-        public int    TimeSpentSeconds        { get; init; }
-        public string CustomColor             { get; init; } = "";
-        public string CustomCategory          { get; init; } = "";
-        public decimal CustomHours            { get; init; }
+        public string    TimeSpent               { get; init; } = "";
+        public int       TimeSpentSeconds        { get; init; }
+        public DateTime? LastActivityDate        { get; init; }
+        public string    CustomColor             { get; init; } = "";
+        public string    CustomCategory          { get; init; } = "";
+        public decimal   CustomHours             { get; init; }
     }
 
     private List<ReportRow> GetReportRowsForMember(Guid memberId)
@@ -2089,6 +2230,11 @@
                     RemainingEstimateSeconds = issue.RemainingEstimateSeconds,
                     TimeSpent = issue.TimeSpent,
                     TimeSpentSeconds = issue.TimeSpentSeconds,
+                    LastActivityDate = issue.Worklogs.Count > 0
+                        ? issue.Worklogs.Max(w => w.Started)
+                        : (!string.IsNullOrEmpty(issue.Key) && _reportIssues.TryGetValue(issue.Key, out var ri) && ri.Worklogs.Count > 0
+                           ? ri.Worklogs.Max(w => w.Started)
+                           : (DateTime?)null),
                 });
             }
             else if (jiraKey != null || _taskLabelFallback.ContainsKey(taskId))
@@ -2178,7 +2324,7 @@
             .ToList();
 
         var blockedTasks = jiraTasks
-            .Where(t => t.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase))
+            .Where(t => string.Equals(t.Status, "On Hold", StringComparison.OrdinalIgnoreCase))
             .OrderBy(t => t.Assignee).ThenBy(t => t.Key)
             .ToList();
 
@@ -2688,6 +2834,7 @@ private static decimal ParseJiraDurationToHours(string? input)
             "in review" => "status-in-review",
             "qa ready" => "status-qa-ready",
             "done" => "status-done",
+            "on hold" => "status-on-hold",
             _ => "status-default"
         };
     }
@@ -3349,6 +3496,8 @@ private static decimal ParseJiraDurationToHours(string? input)
     .rpt-th-est      { width: 110px; text-align: right; }
     .rpt-th-logged   { width: 100px; text-align: right; }
     .rpt-th-pct      { width: 80px;  text-align: center; }
+    .rpt-th-feasible { width: 115px; text-align: center; }
+    .rpt-th-activity { width: 130px; }
 
     .rpt-team-row { background: #f1f5f9; }
 
@@ -3377,6 +3526,23 @@ private static decimal ParseJiraDurationToHours(string? input)
     .rpt-td-est      { text-align: right; font-size: 12px; color: #6b7280; white-space: nowrap; }
     .rpt-td-dash     { color: #9ca3af; text-align: right; }
     .rpt-td-pct      { text-align: center; }
+    .rpt-td-feasible { text-align: center; }
+    .rpt-td-activity { font-size: 12px; color: #374151; white-space: nowrap; }
+    .rpt-activity-never { color: #9ca3af; font-style: italic; }
+
+    .feas-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    .feas-ok      { background: #dcfce7; color: #166534; }
+    .feas-done    { background: #d1fae5; color: #065f46; }
+    .feas-fail    { background: #fee2e2; color: #991b1b; }
+    .feas-unknown { background: #fef3c7; color: #92400e; }
+    .feas-na      { color: #9ca3af; }
 
     .risk-badge {
         display: inline-block;
@@ -3416,6 +3582,10 @@ private static decimal ParseJiraDurationToHours(string? input)
     }
 
     .status-blocked { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+    .status-on-hold { background: #fdf4ff; color: #7e22ce; border: 1px solid #e9d5ff; }
+
+    .daily-empty-note  { font-size: 12px; color: #9ca3af; padding: 6px 0; }
+    .daily-no-activity { font-size: 11px; color: #9ca3af; margin-top: 8px; padding: 4px 0; }
 
     /* ─── Daily View ─── */
     .daily-container {

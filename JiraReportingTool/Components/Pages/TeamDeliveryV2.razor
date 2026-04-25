@@ -231,6 +231,13 @@
             }
         </button>
         <button class="tdd-tab @(ActiveTab=="standup" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("standup")'>Standup</button>
+        <button class="tdd-tab @(ActiveTab=="scope" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("scope")'>
+            Scope Changes
+            @if (Report != null && ScopeChangedIssues.Count > 0)
+            {
+                <span class="tdd-tab-badge">@ScopeChangedIssues.Count</span>
+            }
+        </button>
     </div>
 
     <div class="tdd-panel">
@@ -318,23 +325,22 @@
                 <table class="tdd-table">
                     <thead>
                         <tr>
-                            <th>Epic</th>
-                            <th>Key</th>
-                            <th>Task</th>
-                            <th>Assignee</th>
-                            <th>Status</th>
-                            <th>Type</th>
-                            <th>Priority</th>
-                            <th>Est.</th>
-                            <th>Logged</th>
-                            <th>Remaining</th>
-                            <th>Progress</th>
+                            <th class="sortable @(SI("OVEpic",  _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVEpic")'>Epic</th>
+                            <th class="sortable @(SI("OVKey",   _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVKey")'>Key</th>
+                            <th class="sortable @(SI("OVSumm",  _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVSumm")'>Task</th>
+                            <th class="sortable @(SI("OVAssig", _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVAssig")'>Assignee</th>
+                            <th class="sortable @(SI("OVStat",  _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVStat")'>Status</th>
+                            <th class="sortable @(SI("OVType",  _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVType")'>Type</th>
+                            <th class="sortable @(SI("OVPri",   _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVPri")'>Priority</th>
+                            <th class="sortable @(SI("OVEst",   _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVEst")'>Est.</th>
+                            <th class="sortable @(SI("OVLog",   _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVLog")'>Logged</th>
+                            <th class="sortable @(SI("OVRem",   _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVRem")'>Remaining</th>
+                            <th class="sortable @(SI("OVProg",  _sortColOV, _sortAscOV))" @onclick='() => SortOV("OVProg")'>Progress</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var epic in FilteredEpics)
+                        @foreach (var issue in ApplySortOV(FilteredIssues))
                         {
-                            @foreach (var issue in epic.Issues.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }))
                             {
                                 var pct = IssueProgress(issue);
                                 <tr class="@(issue.StatusCategoryKey == "done" ? "tdd-row-done" : "")">
@@ -443,9 +449,17 @@
                             else
                             {
                                 <table class="tdd-table">
-                                    <thead><tr><th>Date</th><th>Issue</th><th>Summary</th><th>Logged</th><th>Comment</th></tr></thead>
+                                    <thead>
+                                        <tr>
+                                            <th class="sortable @(SI("TWLDate",  _sortColTWL, _sortAscTWL))" @onclick='() => SortTWL("TWLDate")'>Date</th>
+                                            <th class="sortable @(SI("TWLIssue", _sortColTWL, _sortAscTWL))" @onclick='() => SortTWL("TWLIssue")'>Issue</th>
+                                            <th class="sortable @(SI("TWLSumm",  _sortColTWL, _sortAscTWL))" @onclick='() => SortTWL("TWLSumm")'>Summary</th>
+                                            <th class="sortable @(SI("TWLLog",   _sortColTWL, _sortAscTWL))" @onclick='() => SortTWL("TWLLog")'>Logged</th>
+                                            <th>Comment</th>
+                                        </tr>
+                                    </thead>
                                     <tbody>
-                                        @foreach (var x in personLogs)
+                                        @foreach (var x in ApplySortTWL(personLogs))
                                         {
                                             <tr>
                                                 <td class="tdd-cell-muted tdd-nowrap">@x.Log.Started.ToString("MMM d, HH:mm")</td>
@@ -473,9 +487,20 @@
                             <div class="tdd-expand-section tdd-expand-border">
                                 <div class="tdd-expand-title">Assigned Issues</div>
                                 <table class="tdd-table">
-                                    <thead><tr><th>Epic</th><th>Key</th><th>Summary</th><th>Status</th><th>Type</th><th>My Logged</th><th>Remaining</th><th>Progress</th></tr></thead>
+                                    <thead>
+                                        <tr>
+                                            <th class="sortable @(SI("TAIEpic", _sortColTAI, _sortAscTAI))" @onclick='() => SortTAI("TAIEpic")'>Epic</th>
+                                            <th class="sortable @(SI("TAIKey",  _sortColTAI, _sortAscTAI))" @onclick='() => SortTAI("TAIKey")'>Key</th>
+                                            <th class="sortable @(SI("TAISumm", _sortColTAI, _sortAscTAI))" @onclick='() => SortTAI("TAISumm")'>Summary</th>
+                                            <th class="sortable @(SI("TAIStat", _sortColTAI, _sortAscTAI))" @onclick='() => SortTAI("TAIStat")'>Status</th>
+                                            <th class="sortable @(SI("TAIType", _sortColTAI, _sortAscTAI))" @onclick='() => SortTAI("TAIType")'>Type</th>
+                                            <th>My Logged</th>
+                                            <th class="sortable @(SI("TAIRem",  _sortColTAI, _sortAscTAI))" @onclick='() => SortTAI("TAIRem")'>Remaining</th>
+                                            <th class="sortable @(SI("TAIProg", _sortColTAI, _sortAscTAI))" @onclick='() => SortTAI("TAIProg")'>Progress</th>
+                                        </tr>
+                                    </thead>
                                     <tbody>
-                                        @foreach (var issue in issues.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }))
+                                        @foreach (var issue in ApplySortTAI(issues))
                                         {
                                             var pct = IssueProgress(issue);
                                             var myLogged = issue.Worklogs
@@ -571,13 +596,18 @@
                 <table class="tdd-table">
                     <thead>
                         <tr>
-                            <th>Epic</th><th>Tasks</th><th>Done</th>
-                            <th>Planned</th><th>Logged</th><th>Remaining</th>
-                            <th>Variance</th><th>Status</th>
+                            <th class="sortable @(SI("FOEpic",  _sortColFO, _sortAscFO))" @onclick='() => SortFO("FOEpic")'>Epic</th>
+                            <th class="sortable @(SI("FOTasks", _sortColFO, _sortAscFO))" @onclick='() => SortFO("FOTasks")'>Tasks</th>
+                            <th class="sortable @(SI("FODone",  _sortColFO, _sortAscFO))" @onclick='() => SortFO("FODone")'>Done</th>
+                            <th class="sortable @(SI("FOPlan",  _sortColFO, _sortAscFO))" @onclick='() => SortFO("FOPlan")'>Planned</th>
+                            <th class="sortable @(SI("FOLog",   _sortColFO, _sortAscFO))" @onclick='() => SortFO("FOLog")'>Logged</th>
+                            <th class="sortable @(SI("FORem",   _sortColFO, _sortAscFO))" @onclick='() => SortFO("FORem")'>Remaining</th>
+                            <th class="sortable @(SI("FOVar",   _sortColFO, _sortAscFO))" @onclick='() => SortFO("FOVar")'>Variance</th>
+                            <th>Status</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var epic in FilteredEpics)
+                        @foreach (var epic in ApplySortFO(FilteredEpics))
                         {
                             var v    = EpicFilteredVariancePct(epic);
                             var eOvr = EpicFilteredIsOverBudget(epic);
@@ -635,10 +665,19 @@
             <div class="tdd-table-wrap">
                 <table class="tdd-table">
                     <thead>
-                        <tr><th>Date</th><th>Author</th><th>Issue</th><th>Summary</th><th>Type</th><th>Epic</th><th>Logged</th><th>Comment</th></tr>
+                        <tr>
+                            <th class="sortable @(SI("ACDate",   _sortColAC, _sortAscAC))" @onclick='() => SortAC("ACDate")'>Date</th>
+                            <th class="sortable @(SI("ACAuthor", _sortColAC, _sortAscAC))" @onclick='() => SortAC("ACAuthor")'>Author</th>
+                            <th class="sortable @(SI("ACIssue",  _sortColAC, _sortAscAC))" @onclick='() => SortAC("ACIssue")'>Issue</th>
+                            <th class="sortable @(SI("ACSumm",   _sortColAC, _sortAscAC))" @onclick='() => SortAC("ACSumm")'>Summary</th>
+                            <th class="sortable @(SI("ACType",   _sortColAC, _sortAscAC))" @onclick='() => SortAC("ACType")'>Type</th>
+                            <th class="sortable @(SI("ACEpic",   _sortColAC, _sortAscAC))" @onclick='() => SortAC("ACEpic")'>Epic</th>
+                            <th class="sortable @(SI("ACLog",    _sortColAC, _sortAscAC))" @onclick='() => SortAC("ACLog")'>Logged</th>
+                            <th>Comment</th>
+                        </tr>
                     </thead>
                     <tbody>
-                        @foreach (var x in AllWorklogsFiltered)
+                        @foreach (var x in ApplySortAC(AllWorklogsFiltered))
                         {
                             <tr>
                                 <td class="tdd-cell-muted tdd-nowrap">@x.Log.Started.ToString("MMM d, HH:mm")</td>
@@ -697,10 +736,20 @@
                 <div class="tdd-table-wrap">
                     <table class="tdd-table">
                         <thead>
-                            <tr><th>Key</th><th>Summary</th><th>Assignee</th><th>Status</th><th>Risk</th><th>Type</th><th>Idle (d)</th><th>Remaining</th><th>Days left</th></tr>
+                            <tr>
+                                <th class="sortable @(SI("RIKey",   _sortColRI, _sortAscRI))" @onclick='() => SortRI("RIKey")'>Key</th>
+                                <th class="sortable @(SI("RISumm",  _sortColRI, _sortAscRI))" @onclick='() => SortRI("RISumm")'>Summary</th>
+                                <th class="sortable @(SI("RIAssig", _sortColRI, _sortAscRI))" @onclick='() => SortRI("RIAssig")'>Assignee</th>
+                                <th class="sortable @(SI("RIStat",  _sortColRI, _sortAscRI))" @onclick='() => SortRI("RIStat")'>Status</th>
+                                <th>Risk</th>
+                                <th class="sortable @(SI("RIType",  _sortColRI, _sortAscRI))" @onclick='() => SortRI("RIType")'>Type</th>
+                                <th class="sortable @(SI("RIIdle",  _sortColRI, _sortAscRI))" @onclick='() => SortRI("RIIdle")'>Idle (d)</th>
+                                <th class="sortable @(SI("RIRem",   _sortColRI, _sortAscRI))" @onclick='() => SortRI("RIRem")'>Remaining</th>
+                                <th>Days left</th>
+                            </tr>
                         </thead>
                         <tbody>
-                            @foreach (var ri in RiskIssues)
+                            @foreach (var ri in ApplySortRI(RiskIssues))
                             {
                                 <tr class="@(ri.Reasons.Contains("Stale") ? "tdd-row-danger" : "tdd-row-warn")">
                                     <td class="tdd-cell-key tdd-nowrap">@ri.Issue.Key</td>
@@ -833,6 +882,206 @@
                         </div>
                     </div>
                 </div>
+            }
+        }
+
+        <!-- ══ TAB 7: SCOPE CHANGES ════════════════════════════════════════════ -->
+        @if (ActiveTab == "scope")
+        {
+            @if (Report == null)
+            {
+                <div class="tdd-empty">Load a sprint first.</div>
+            }
+            else
+            {
+                <!-- KPI strip -->
+                <div class="tdd-risk-cards">
+                    <div class="tdd-risk-card tdd-risk-warn">
+                        <div class="tdd-risk-val">@ScopeActiveIssues.Count</div>
+                        <div class="tdd-risk-lbl">Tasks Added</div>
+                        <div class="tdd-cell-muted" style="font-size:11px;margin-top:2px">@ScopePct% of sprint scope</div>
+                        @if (_excludedScopeEpics.Count > 0)
+                        {
+                            <div class="tdd-cell-muted" style="font-size:10px;margin-top:2px;opacity:.7">@_excludedScopeEpics.Count epic(s) excluded</div>
+                        }
+                    </div>
+                    <div class="tdd-risk-card">
+                        <div class="tdd-risk-val">@FmtH(ScopeEstimateSec)</div>
+                        <div class="tdd-risk-lbl">Added Scope</div>
+                        <div class="tdd-cell-muted" style="font-size:11px;margin-top:2px">original estimate total</div>
+                    </div>
+                    <div class="tdd-risk-card tdd-risk-ok">
+                        <div class="tdd-risk-val">@FmtH(ScopeLoggedSec)</div>
+                        <div class="tdd-risk-lbl">Time Logged</div>
+                        <div class="tdd-cell-muted" style="font-size:11px;margin-top:2px">on scope-added tasks</div>
+                    </div>
+                    <div class="tdd-risk-card @(ScopeUnestimated > 0 ? "tdd-risk-danger" : "tdd-risk-ok")">
+                        <div class="tdd-risk-val">@ScopeUnestimated</div>
+                        <div class="tdd-risk-lbl">Unestimated</div>
+                        <div class="tdd-cell-muted" style="font-size:11px;margin-top:2px">added with no estimate</div>
+                    </div>
+                </div>
+
+                @if (!ScopeChangedIssues.Any())
+                {
+                    <div class="tdd-all-clear">No tasks were added after sprint start (@(Report.StartDate?.ToString("dd MMM yyyy") ?? "unknown")) — scope is clean.</div>
+                }
+                else
+                {
+                    <!-- By Epic breakdown -->
+                    <div class="tdd-section-title tdd-mt">Added Tasks by Epic</div>
+                    <div class="tdd-table-wrap">
+                        <table class="tdd-table">
+                            <thead>
+                                <tr>
+                                    <th style="width:36px"></th>
+                                    <th class="sortable @(SI("SCEEpic",  _sortColSCE, _sortAscSCE))" @onclick='() => SortSCE("SCEEpic")'>Epic</th>
+                                    <th class="sortable @(SI("SCECount", _sortColSCE, _sortAscSCE))" @onclick='() => SortSCE("SCECount")'>Added</th>
+                                    <th class="sortable @(SI("SCEDone",  _sortColSCE, _sortAscSCE))" @onclick='() => SortSCE("SCEDone")'>Done</th>
+                                    <th class="sortable @(SI("SCEEst",   _sortColSCE, _sortAscSCE))" @onclick='() => SortSCE("SCEEst")'>Estimate</th>
+                                    <th class="sortable @(SI("SCELog",   _sortColSCE, _sortAscSCE))" @onclick='() => SortSCE("SCELog")'>Logged</th>
+                                    <th>Status Mix</th>
+                                    <th>Type Mix</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var epic in ApplySortSCE(GetScopeByEpic()))
+                                {
+                                    <tr style="@(_excludedScopeEpics.Contains(epic.EpicKey) ? "opacity:0.45" : "")">
+                                        <td style="text-align:center;vertical-align:middle">
+                                            <input type="checkbox"
+                                                   checked="@(!_excludedScopeEpics.Contains(epic.EpicKey))"
+                                                   @onchange="e => ToggleScopeEpic(epic.EpicKey, (bool)(e.Value ?? true))" />
+                                        </td>
+                                        <td>
+                                            <div class="tdd-fw">@(epic.EpicName == "No Epic" || string.IsNullOrEmpty(epic.EpicName) ? epic.EpicKey : epic.EpicName)</div>
+                                            <div class="tdd-cell-muted" style="font-size:11px">@epic.EpicKey</div>
+                                        </td>
+                                        <td class="tdd-bk-num tdd-fw">@epic.Count</td>
+                                        <td class="tdd-bk-num">
+                                            <span class="tdd-badge @(epic.Done == epic.Count ? "tdd-badge-ok" : "tdd-badge-neutral")">@epic.Done/@epic.Count</span>
+                                        </td>
+                                        <td class="tdd-nowrap tdd-cell-muted">@FmtH(epic.EstSec)</td>
+                                        <td class="tdd-nowrap tdd-cell-muted">@FmtH(epic.LoggedSec)</td>
+                                        <td>
+                                            @{
+                                                var byStatus = epic.Issues.GroupBy(i => i.Status).OrderByDescending(g => g.Count());
+                                            }
+                                            @foreach (var sg in byStatus)
+                                            {
+                                                <span class="tdd-badge tdd-badge-neutral tdd-badge-sm">@sg.Key (@sg.Count())</span>
+                                            }
+                                        </td>
+                                        <td>
+                                            @foreach (var tg in epic.Issues.GroupBy(i => i.IssueType).OrderByDescending(g => g.Count()))
+                                            {
+                                                var isBug = string.Equals(tg.Key, "Bug", StringComparison.OrdinalIgnoreCase);
+                                                var typePct = epic.Count > 0 ? (int)Math.Round((double)tg.Count() / epic.Count * 100) : 0;
+                                                <span class="tdd-badge @(isBug ? "tdd-badge-danger" : "tdd-badge-neutral") tdd-badge-sm">@tg.Key @tg.Count() (@typePct%)</span>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Task Detail table -->
+                    <div style="display:flex;align-items:center;gap:8px;margin-top:20px;margin-bottom:8px">
+                        <div class="tdd-section-title" style="margin:0">Task Detail</div>
+                        <span class="tdd-badge tdd-badge-neutral">@ScopeFilteredIssues.Count</span>
+                    </div>
+                    <div class="tdd-filter-bar" style="margin-bottom:12px">
+                        <div class="tdd-filter-group">
+                            <input class="tdd-input tdd-input-sm" style="width:200px"
+                                   placeholder="Search key / summary…"
+                                   @bind="_scopeSearch" @bind:event="oninput" />
+                        </div>
+                        <select class="tdd-select" @bind="_scopeFilterStatus">
+                            <option value="">All Statuses</option>
+                            @foreach (var s in ScopeChangedIssues.Select(i => i.Status).Where(s => !string.IsNullOrEmpty(s)).Distinct().Order())
+                            {
+                                <option value="@s">@s</option>
+                            }
+                        </select>
+                        <select class="tdd-select" @bind="_scopeFilterType">
+                            <option value="">All Types</option>
+                            @foreach (var t in ScopeChangedIssues.Select(i => i.IssueType).Where(t => !string.IsNullOrEmpty(t)).Distinct().Order())
+                            {
+                                <option value="@t">@t</option>
+                            }
+                        </select>
+                        <select class="tdd-select" @bind="_scopeFilterAssignee">
+                            <option value="">All Assignees</option>
+                            @foreach (var a in ScopeChangedIssues.Select(i => i.Assignee).Where(a => !string.IsNullOrEmpty(a)).Distinct().Order())
+                            {
+                                <option value="@a">@a</option>
+                            }
+                        </select>
+                        @if (!string.IsNullOrEmpty(_scopeSearch) || !string.IsNullOrEmpty(_scopeFilterStatus) || !string.IsNullOrEmpty(_scopeFilterType) || !string.IsNullOrEmpty(_scopeFilterAssignee))
+                        {
+                            <button class="tdd-btn tdd-btn-ghost" @onclick="ClearScopeFilters">Clear</button>
+                        }
+                    </div>
+                    <div class="tdd-table-wrap">
+                        <table class="tdd-table">
+                            <thead>
+                                <tr>
+                                    <th class="sortable @(SI("SCKey",     _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCKey")'>Key</th>
+                                    <th class="sortable @(SI("SCSumm",    _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCSumm")'>Summary</th>
+                                    <th class="sortable @(SI("SCType",    _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCType")'>Type</th>
+                                    <th class="sortable @(SI("SCAssig",   _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCAssig")'>Assignee</th>
+                                    <th class="sortable @(SI("SCStatus",  _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCStatus")'>Status</th>
+                                    <th class="sortable @(SI("SCCreated", _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCCreated")'>Added On</th>
+                                    <th class="sortable @(SI("SCEst",     _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCEst")'>Estimate</th>
+                                    <th class="sortable @(SI("SCLog",     _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCLog")'>Logged</th>
+                                    <th class="sortable @(SI("SCRem",     _sortColSC, _sortAscSC))" @onclick='() => SortSC("SCRem")'>Remaining</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var issue in ApplySortSC(ScopeFilteredIssues))
+                                {
+                                    <tr class="@(issue.StatusCategoryKey == "done" ? "tdd-row-done" : "")">
+                                        <td class="tdd-cell-key tdd-nowrap">@issue.Key</td>
+                                        <td class="tdd-cell-sum">@issue.Summary</td>
+                                        <td><span class="tdd-type-badge tdd-type-@issue.IssueType.ToLower()">@issue.IssueType</span></td>
+                                        <td class="tdd-nowrap">@issue.Assignee</td>
+                                        <td><span class="tdd-status-badge tdd-status-@issue.StatusCategoryKey">@issue.Status</span></td>
+                                        <td class="tdd-nowrap tdd-cell-muted">@(issue.Created.HasValue ? issue.Created.Value.ToString("dd MMM HH:mm") : "—")</td>
+                                        <td class="tdd-nowrap tdd-cell-muted">@FmtH(issue.OriginalEstimateSeconds)</td>
+                                        <td class="tdd-nowrap tdd-cell-muted">@FmtH(issue.TimeSpentSeconds)</td>
+                                        <td class="tdd-nowrap tdd-cell-muted">@FmtH(issue.RemainingEstimateSeconds)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Effort by Member -->
+                    @if (GetScopeByMember().Any())
+                    {
+                        <div class="tdd-section-title tdd-mt">Effort on Added Tasks — by Member</div>
+                        @foreach (var (member, loggedSec) in GetScopeByMember())
+                        {
+                            var maxSec = GetScopeByMember().Max(x => x.LoggedSec);
+                            var barPct = maxSec > 0 ? (int)((double)loggedSec / maxSec * 100) : 0;
+                            <div class="tdd-member-card" style="cursor:default">
+                                <div class="tdd-member-header">
+                                    <div class="tdd-avatar tdd-avatar-primary">@Initials(member)</div>
+                                    <div class="tdd-member-info">
+                                        <div class="tdd-member-name">@member</div>
+                                        <div class="tdd-member-sub">@FmtH(loggedSec) logged on scope-added tasks</div>
+                                    </div>
+                                    <div class="tdd-cap-gauge" style="min-width:160px">
+                                        <div class="tdd-cap-bar">
+                                            <div class="tdd-cap-fill tdd-cap-ok" style="width:@barPct%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                }
             }
         }
 
@@ -1259,6 +1508,12 @@
 .tdd-export-list    { border: 1px solid var(--tdd-border); border-radius: 6px; padding: 8px 10px; max-height: 200px; overflow-y: auto; }
 .tdd-export-item    { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 2px 0; cursor: pointer; }
 .tdd-export-section { border-top: 1px solid var(--tdd-border); margin-top: 14px; padding-top: 14px; }
+
+/* ── Scope Changes tab ─────────────────────────────────────────────────── */
+th.sortable        { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable::after { content: " ⇅"; font-size: 10px; opacity: .4; }
+th.sort-asc::after { content: " ▲"; font-size: 10px; opacity: .9; }
+th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
 </style>
 
 @code {
@@ -1463,6 +1718,204 @@
         .Select(g => new StandupGroup(g.Key, g.ToList()))
         .ToList();
 
+    // ── Scope Changes ─────────────────────────────────────────────────────────
+    private List<SprintIssue> ScopeChangedIssues => Report == null ? []
+        : FilteredIssues
+            .Where(i => i.Created.HasValue && Report.StartDate.HasValue &&
+                        i.Created.Value >= Report.StartDate.Value.Date)
+            .OrderBy(i => i.EpicKey).ThenBy(i => i.Created)
+            .ToList();
+
+    private record ScopeEpicGroup(string EpicKey, string EpicName, int Count, int EstSec, int LoggedSec, int Done, List<SprintIssue> Issues);
+
+    // ── Scope: epic exclusion + task-level filters ──────────────────────────
+    private HashSet<string> _excludedScopeEpics = [];
+    private string _scopeSearch         = "";
+    private string _scopeFilterStatus   = "";
+    private string _scopeFilterType     = "";
+    private string _scopeFilterAssignee = "";
+
+    private List<SprintIssue> ScopeActiveIssues => _excludedScopeEpics.Count == 0
+        ? ScopeChangedIssues
+        : ScopeChangedIssues
+            .Where(i => !_excludedScopeEpics.Contains(
+                string.IsNullOrEmpty(i.EpicKey) ? "No Epic" : i.EpicKey))
+            .ToList();
+
+    private List<SprintIssue> ScopeFilteredIssues => ScopeActiveIssues
+        .Where(i =>
+            (string.IsNullOrEmpty(_scopeSearch) ||
+             i.Key.Contains(_scopeSearch, StringComparison.OrdinalIgnoreCase) ||
+             i.Summary.Contains(_scopeSearch, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrEmpty(_scopeFilterStatus)   || i.Status    == _scopeFilterStatus) &&
+            (string.IsNullOrEmpty(_scopeFilterType)     || i.IssueType == _scopeFilterType) &&
+            (string.IsNullOrEmpty(_scopeFilterAssignee) || i.Assignee  == _scopeFilterAssignee))
+        .ToList();
+
+    private int    ScopeEstimateSec  => ScopeActiveIssues.Sum(i => i.OriginalEstimateSeconds);
+    private int    ScopeLoggedSec    => ScopeActiveIssues.Sum(i => i.TimeSpentSeconds);
+    private double ScopePct          => FilteredIssues.Count == 0 ? 0 : Math.Round((double)ScopeActiveIssues.Count / FilteredIssues.Count * 100, 1);
+    private int    ScopeUnestimated  => ScopeActiveIssues.Count(i => i.OriginalEstimateSeconds == 0);
+
+    private List<ScopeEpicGroup> GetScopeByEpic() =>
+        ScopeChangedIssues
+            .GroupBy(i => string.IsNullOrEmpty(i.EpicKey) ? "No Epic" : i.EpicKey)
+            .Select(g => new ScopeEpicGroup(
+                g.Key,
+                g.First().EpicName,
+                g.Count(),
+                g.Sum(i => i.OriginalEstimateSeconds),
+                g.Sum(i => i.TimeSpentSeconds),
+                g.Count(i => i.StatusCategoryKey == "done"),
+                g.OrderBy(i => i.Key).ToList()))
+            .OrderByDescending(e => e.Count)
+            .ToList();
+
+    private List<(string Member, int LoggedSec)> GetScopeByMember() =>
+        ScopeActiveIssues
+            .SelectMany(i => i.Worklogs.Select(w => (w.Author, w.TimeSpentSeconds)))
+            .GroupBy(x => x.Author, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Member: g.Key, LoggedSec: g.Sum(x => x.TimeSpentSeconds)))
+            .OrderByDescending(x => x.LoggedSec)
+            .ToList();
+
+    private void ToggleScopeEpic(string key, bool include)
+    {
+        if (include) _excludedScopeEpics.Remove(key);
+        else         _excludedScopeEpics.Add(key);
+    }
+
+    private void ClearScopeFilters()
+    {
+        _scopeSearch = ""; _scopeFilterStatus = ""; _scopeFilterType = ""; _scopeFilterAssignee = "";
+    }
+
+    // Overview Task Detail sort
+    private string _sortColOV = ""; private bool _sortAscOV = true;
+    private void SortOV(string c) { if (_sortColOV == c) _sortAscOV = !_sortAscOV; else { _sortColOV = c; _sortAscOV = true; } }
+    private IEnumerable<SprintIssue> ApplySortOV(IEnumerable<SprintIssue> src) => _sortColOV switch
+    {
+        "OVEpic"  => _sortAscOV ? src.OrderBy(i => i.EpicKey)                   : src.OrderByDescending(i => i.EpicKey),
+        "OVKey"   => _sortAscOV ? src.OrderBy(i => i.Key)                       : src.OrderByDescending(i => i.Key),
+        "OVSumm"  => _sortAscOV ? src.OrderBy(i => i.Summary)                   : src.OrderByDescending(i => i.Summary),
+        "OVAssig" => _sortAscOV ? src.OrderBy(i => i.Assignee)                  : src.OrderByDescending(i => i.Assignee),
+        "OVStat"  => _sortAscOV ? src.OrderBy(i => i.StatusCategoryKey)         : src.OrderByDescending(i => i.StatusCategoryKey),
+        "OVType"  => _sortAscOV ? src.OrderBy(i => i.IssueType)                 : src.OrderByDescending(i => i.IssueType),
+        "OVPri"   => _sortAscOV ? src.OrderBy(i => Array.IndexOf(PriorityOrder, i.Priority ?? "") is var ix && ix < 0 ? 99 : ix)
+                                 : src.OrderByDescending(i => Array.IndexOf(PriorityOrder, i.Priority ?? "") is var ix && ix < 0 ? 99 : ix),
+        "OVEst"   => _sortAscOV ? src.OrderBy(i => i.OriginalEstimateSeconds)   : src.OrderByDescending(i => i.OriginalEstimateSeconds),
+        "OVLog"   => _sortAscOV ? src.OrderBy(i => i.TimeSpentSeconds)          : src.OrderByDescending(i => i.TimeSpentSeconds),
+        "OVRem"   => _sortAscOV ? src.OrderBy(i => i.RemainingEstimateSeconds)  : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "OVProg"  => _sortAscOV ? src.OrderBy(i => IssueProgress(i))            : src.OrderByDescending(i => IssueProgress(i)),
+        _         => src.OrderBy(i => string.IsNullOrEmpty(i.EpicKey) ? "ZZZ" : i.EpicKey)
+                        .ThenBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }),
+    };
+
+    // Forecast Variance Detail sort
+    private string _sortColFO = ""; private bool _sortAscFO = true;
+    private void SortFO(string c) { if (_sortColFO == c) _sortAscFO = !_sortAscFO; else { _sortColFO = c; _sortAscFO = true; } }
+    private IEnumerable<EpicSummary> ApplySortFO(IEnumerable<EpicSummary> src) => _sortColFO switch
+    {
+        "FOEpic"  => _sortAscFO ? src.OrderBy(e => e.DisplayName)              : src.OrderByDescending(e => e.DisplayName),
+        "FOTasks" => _sortAscFO ? src.OrderBy(e => e.TotalIssues)              : src.OrderByDescending(e => e.TotalIssues),
+        "FODone"  => _sortAscFO ? src.OrderBy(e => e.DoneCount)                : src.OrderByDescending(e => e.DoneCount),
+        "FOPlan"  => _sortAscFO ? src.OrderBy(e => e.TotalEstimateSeconds)     : src.OrderByDescending(e => e.TotalEstimateSeconds),
+        "FOLog"   => _sortAscFO ? src.OrderBy(e => EpicFilteredSpent(e))       : src.OrderByDescending(e => EpicFilteredSpent(e)),
+        "FORem"   => _sortAscFO ? src.OrderBy(e => e.TotalRemainingSeconds)    : src.OrderByDescending(e => e.TotalRemainingSeconds),
+        "FOVar"   => _sortAscFO ? src.OrderBy(e => EpicFilteredVariancePct(e)) : src.OrderByDescending(e => EpicFilteredVariancePct(e)),
+        _         => src,
+    };
+
+    // Activity Full Worklog History sort
+    private string _sortColAC = ""; private bool _sortAscAC = false;
+    private void SortAC(string c) { if (_sortColAC == c) _sortAscAC = !_sortAscAC; else { _sortColAC = c; _sortAscAC = true; } }
+    private IEnumerable<WorklogRecord> ApplySortAC(IEnumerable<WorklogRecord> src) => _sortColAC switch
+    {
+        "ACDate"   => _sortAscAC ? src.OrderBy(x => x.Log.Started)           : src.OrderByDescending(x => x.Log.Started),
+        "ACAuthor" => _sortAscAC ? src.OrderBy(x => x.Log.Author)            : src.OrderByDescending(x => x.Log.Author),
+        "ACIssue"  => _sortAscAC ? src.OrderBy(x => x.Issue.Key)             : src.OrderByDescending(x => x.Issue.Key),
+        "ACSumm"   => _sortAscAC ? src.OrderBy(x => x.Issue.Summary)         : src.OrderByDescending(x => x.Issue.Summary),
+        "ACType"   => _sortAscAC ? src.OrderBy(x => x.Issue.IssueType)       : src.OrderByDescending(x => x.Issue.IssueType),
+        "ACEpic"   => _sortAscAC ? src.OrderBy(x => x.Issue.EpicKey)         : src.OrderByDescending(x => x.Issue.EpicKey),
+        "ACLog"    => _sortAscAC ? src.OrderBy(x => x.Log.TimeSpentSeconds)  : src.OrderByDescending(x => x.Log.TimeSpentSeconds),
+        _          => src.OrderByDescending(x => x.Log.Started),
+    };
+
+    // Risk Issues sort
+    private string _sortColRI = ""; private bool _sortAscRI = true;
+    private void SortRI(string c) { if (_sortColRI == c) _sortAscRI = !_sortAscRI; else { _sortColRI = c; _sortAscRI = true; } }
+    private IEnumerable<RiskIssueRecord> ApplySortRI(IEnumerable<RiskIssueRecord> src) => _sortColRI switch
+    {
+        "RIKey"   => _sortAscRI ? src.OrderBy(r => r.Issue.Key)                      : src.OrderByDescending(r => r.Issue.Key),
+        "RISumm"  => _sortAscRI ? src.OrderBy(r => r.Issue.Summary)                  : src.OrderByDescending(r => r.Issue.Summary),
+        "RIAssig" => _sortAscRI ? src.OrderBy(r => r.Issue.Assignee)                 : src.OrderByDescending(r => r.Issue.Assignee),
+        "RIStat"  => _sortAscRI ? src.OrderBy(r => r.Issue.StatusCategoryKey)        : src.OrderByDescending(r => r.Issue.StatusCategoryKey),
+        "RIType"  => _sortAscRI ? src.OrderBy(r => r.Issue.IssueType)                : src.OrderByDescending(r => r.Issue.IssueType),
+        "RIIdle"  => _sortAscRI ? src.OrderBy(r => r.Issue.DaysSinceLastWorklog)     : src.OrderByDescending(r => r.Issue.DaysSinceLastWorklog),
+        "RIRem"   => _sortAscRI ? src.OrderBy(r => r.Issue.RemainingEstimateSeconds) : src.OrderByDescending(r => r.Issue.RemainingEstimateSeconds),
+        _         => src.OrderByDescending(r => r.Reasons.Count).ThenBy(r => r.Issue.Assignee),
+    };
+
+    // Team Worklogs sort (shared across all members)
+    private string _sortColTWL = ""; private bool _sortAscTWL = false;
+    private void SortTWL(string c) { if (_sortColTWL == c) _sortAscTWL = !_sortAscTWL; else { _sortColTWL = c; _sortAscTWL = true; } }
+    private IEnumerable<WorklogRecord> ApplySortTWL(IEnumerable<WorklogRecord> src) => _sortColTWL switch
+    {
+        "TWLDate"  => _sortAscTWL ? src.OrderBy(x => x.Log.Started)          : src.OrderByDescending(x => x.Log.Started),
+        "TWLIssue" => _sortAscTWL ? src.OrderBy(x => x.Issue.Key)            : src.OrderByDescending(x => x.Issue.Key),
+        "TWLSumm"  => _sortAscTWL ? src.OrderBy(x => x.Issue.Summary)        : src.OrderByDescending(x => x.Issue.Summary),
+        "TWLLog"   => _sortAscTWL ? src.OrderBy(x => x.Log.TimeSpentSeconds) : src.OrderByDescending(x => x.Log.TimeSpentSeconds),
+        _          => src.OrderByDescending(x => x.Log.Started),
+    };
+
+    // Team Assigned Issues sort (shared across all members)
+    private string _sortColTAI = ""; private bool _sortAscTAI = true;
+    private void SortTAI(string c) { if (_sortColTAI == c) _sortAscTAI = !_sortAscTAI; else { _sortColTAI = c; _sortAscTAI = true; } }
+    private IEnumerable<SprintIssue> ApplySortTAI(IEnumerable<SprintIssue> src) => _sortColTAI switch
+    {
+        "TAIEpic"  => _sortAscTAI ? src.OrderBy(i => i.EpicKey)                      : src.OrderByDescending(i => i.EpicKey),
+        "TAIKey"   => _sortAscTAI ? src.OrderBy(i => i.Key)                          : src.OrderByDescending(i => i.Key),
+        "TAISumm"  => _sortAscTAI ? src.OrderBy(i => i.Summary)                      : src.OrderByDescending(i => i.Summary),
+        "TAIStat"  => _sortAscTAI ? src.OrderBy(i => i.StatusCategoryKey)            : src.OrderByDescending(i => i.StatusCategoryKey),
+        "TAIType"  => _sortAscTAI ? src.OrderBy(i => i.IssueType)                    : src.OrderByDescending(i => i.IssueType),
+        "TAIRem"   => _sortAscTAI ? src.OrderBy(i => i.RemainingEstimateSeconds)     : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "TAIProg"  => _sortAscTAI ? src.OrderBy(i => IssueProgress(i))               : src.OrderByDescending(i => IssueProgress(i)),
+        _          => src.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 }),
+    };
+
+    // Scope Changes — Added Tasks by Epic sort
+    private string _sortColSCE = ""; private bool _sortAscSCE = true;
+    private void SortSCE(string c) { if (_sortColSCE == c) _sortAscSCE = !_sortAscSCE; else { _sortColSCE = c; _sortAscSCE = true; } }
+    private IEnumerable<ScopeEpicGroup> ApplySortSCE(IEnumerable<ScopeEpicGroup> src) => _sortColSCE switch
+    {
+        "SCEEpic"  => _sortAscSCE ? src.OrderBy(e => e.EpicKey)   : src.OrderByDescending(e => e.EpicKey),
+        "SCECount" => _sortAscSCE ? src.OrderBy(e => e.Count)     : src.OrderByDescending(e => e.Count),
+        "SCEDone"  => _sortAscSCE ? src.OrderBy(e => e.Done)      : src.OrderByDescending(e => e.Done),
+        "SCEEst"   => _sortAscSCE ? src.OrderBy(e => e.EstSec)    : src.OrderByDescending(e => e.EstSec),
+        "SCELog"   => _sortAscSCE ? src.OrderBy(e => e.LoggedSec) : src.OrderByDescending(e => e.LoggedSec),
+        _          => src.OrderByDescending(e => e.Count),
+    };
+
+    private string _sortColSC = "";
+    private bool   _sortAscSC = true;
+    private void SortSC(string c) { if (_sortColSC == c) _sortAscSC = !_sortAscSC; else { _sortColSC = c; _sortAscSC = true; } }
+
+    private IEnumerable<SprintIssue> ApplySortSC(IEnumerable<SprintIssue> issues) => _sortColSC switch
+    {
+        "SCKey"    => _sortAscSC ? issues.OrderBy(i => i.Key)                      : issues.OrderByDescending(i => i.Key),
+        "SCSumm"   => _sortAscSC ? issues.OrderBy(i => i.Summary)                  : issues.OrderByDescending(i => i.Summary),
+        "SCType"   => _sortAscSC ? issues.OrderBy(i => i.IssueType)                : issues.OrderByDescending(i => i.IssueType),
+        "SCAssig"  => _sortAscSC ? issues.OrderBy(i => i.Assignee)                 : issues.OrderByDescending(i => i.Assignee),
+        "SCStatus" => _sortAscSC ? issues.OrderBy(i => i.StatusCategoryKey)        : issues.OrderByDescending(i => i.StatusCategoryKey),
+        "SCCreated"=> _sortAscSC ? issues.OrderBy(i => i.Created)                  : issues.OrderByDescending(i => i.Created),
+        "SCEst"    => _sortAscSC ? issues.OrderBy(i => i.OriginalEstimateSeconds)   : issues.OrderByDescending(i => i.OriginalEstimateSeconds),
+        "SCLog"    => _sortAscSC ? issues.OrderBy(i => i.TimeSpentSeconds)          : issues.OrderByDescending(i => i.TimeSpentSeconds),
+        "SCRem"    => _sortAscSC ? issues.OrderBy(i => i.RemainingEstimateSeconds)  : issues.OrderByDescending(i => i.RemainingEstimateSeconds),
+        _          => issues.OrderBy(i => i.EpicKey).ThenBy(i => i.Created),
+    };
+
+    private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
+
     // ── Lifecycle ────────────────────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
     {
@@ -1489,6 +1942,8 @@
         FilterDateFrom = null;
         FilterDateTo   = null;
         ExpandedMembers.Clear();
+        _excludedScopeEpics.Clear();
+        _scopeSearch = ""; _scopeFilterStatus = ""; _scopeFilterType = ""; _scopeFilterAssignee = "";
 
         try
         {
