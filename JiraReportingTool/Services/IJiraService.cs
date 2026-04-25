@@ -21,4 +21,10 @@ public interface IJiraService
     /// Used to refresh Report/Daily view data without re-loading full epics.
     /// </summary>
     Task<SprintReport> GetIssuesByKeysAsync(List<string> issueKeys);
+
+    /// <summary>
+    /// Fetches all Bug-type issues from an epic, including complete worklogs.
+    /// Used to populate the Support Bug Time Logged column in the sprint report.
+    /// </summary>
+    Task<SprintReport> GetEpicBugsAsync(string epicKey);
 }

@@ -25,6 +25,10 @@ public class SprintPlanHeader
     [MaxLength(2000)]
     public string LoadedEpicKeys { get; set; } = "";
 
+    /// <summary>Comma-separated support-bug epic keys — bugs from these epics populate the Support Bug Time Logged column.</summary>
+    [MaxLength(2000)]
+    public string SupportBugEpicKeys { get; set; } = "";
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

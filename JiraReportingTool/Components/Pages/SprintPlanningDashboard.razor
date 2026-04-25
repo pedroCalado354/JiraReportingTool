@@ -52,6 +52,15 @@
                 <button class="btn primary" @onclick="LoadEpic">Load</button>
             </div>
         </div>
+        <div class="cfg-group cfg-epic-group">
+            <label>🐛 Bug Epic</label>
+            <div class="cfg-epic-row">
+                <input class="input" placeholder="Support bug epic key..."
+                       @bind="SupportBugEpicKeyInput" @bind:event="oninput"
+                       @onkeypress="OnSupportBugEpicInputKeyPress" />
+                <button class="btn primary" @onclick="LoadSupportBugEpic">Load</button>
+            </div>
+        </div>
         <div class="cfg-group">
             <label>Weekends</label>
             <button class="btn toggle-btn @(ShowWeekends ? "toggle-on" : "")" @onclick="ToggleWeekends">
@@ -71,6 +80,29 @@
         </div>
     </div>
 
+    @if (LoadedSupportBugEpics.Count > 0)
+    {
+        <div class="spd-info" style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;">
+            <span style="font-weight:600;color:#b91c1c;">🐛 Bug Epics:</span>
+            @foreach (var sb in LoadedSupportBugEpics)
+            {
+                var sbKey = sb.Key;
+                var sbState = sb.Value;
+                <span style="display:inline-flex;align-items:center;gap:0.3rem;background:#fee2e2;color:#b91c1c;border-radius:4px;padding:2px 8px;font-size:0.8rem;font-weight:500;">
+                    @sbKey
+                    @if (sbState.IsLoading)
+                    {
+                        <span>…</span>
+                    }
+                    else
+                    {
+                        <span>(@sbState.Tasks.Count bugs)</span>
+                    }
+                    <button style="background:none;border:none;cursor:pointer;color:#b91c1c;padding:0 0 0 2px;font-size:0.85rem;line-height:1;" @onclick="() => RemoveSupportBugEpic(sbKey)">✕</button>
+                </span>
+            }
+        </div>
+    }
     @if (!string.IsNullOrWhiteSpace(InfoMessage))
     {
         <div class="spd-info">@InfoMessage</div>
@@ -328,6 +360,7 @@
                         <select class="input custom-input" @bind="NewCustomTaskCategory">
                             <option value="Meeting">Meeting</option>
                             <option value="Support Bug">Support Bug</option>
+                            <option value="Feature Bug">Feature Bug</option>
                             <option value="Review">Review</option>
                             <option value="On-Call">On-Call</option>
                             <option value="Other">Other</option>
@@ -456,10 +489,33 @@
                                                         <td class="rpt-td rpt-td-dash">—</td>
                                                         <td class="rpt-td rpt-td-dash">@($"{row.CustomHours:0.#}h")</td>
                                                         <td class="rpt-td rpt-td-dash">—</td>
+                                                        @if (row.CustomCategory == "Support Bug" || (row.CustomCategory == "Feature Bug" && !string.IsNullOrEmpty(row.FeatureBugEpicKey)))
+                                                        {
+                                                            <td class="rpt-td rpt-td-est">@(row.SupportBugLoggedSeconds > 0 ? FormatEstimate("", row.SupportBugLoggedSeconds) : "—")</td>
+                                                        }
+                                                        else
+                                                        {
+                                                            <td class="rpt-td rpt-td-dash">—</td>
+                                                        }
+                                                        @if (row.BugTotalEstimateSeconds > 0)
+                                                        {
+                                                            <td class="rpt-td rpt-td-pct">
+                                                                <span class="risk-badge @GetCompletionBadgeClass(row)" title="@FormatEstimate("", row.BugTotalLoggedSeconds) logged / @FormatEstimate("", row.BugTotalEstimateSeconds) estimated (all team)">@GetCompletionPct(row)</span>
+                                                            </td>
+                                                        }
+                                                        else
+                                                        {
+                                                            <td class="rpt-td rpt-td-dash">—</td>
+                                                        }
                                                         <td class="rpt-td rpt-td-dash">—</td>
-                                                        <td class="rpt-td rpt-td-dash">—</td>
-                                                        <td class="rpt-td rpt-td-dash">—</td>
-                                                        <td class="rpt-td rpt-td-dash">—</td>
+                                                        @if ((row.CustomCategory == "Support Bug" || (row.CustomCategory == "Feature Bug" && !string.IsNullOrEmpty(row.FeatureBugEpicKey))) && row.SupportBugLastActivity.HasValue)
+                                                        {
+                                                            <td class="rpt-td rpt-td-activity"><span>@row.SupportBugLastActivity.Value.ToString("dd MMM, HH:mm")</span></td>
+                                                        }
+                                                        else
+                                                        {
+                                                            <td class="rpt-td rpt-td-dash">—</td>
+                                                        }
                                                     }
                                                     else
                                                     {
@@ -1024,6 +1080,11 @@
     private Dictionary<string, EpicLoadState> LoadedEpics { get; set; } = new();
     private string EpicKeyInput { get; set; } = "";
 
+    private Dictionary<string, EpicLoadState> LoadedSupportBugEpics { get; set; } = new();
+    private string SupportBugEpicKeyInput { get; set; } = "";
+    private Dictionary<string, SprintIssue> _supportBugIssues = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, List<SprintIssue>> _featureBugIssuesByEpic = new(StringComparer.OrdinalIgnoreCase);
+
     private List<TaskAllocation> Allocations { get; set; } = new();
     private Dictionary<int, SprintIssue> _taskCache = new();
     // Fallback labels loaded from persisted SprintPlanAllocation.TaskLabel when _taskCache misses.
@@ -1182,22 +1243,47 @@
     // ── Report completion badge ──
     private static string GetCompletionPct(ReportRow row)
     {
-        if (row.IsCustom) return "—";
+        if (row.IsCustom)
+        {
+            if (row.BugTotalEstimateSeconds > 0)
+                return $"{(double)row.BugTotalLoggedSeconds / row.BugTotalEstimateSeconds * 100:0}%";
+            return "—";
+        }
         if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "100%";
+        if (row.OriginalEstimateSeconds > 0)
+            return $"{(double)row.TimeSpentSeconds / row.OriginalEstimateSeconds * 100:0}%";
         var total = row.TimeSpentSeconds + row.RemainingEstimateSeconds;
         if (total == 0) return "—";
-        return $"{(double)row.TimeSpentSeconds / total * 100:0}%";
+        var pct = (double)row.TimeSpentSeconds / total * 100;
+        return $"{Math.Min(pct, 99):0}%";
     }
 
     private static string GetCompletionBadgeClass(ReportRow row)
     {
-        if (row.IsCustom) return "risk-gray";
+        if (row.IsCustom)
+        {
+            if (row.BugTotalEstimateSeconds > 0)
+            {
+                var pct = (double)row.BugTotalLoggedSeconds / row.BugTotalEstimateSeconds * 100;
+                if (pct > 100) return "risk-red";
+                if (pct >= 80)  return "risk-amber";
+                return "risk-green";
+            }
+            return "risk-gray";
+        }
         if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "risk-green";
-        var total = row.TimeSpentSeconds + row.RemainingEstimateSeconds;
-        if (total == 0) return "risk-amber";
-        var pct = (double)row.TimeSpentSeconds / total * 100;
-        if (pct >= 80) return "risk-green";
-        if (pct >= 40) return "risk-amber";
+        double completionPct;
+        if (row.OriginalEstimateSeconds > 0)
+            completionPct = (double)row.TimeSpentSeconds / row.OriginalEstimateSeconds * 100;
+        else
+        {
+            var total = row.TimeSpentSeconds + row.RemainingEstimateSeconds;
+            if (total == 0) return "risk-amber";
+            completionPct = (double)row.TimeSpentSeconds / total * 100;
+        }
+        if (completionPct > 100) return "risk-red";
+        if (completionPct >= 80) return "risk-green";
+        if (completionPct >= 40) return "risk-amber";
         return row.TimeSpentSeconds > 0 ? "risk-red" : "risk-gray";
     }
 
@@ -1398,6 +1484,67 @@
     }
 
     // ───────────────────────────────────────────────────────────
+    // Support Bug Epic loading / management
+    // ───────────────────────────────────────────────────────────
+    private async Task LoadSupportBugEpic()
+    {
+        ErrorMessage = null;
+        InfoMessage = null;
+        var key = SupportBugEpicKeyInput.Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(key)) { ErrorMessage = "Enter a support bug epic key."; return; }
+        if (LoadedSupportBugEpics.ContainsKey(key)) { InfoMessage = $"Bug epic {key} is already loaded."; return; }
+
+        LoadedSupportBugEpics[key] = new EpicLoadState { EpicKey = key, IsLoading = true };
+        SupportBugEpicKeyInput = "";
+        StateHasChanged();
+
+        try
+        {
+            var bugReport = await JiraService.GetEpicBugsAsync(key);
+            LoadedSupportBugEpics[key].Tasks = bugReport.Issues;
+            LoadedSupportBugEpics[key].IsLoading = false;
+            foreach (var issue in bugReport.Issues)
+                if (!string.IsNullOrEmpty(issue.Key))
+                    _supportBugIssues[issue.Key] = issue;
+            InfoMessage = $"Loaded {bugReport.Issues.Count} bugs from epic {key}.";
+        }
+        catch (Exception ex)
+        {
+            LoadedSupportBugEpics.Remove(key);
+            ErrorMessage = $"Failed to load bug epic {key}: {ex.Message}";
+        }
+    }
+
+    private async Task OnSupportBugEpicInputKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadSupportBugEpic();
+    }
+
+    private void RemoveSupportBugEpic(string epicKey)
+    {
+        LoadedSupportBugEpics.Remove(epicKey);
+        foreach (var k in _supportBugIssues.Where(kvp => kvp.Value.EpicKey == epicKey).Select(kvp => kvp.Key).ToList())
+            _supportBugIssues.Remove(k);
+        InfoMessage = $"Bug epic {epicKey} removed.";
+    }
+
+    private async Task LoadSupportBugEpicByKey(string key)
+    {
+        if (string.IsNullOrWhiteSpace(key) || LoadedSupportBugEpics.ContainsKey(key)) return;
+        LoadedSupportBugEpics[key] = new EpicLoadState { EpicKey = key, IsLoading = true };
+        try
+        {
+            var bugReport = await JiraService.GetEpicBugsAsync(key);
+            LoadedSupportBugEpics[key].Tasks = bugReport.Issues;
+            foreach (var issue in bugReport.Issues)
+                if (!string.IsNullOrEmpty(issue.Key))
+                    _supportBugIssues[issue.Key] = issue;
+        }
+        catch { }
+        LoadedSupportBugEpics[key].IsLoading = false;
+    }
+
+    // ───────────────────────────────────────────────────────────
     // Sprint Plan CRUD
     // ───────────────────────────────────────────────────────────
     private async Task SavePlanAsync()
@@ -1407,13 +1554,15 @@
         try
         {
             var epicKeys = string.Join(",", LoadedEpics.Keys);
+            var supportBugEpicKeys = string.Join(",", LoadedSupportBugEpics.Keys);
             var plan = new SprintPlanHeader
             {
                 Id            = _currentPlanId ?? 0,
                 Name          = string.IsNullOrWhiteSpace(SprintName) ? $"Sprint {DateTime.Today:yyyy-MM-dd}" : SprintName,
                 SprintStart   = SprintStart,
                 SprintEnd     = SprintEnd,
-                LoadedEpicKeys = epicKeys,
+                LoadedEpicKeys     = epicKeys,
+                SupportBugEpicKeys = supportBugEpicKeys,
                 Allocations   = Allocations.Select(a => new SprintPlanAllocation
                 {
                     SprintPlanId   = _currentPlanId ?? 0,
@@ -1469,9 +1618,12 @@
         _currentPlanId    = null;
         SprintName        = "";
         LoadedEpics.Clear();
+        LoadedSupportBugEpics.Clear();
         _taskCache.Clear();
         _taskLabelFallback.Clear();
         _reportIssues.Clear();
+        _supportBugIssues.Clear();
+        _featureBugIssuesByEpic.Clear();
         Allocations.Clear();
         _customTasks.Clear();
         Holidays.Clear();
@@ -1515,12 +1667,19 @@
 
         // Reload epics from cache/Jira
         LoadedEpics.Clear();
+        LoadedSupportBugEpics.Clear();
         _taskCache.Clear();
         _taskLabelFallback.Clear();
         _reportIssues.Clear();
+        _supportBugIssues.Clear();
+        _featureBugIssuesByEpic.Clear();
         var epicKeys = plan.LoadedEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
         foreach (var key in epicKeys)
             await LoadEpicByKey(key);
+
+        var supportBugEpicKeys = plan.SupportBugEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var key in supportBugEpicKeys)
+            await LoadSupportBugEpicByKey(key);
 
         // Seed fallback labels from persisted allocations so tasks missing from _taskCache still display correctly.
         foreach (var a in plan.Allocations)
@@ -1637,6 +1796,7 @@
         {
             "Meeting"     => "#8b5cf6",
             "Support Bug" => "#ef4444",
+            "Feature Bug" => "#ef4444",
             "Review"      => "#f59e0b",
             "On-Call"     => "#f97316",
             _             => "#6366f1"
@@ -2158,6 +2318,39 @@
                 }
                 catch { }
             }
+
+            // Refresh support bug issues (with up-to-date worklogs) for Time Logged column
+            _supportBugIssues.Clear();
+            foreach (var epicKey in LoadedSupportBugEpics.Keys.ToList())
+            {
+                try
+                {
+                    var bugReport = await JiraService.GetEpicBugsAsync(epicKey);
+                    LoadedSupportBugEpics[epicKey].Tasks = bugReport.Issues;
+                    foreach (var issue in bugReport.Issues)
+                        if (!string.IsNullOrEmpty(issue.Key))
+                            _supportBugIssues[issue.Key] = issue;
+                }
+                catch { }
+            }
+
+            // Refresh feature bug epic issues — each "Feature Bug" custom task embeds an epic key in its title
+            _featureBugIssuesByEpic.Clear();
+            var featureBugKeys = _customTasks.Values
+                .Where(ct => ct.Category == "Feature Bug")
+                .Select(ct => ExtractEpicKeyFromTitle(ct.Name))
+                .Where(k => k != null).Select(k => k!)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            foreach (var epicKey in featureBugKeys)
+            {
+                try
+                {
+                    var bugReport = await JiraService.GetEpicBugsAsync(epicKey);
+                    _featureBugIssuesByEpic[epicKey] = bugReport.Issues;
+                }
+                catch { }
+            }
         }
         finally
         {
@@ -2184,6 +2377,11 @@
         public string    CustomColor             { get; init; } = "";
         public string    CustomCategory          { get; init; } = "";
         public decimal   CustomHours             { get; init; }
+        public int       SupportBugLoggedSeconds  { get; init; }
+        public DateTime? SupportBugLastActivity   { get; init; }
+        public string    FeatureBugEpicKey        { get; init; } = "";
+        public int       BugTotalEstimateSeconds  { get; init; }
+        public int       BugTotalLoggedSeconds    { get; init; }
     }
 
     private List<ReportRow> GetReportRowsForMember(Guid memberId)
@@ -2195,16 +2393,49 @@
             .Select(g => g.First().TaskId)
             .Distinct();
 
+        var memberName = TeamMembers.FirstOrDefault(m => m.Id == memberId)?.Name ?? "";
+
         foreach (var taskId in assignedGroups)
         {
             if (taskId < 0)
             {
                 if (_customTasks.TryGetValue(taskId, out var ct))
-                    rows.Add(new ReportRow
+                {
+                    if (ct.Category == "Support Bug")
                     {
-                        IsCustom = true, Title = ct.Name,
-                        CustomColor = ct.Color, CustomCategory = ct.Category, CustomHours = ct.Hours
-                    });
+                        rows.Add(new ReportRow
+                        {
+                            IsCustom = true, Title = ct.Name,
+                            CustomColor = ct.Color, CustomCategory = ct.Category, CustomHours = ct.Hours,
+                            SupportBugLoggedSeconds = GetSupportBugLoggedSeconds(memberName),
+                            SupportBugLastActivity  = GetSupportBugLastActivity(memberName),
+                            BugTotalEstimateSeconds = GetSupportBugTotalEstimateSeconds(),
+                            BugTotalLoggedSeconds   = GetSupportBugTotalLoggedAllSeconds()
+                        });
+                    }
+                    else if (ct.Category == "Feature Bug")
+                    {
+                        var epicKey = ExtractEpicKeyFromTitle(ct.Name);
+                        rows.Add(new ReportRow
+                        {
+                            IsCustom = true, Title = ct.Name,
+                            CustomColor = ct.Color, CustomCategory = ct.Category, CustomHours = ct.Hours,
+                            FeatureBugEpicKey       = epicKey ?? "",
+                            SupportBugLoggedSeconds = epicKey != null ? GetFeatureBugLoggedSeconds(memberName, epicKey) : 0,
+                            SupportBugLastActivity  = epicKey != null ? GetFeatureBugLastActivity(memberName, epicKey) : null,
+                            BugTotalEstimateSeconds = epicKey != null ? GetFeatureBugTotalEstimateSeconds(epicKey) : 0,
+                            BugTotalLoggedSeconds   = epicKey != null ? GetFeatureBugTotalLoggedAllSeconds(epicKey) : 0
+                        });
+                    }
+                    else
+                    {
+                        rows.Add(new ReportRow
+                        {
+                            IsCustom = true, Title = ct.Name,
+                            CustomColor = ct.Color, CustomCategory = ct.Category, CustomHours = ct.Hours
+                        });
+                    }
+                }
                 continue;
             }
 
@@ -2259,6 +2490,88 @@
                 _               => 1
             })
             .ToList();
+    }
+
+    private int GetSupportBugLoggedSeconds(string memberName)
+    {
+        if (_supportBugIssues.Count == 0 || string.IsNullOrEmpty(memberName)) return 0;
+        var sprintStart = SprintStart.ToDateTime(TimeOnly.MinValue);
+        return _supportBugIssues.Values
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= sprintStart
+                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+            .Sum(w => w.TimeSpentSeconds);
+    }
+
+    private DateTime? GetSupportBugLastActivity(string memberName)
+    {
+        if (_supportBugIssues.Count == 0 || string.IsNullOrEmpty(memberName)) return null;
+        var sprintStart = SprintStart.ToDateTime(TimeOnly.MinValue);
+        var worklogs = _supportBugIssues.Values
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= sprintStart
+                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return worklogs.Count > 0 ? worklogs.Max(w => w.Started) : (DateTime?)null;
+    }
+
+    // Extracts the first Jira-style key (e.g. JM-12345) from a string such as "JM-12345 - feature context"
+    private static string? ExtractEpicKeyFromTitle(string title)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(title, @"\b([A-Z]+-\d+)\b");
+        return match.Success ? match.Groups[1].Value : null;
+    }
+
+    private int GetFeatureBugLoggedSeconds(string memberName, string epicKey)
+    {
+        if (!_featureBugIssuesByEpic.TryGetValue(epicKey, out var issues) || string.IsNullOrEmpty(memberName)) return 0;
+        var sprintStart = SprintStart.ToDateTime(TimeOnly.MinValue);
+        return issues
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= sprintStart
+                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+            .Sum(w => w.TimeSpentSeconds);
+    }
+
+    private DateTime? GetFeatureBugLastActivity(string memberName, string epicKey)
+    {
+        if (!_featureBugIssuesByEpic.TryGetValue(epicKey, out var issues) || string.IsNullOrEmpty(memberName)) return null;
+        var sprintStart = SprintStart.ToDateTime(TimeOnly.MinValue);
+        var worklogs = issues
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= sprintStart
+                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        return worklogs.Count > 0 ? worklogs.Max(w => w.Started) : (DateTime?)null;
+    }
+
+    // ── Bug budget totals (all members, epic-wide) ──
+
+    private int GetSupportBugTotalEstimateSeconds()
+        => _supportBugIssues.Values.Sum(i => i.OriginalEstimateSeconds);
+
+    private int GetSupportBugTotalLoggedAllSeconds()
+    {
+        var sprintStart = SprintStart.ToDateTime(TimeOnly.MinValue);
+        return _supportBugIssues.Values
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= sprintStart)
+            .Sum(w => w.TimeSpentSeconds);
+    }
+
+    private int GetFeatureBugTotalEstimateSeconds(string epicKey)
+        => _featureBugIssuesByEpic.TryGetValue(epicKey, out var issues)
+            ? issues.Sum(i => i.OriginalEstimateSeconds)
+            : 0;
+
+    private int GetFeatureBugTotalLoggedAllSeconds(string epicKey)
+    {
+        if (!_featureBugIssuesByEpic.TryGetValue(epicKey, out var issues)) return 0;
+        var sprintStart = SprintStart.ToDateTime(TimeOnly.MinValue);
+        return issues
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= sprintStart)
+            .Sum(w => w.TimeSpentSeconds);
     }
 
     // ── Daily metrics helpers ──

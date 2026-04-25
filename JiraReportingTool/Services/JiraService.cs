@@ -436,10 +436,20 @@ public class JiraService : IJiraService
         return (report, truncatedKeys);
     }
 
-    // Fetches complete worklogs for issues where the search API returned a truncated list (max 20).
+    // Fetches complete worklogs for issues where:
+    //   (a) the search API returned a truncated list (max 20 inline), OR
+    //   (b) the issue has TimeSpentSeconds > 0 but zero inline worklogs (Jira search index lag)
     private async Task FetchMissingWorklogsAsync(SprintReport report, List<string> truncatedKeys)
     {
-        foreach (var key in truncatedKeys)
+        var noWorklogs = report.Issues
+            .Where(i => i.TimeSpentSeconds > 0 && i.Worklogs.Count == 0)
+            .Select(i => i.Key)
+            .Where(k => !truncatedKeys.Contains(k, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        var allKeys = truncatedKeys.Concat(noWorklogs).ToList();
+
+        foreach (var key in allKeys)
         {
             var issue = report.Issues.FirstOrDefault(i => i.Key == key);
             if (issue == null) continue;
@@ -495,9 +505,38 @@ public class JiraService : IJiraService
         if (issueKeys.Count == 0) return new SprintReport();
         var keyList = string.Join(",", issueKeys.Select(k => $"\"{k}\""));
         var jql = Uri.EscapeDataString($"key in ({keyList}) ORDER BY key ASC");
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,labels,created,resolutiondate";
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,labels,created,resolutiondate";
         var json = await FetchAllPagesAsync(jql, fields);
-        var (report, _) = ParseSprintReport(json, "");
+        var (report, truncated) = ParseSprintReport(json, "");
+        await FetchMissingWorklogsAsync(report, truncated);
+        return report;
+    }
+
+    public async Task<SprintReport> GetEpicBugsAsync(string epicKey)
+    {
+        var epicResponse = await _httpClient.GetAsync(
+            $"{_baseUrl}/rest/api/3/issue/{epicKey}?fields=summary");
+        var epicSummary = "";
+        if (epicResponse.IsSuccessStatusCode)
+        {
+            var epicJson = await epicResponse.Content.ReadAsStringAsync();
+            using var epicDoc = JsonDocument.Parse(epicJson);
+            epicSummary = epicDoc.RootElement.GetProperty("fields").GetProperty("summary").GetString() ?? "";
+        }
+
+        var jql = Uri.EscapeDataString(
+            $"issueType = Bug AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate";
+        var json = await FetchAllPagesAsync(jql, fields);
+        var (report, truncated) = ParseSprintReport(json, "");
+        await FetchMissingWorklogsAsync(report, truncated);
+
+        foreach (var issue in report.Issues)
+        {
+            issue.EpicKey  = epicKey;
+            issue.EpicName = epicSummary;
+        }
+
         return report;
     }
 
