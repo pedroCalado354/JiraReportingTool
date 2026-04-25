@@ -1,15 +1,14 @@
-﻿@inherits LayoutComponentBase
+@inherits LayoutComponentBase
 
-<div class="page">
-    <div class="sidebar">
+<div class="app-shell">
+    <aside class="app-sidebar">
         <NavMenu />
-    </div>
-
-    <main>
-        <article class="content px-4">
+    </aside>
+    <div class="app-main">
+        <div class="app-content">
             @Body
-        </article>
-    </main>
+        </div>
+    </div>
 </div>
 
 <ChatWidget />

@@ -83,36 +83,34 @@
     <!-- ═══ STATS STRIP ═══════════════════════════════════════════════ -->
     <div class="spd-stats">
         <div class="stat-card">
-            <div class="stat-value">@WorkingDaysCount</div>
-            <div class="stat-label">Working Days</div>
+            <div class="stat-value">@ScheduledTotalCount</div>
+            <div class="stat-label">Sprint Tasks</div>
+            <div class="stat-sub">@ScheduledJiraTaskCount Jira · @ScheduledCustomTaskCount custom</div>
+        </div>
+        <div class="stat-card @GetDonePctClass()">
+            <div class="stat-value">@(ScheduledJiraTaskCount > 0 ? $"{DonePct:0}%" : "—")</div>
+            <div class="stat-label">Done</div>
+            <div class="stat-sub">@DoneTaskCount of @ScheduledJiraTaskCount tasks</div>
+        </div>
+        <div class="stat-card @(AtRiskCount > 0 ? "stat-amber" : (ScheduledJiraTaskCount > 0 ? "stat-green" : ""))">
+            <div class="stat-value">@AtRiskCount</div>
+            <div class="stat-label">At Risk</div>
+            <div class="stat-sub">@RemainingWorkingDays working days left</div>
+        </div>
+        <div class="stat-card @(BlockedStatCount > 0 ? "stat-red" : (ScheduledJiraTaskCount > 0 ? "stat-green" : ""))">
+            <div class="stat-value">@BlockedStatCount</div>
+            <div class="stat-label">Blocked</div>
+            <div class="stat-sub">tasks blocked</div>
         </div>
         <div class="stat-card">
-            <div class="stat-value">@LoadedEpics.Count</div>
-            <div class="stat-label">Epics Loaded</div>
+            <div class="stat-value">@InProgressCount</div>
+            <div class="stat-label">In Progress</div>
+            <div class="stat-sub">actively being worked on</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-value">@TotalTaskCount</div>
-            <div class="stat-label">Total Tasks</div>
-        </div>
-        <div class="stat-card stat-green">
-            <div class="stat-value">@AssignedCount</div>
-            <div class="stat-label">Assigned</div>
-        </div>
-        <div class="stat-card @(UnassignedCount > 0 ? "stat-amber" : "stat-green")">
-            <div class="stat-value">@UnassignedCount</div>
-            <div class="stat-label">Unassigned</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">@($"{TotalScopeHours:0.#}h")</div>
-            <div class="stat-label">Scope Hours</div>
-        </div>
-        <div class="stat-card">
-            <div class="stat-value">@($"{TotalAllocatedHours:0.#}h")</div>
-            <div class="stat-label">Allocated</div>
-        </div>
-        <div class="stat-card @GetCoverageCardClass()">
-            <div class="stat-value">@($"{CoveragePercent:0}%")</div>
-            <div class="stat-label">Coverage</div>
+        <div class="stat-card @(MissingEstCount > 0 ? "stat-amber" : "")">
+            <div class="stat-value">@MissingEstCount</div>
+            <div class="stat-label">Missing Est.</div>
+            <div class="stat-sub">active, no remaining est.</div>
         </div>
     </div>
 
@@ -419,6 +417,8 @@
                                     <th class="rpt-th rpt-th-status">Status</th>
                                     <th class="rpt-th rpt-th-est">Original Est.</th>
                                     <th class="rpt-th rpt-th-est">Remaining</th>
+                                    <th class="rpt-th rpt-th-logged">Time Logged</th>
+                                    <th class="rpt-th rpt-th-pct">% Done</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -426,7 +426,7 @@
                                 {
                                     var rptTeamName = teamGroup.Key;
                                     <tr class="rpt-team-row">
-                                        <td colspan="6" class="rpt-team-cell">@rptTeamName</td>
+                                        <td colspan="8" class="rpt-team-cell">@rptTeamName</td>
                                     </tr>
                                     @foreach (var mem in teamGroup)
                                     {
@@ -436,7 +436,7 @@
                                         {
                                             <tr class="rpt-row">
                                                 <td class="rpt-td rpt-td-assignee">@rptMem.Name</td>
-                                                <td class="rpt-td" colspan="5" style="color:#9ca3af;font-style:italic;">No tasks assigned</td>
+                                                <td class="rpt-td" colspan="7" style="color:#9ca3af;font-style:italic;">No tasks assigned</td>
                                             </tr>
                                         }
                                         else
@@ -454,6 +454,8 @@
                                                         <td class="rpt-td rpt-td-dash">—</td>
                                                         <td class="rpt-td rpt-td-dash">@($"{row.CustomHours:0.#}h")</td>
                                                         <td class="rpt-td rpt-td-dash">—</td>
+                                                        <td class="rpt-td rpt-td-dash">—</td>
+                                                        <td class="rpt-td rpt-td-dash">—</td>
                                                     }
                                                     else
                                                     {
@@ -466,6 +468,10 @@
                                                         </td>
                                                         <td class="rpt-td rpt-td-est">@FormatEstimate(row.OriginalEstimate, row.OriginalEstimateSeconds)</td>
                                                         <td class="rpt-td rpt-td-est">@FormatEstimate(row.RemainingEstimate, row.RemainingEstimateSeconds)</td>
+                                                        <td class="rpt-td rpt-td-est">@FormatEstimate(row.TimeSpent, row.TimeSpentSeconds)</td>
+                                                        <td class="rpt-td rpt-td-pct">
+                                                            <span class="risk-badge @GetCompletionBadgeClass(row)">@GetCompletionPct(row)</span>
+                                                        </td>
                                                     }
                                                 </tr>
                                             }
@@ -1026,6 +1032,89 @@
             .Select(i => SprintStart.AddDays(i))
             .Count(d => !IsWeekend(d) && !IsHoliday(d))
         : 0;
+
+    // ── Sprint stats strip ──
+    private int ScheduledJiraTaskCount
+        => Allocations.Where(a => a.TaskId > 0).Select(a => a.TaskId).Distinct().Count();
+
+    private int ScheduledCustomTaskCount
+        => Allocations.Where(a => a.TaskId < 0).Select(a => a.TaskId).Distinct().Count();
+
+    private int ScheduledTotalCount => ScheduledJiraTaskCount + ScheduledCustomTaskCount;
+
+    private IReadOnlyList<SprintIssue> GetScheduledIssues()
+        => Allocations
+            .Where(a => a.TaskId > 0)
+            .Select(a => a.TaskId)
+            .Distinct()
+            .Select(id =>
+            {
+                var key = GetJiraKeyForTaskId(id);
+                if (key != null && _reportIssues.TryGetValue(key, out var ri)) return ri;
+                return _taskCache.TryGetValue(id, out var ci) ? ci : null;
+            })
+            .Where(t => t != null)
+            .Select(t => t!)
+            .ToList();
+
+    private int DoneTaskCount      => GetScheduledIssues().Count(t => t.StatusCategoryKey == "done");
+    private int InProgressCount    => GetScheduledIssues().Count(t => t.StatusCategoryKey == "indeterminate");
+    private int BlockedStatCount   => GetScheduledIssues().Count(t => t.Status.Contains("blocked", StringComparison.OrdinalIgnoreCase));
+    private int MissingEstCount    => GetScheduledIssues().Count(t =>
+        t.StatusCategoryKey != "done" && t.OriginalEstimateSeconds > 0 && t.RemainingEstimateSeconds == 0);
+
+    private double DonePct => ScheduledJiraTaskCount == 0 ? 0
+        : (double)DoneTaskCount / ScheduledJiraTaskCount * 100;
+
+    private string GetDonePctClass() => ScheduledJiraTaskCount == 0 ? ""
+        : DonePct >= 80 ? "stat-green" : DonePct >= 40 ? "stat-amber" : "stat-red";
+
+    private int RemainingWorkingDays
+    {
+        get
+        {
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            if (SprintEnd == default || SprintEnd < today) return 0;
+            var from = today > SprintStart ? today : SprintStart;
+            return Enumerable.Range(0, SprintEnd.DayNumber - from.DayNumber + 1)
+                .Select(i => from.AddDays(i))
+                .Count(d => !IsWeekend(d) && !IsHoliday(d));
+        }
+    }
+
+    private int AtRiskCount
+    {
+        get
+        {
+            var remainingSec = (long)RemainingWorkingDays * 6 * 3600;
+            return GetScheduledIssues()
+                .Count(t => t.StatusCategoryKey != "done"
+                          && t.RemainingEstimateSeconds > 0
+                          && t.RemainingEstimateSeconds > remainingSec);
+        }
+    }
+
+    // ── Report completion badge ──
+    private static string GetCompletionPct(ReportRow row)
+    {
+        if (row.IsCustom) return "—";
+        if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "100%";
+        var total = row.TimeSpentSeconds + row.RemainingEstimateSeconds;
+        if (total == 0) return "—";
+        return $"{(double)row.TimeSpentSeconds / total * 100:0}%";
+    }
+
+    private static string GetCompletionBadgeClass(ReportRow row)
+    {
+        if (row.IsCustom) return "risk-gray";
+        if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "risk-green";
+        var total = row.TimeSpentSeconds + row.RemainingEstimateSeconds;
+        if (total == 0) return "risk-amber";
+        var pct = (double)row.TimeSpentSeconds / total * 100;
+        if (pct >= 80) return "risk-green";
+        if (pct >= 40) return "risk-amber";
+        return row.TimeSpentSeconds > 0 ? "risk-red" : "risk-gray";
+    }
 
     // ───────────────────────────────────────────────────────────
     // Initialisation
@@ -1949,6 +2038,8 @@
         public int    OriginalEstimateSeconds { get; init; }
         public string RemainingEstimate       { get; init; } = "";
         public int    RemainingEstimateSeconds { get; init; }
+        public string TimeSpent               { get; init; } = "";
+        public int    TimeSpentSeconds        { get; init; }
         public string CustomColor             { get; init; } = "";
         public string CustomCategory          { get; init; } = "";
         public decimal CustomHours            { get; init; }
@@ -1995,7 +2086,9 @@
                     OriginalEstimate = issue.OriginalEstimate,
                     OriginalEstimateSeconds = issue.OriginalEstimateSeconds,
                     RemainingEstimate = issue.RemainingEstimate,
-                    RemainingEstimateSeconds = issue.RemainingEstimateSeconds
+                    RemainingEstimateSeconds = issue.RemainingEstimateSeconds,
+                    TimeSpent = issue.TimeSpent,
+                    TimeSpentSeconds = issue.TimeSpentSeconds,
                 });
             }
             else if (jiraKey != null || _taskLabelFallback.ContainsKey(taskId))
@@ -2823,6 +2916,15 @@ private static decimal ParseJiraDurationToHours(string? input)
         letter-spacing: 0.03em;
     }
 
+    .stat-sub {
+        font-size: 10px;
+        color: #9ca3af;
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
     .stat-green { border-color: #a7f3d0; background: #f0fdf4; }
     .stat-green .stat-value { color: #065f46; }
 
@@ -3245,6 +3347,8 @@ private static decimal ParseJiraDurationToHours(string? input)
     .rpt-th-title    { }
     .rpt-th-status   { width: 130px; }
     .rpt-th-est      { width: 110px; text-align: right; }
+    .rpt-th-logged   { width: 100px; text-align: right; }
+    .rpt-th-pct      { width: 80px;  text-align: center; }
 
     .rpt-team-row { background: #f1f5f9; }
 
@@ -3272,6 +3376,20 @@ private static decimal ParseJiraDurationToHours(string? input)
     .rpt-td-title    { max-width: 320px; }
     .rpt-td-est      { text-align: right; font-size: 12px; color: #6b7280; white-space: nowrap; }
     .rpt-td-dash     { color: #9ca3af; text-align: right; }
+    .rpt-td-pct      { text-align: center; }
+
+    .risk-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+    .risk-green { background: #dcfce7; color: #166534; }
+    .risk-amber { background: #fef9c3; color: #854d0e; }
+    .risk-red   { background: #fee2e2; color: #991b1b; }
+    .risk-gray  { background: #f3f4f6; color: #9ca3af; }
 
     .rpt-jira-key {
         font-weight: 700;

@@ -23,7 +23,7 @@
                 <div class="qm-input-row">
                     <select class="qm-select qm-select-wide"
                             @bind="SelectedFilterId"
-                            disabled="@(FiltersLoading || !string.IsNullOrEmpty(SprintId))">
+                            disabled="@(FiltersLoading || !string.IsNullOrEmpty(SprintId) || !string.IsNullOrEmpty(EpicKeyInput))">
                         <option value="">— select a filter —</option>
                         @foreach (var f in MyFilters)
                         {
@@ -44,11 +44,20 @@
                 <label class="qm-label">Sprint ID</label>
                 <input class="qm-input" placeholder="e.g. 6690"
                        @bind="SprintId" @onkeyup="HandleKeyUp"
-                       disabled="@(!string.IsNullOrEmpty(SelectedFilterId))" />
+                       disabled="@(!string.IsNullOrEmpty(SelectedFilterId) || !string.IsNullOrEmpty(EpicKeyInput))" />
+            </div>
+
+            <div class="qm-or-divider">or</div>
+
+            <div class="qm-field-group">
+                <label class="qm-label">Epic Key</label>
+                <input class="qm-input" placeholder="e.g. PROJ-123"
+                       @bind="EpicKeyInput" @onkeyup="HandleKeyUp"
+                       disabled="@(!string.IsNullOrEmpty(SprintId) || !string.IsNullOrEmpty(SelectedFilterId))" />
             </div>
 
             <button class="qm-btn-primary" @onclick="LoadData"
-                    disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId)))">
+                    disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId) && string.IsNullOrEmpty(EpicKeyInput)))">
                 @if (IsLoading) { <span class="qm-spinner qm-spinner-sm"></span> }
                 Load Data
             </button>
@@ -68,13 +77,13 @@
         </div>
     }
 
-    @if (SprintData != null)
+    @if (SprintData != null || EpicAllIssues != null)
     {
         <!-- ── Scope breadcrumb ───────────────────────────────────────────────── -->
         @if (DrillEpicKey != null)
         {
             <div class="qm-breadcrumb">
-                <button class="qm-btn-back" @onclick="BackToSprint">← Back to Sprint</button>
+                <button class="qm-btn-back" @onclick="BackToSprint">@(SprintData != null ? "← Back to Sprint" : "← Back")</button>
                 <span class="qm-breadcrumb-sep">/</span>
                 <span class="qm-breadcrumb-current">@(string.IsNullOrEmpty(DrillEpicName) ? DrillEpicKey : DrillEpicName)</span>
                 <span class="qm-chip qm-chip-gray">All issues · all sprints</span>
@@ -609,7 +618,8 @@
     private bool EpicLoading;
     private string? DrillEpicKey;
     private string? DrillEpicName;
-    private string SprintId = "";
+    private string SprintId     = "";
+    private string EpicKeyInput = "";
     private bool IsLoading;
     private string? ErrorMessage;
 
@@ -930,11 +940,19 @@
             }
             else if (int.TryParse(SprintId.Trim(), out var id))
                 SprintData = await JiraService.GetDeliveryDataAsync(id);
+            else if (!string.IsNullOrEmpty(EpicKeyInput.Trim()))
+            {
+                var key = EpicKeyInput.Trim().ToUpperInvariant();
+                DrillEpicKey = key; DrillEpicName = key;
+                EpicLoading = true;
+                StateHasChanged();
+                EpicAllIssues = await JiraService.GetAllEpicIssuesAsync(key);
+            }
             else
-                ErrorMessage = "Enter a valid numeric Sprint ID.";
+                ErrorMessage = "Enter a valid Sprint ID, Epic Key, or select a saved filter.";
         }
         catch (Exception ex) { ErrorMessage = $"Failed to load data: {ex.Message}"; }
-        finally { IsLoading = false; }
+        finally { IsLoading = false; EpicLoading = false; }
     }
 
     private async Task DrillIntoEpic(EpicSummary epic)
