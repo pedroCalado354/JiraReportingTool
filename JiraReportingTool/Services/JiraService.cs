@@ -265,7 +265,7 @@ public class JiraService : IJiraService
         return report;
     }
 
-    private async Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys)
+    public async Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys)
     {
         var keysJql = string.Join(",", epicKeys.Select(k => $"\"{k}\""));
         var jql = Uri.EscapeDataString($"key in ({keysJql})");
@@ -493,9 +493,12 @@ public class JiraService : IJiraService
         await FetchMissingWorklogsAsync(report, truncated);
 
         var epicNames = await FetchEpicNamesAsync([epicKey]);
-        if (epicNames.TryGetValue(epicKey, out var name))
-            foreach (var issue in report.Issues)
+        foreach (var issue in report.Issues)
+        {
+            issue.EpicKey = epicKey;
+            if (epicNames.TryGetValue(epicKey, out var name))
                 issue.EpicName = name;
+        }
 
         return report;
     }
@@ -505,7 +508,7 @@ public class JiraService : IJiraService
         if (issueKeys.Count == 0) return new SprintReport();
         var keyList = string.Join(",", issueKeys.Select(k => $"\"{k}\""));
         var jql = Uri.EscapeDataString($"key in ({keyList}) ORDER BY key ASC");
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,labels,created,resolutiondate";
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,labels,created,resolutiondate,customfield_10014,parent";
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, truncated) = ParseSprintReport(json, "");
         await FetchMissingWorklogsAsync(report, truncated);

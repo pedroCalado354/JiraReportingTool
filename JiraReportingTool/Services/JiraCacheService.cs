@@ -33,6 +33,9 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
     public Task<SprintReport> GetEpicBugsAsync(string epicKey)
         => api.GetEpicBugsAsync(epicKey);
 
+    public Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys)
+        => api.FetchEpicNamesAsync(epicKeys);
+
     public Task<SprintReport> GetEpicSprintForecastAsync(string epicKey, int sprintId)
         => api.GetEpicSprintForecastAsync(epicKey, sprintId);
 

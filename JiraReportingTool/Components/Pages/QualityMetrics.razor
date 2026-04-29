@@ -891,25 +891,34 @@
     private double BugOverheadPct   => FeatureDevHours == 0 ? -1 : BugFixHours / FeatureDevHours * 100;
 
     // ── Quality score (0–100) ─────────────────────────────────────────────────
+    // Three equal thirds: Bug Effort Ratio + Avg Bug Fix Time + Bug Overhead.
+    // Each uses a quadratic penalty so small overruns hurt less than large ones.
+    // Avg Fix Time is normalised against a 40 h ceiling (1 work-week).
+    // Any metric with no data (< 0) is treated as perfect so it doesn't penalise.
     private int QualityScore
     {
         get
         {
             if (ActiveFilteredIssues.Count == 0) return 100;
-            // Quadratic penalties: damage grows faster than linearly.
-            // 10% bug rate → loses ~19% of bug points.  50% → loses 75%.  75% → loses 94%.
-            var bugScore    = Math.Pow(Math.Max(0.0, 1.0 - Math.Min(OverallBugRate,   100.0) / 100.0), 2);
+
             var effortScore = BugFixEffortRatio < 0 ? 1.0
-                            : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(BugFixEffortRatio, 100.0) / 100.0), 2);
-            return Math.Clamp((int)(bugScore * 60 + effortScore * 40), 0, 100);
+                : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(BugFixEffortRatio, 100.0) / 100.0), 2);
+
+            var fixTimeScore = AvgFixTimeHours < 0 ? 1.0
+                : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(AvgFixTimeHours, 40.0) / 40.0), 2);
+
+            var overheadScore = BugOverheadPct < 0 ? 1.0
+                : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(BugOverheadPct, 100.0) / 100.0), 2);
+
+            return Math.Clamp((int)(effortScore * 34 + fixTimeScore * 33 + overheadScore * 33), 0, 100);
         }
     }
 
     private string QualityBand      => QualityScore >= 75 ? "good" : QualityScore >= 50 ? "fair" : "poor";
     private string QualityBandLabel => QualityScore >= 75
-        ? "Good — low bug density and efficient delivery"
+        ? "Good — low bug effort, fast fix times and low overhead"
         : QualityScore >= 50 ? "Fair — moderate bug pressure, monitor closely"
-        : "Poor — high bug rate or significant effort lost to bugs";
+        : "Poor — high bug effort ratio or significant overhead";
 
     // ── Epic helpers ──────────────────────────────────────────────────────────
     private static int    EpicBugCount(EpicSummary e) => e.Issues.Count(IsBug);

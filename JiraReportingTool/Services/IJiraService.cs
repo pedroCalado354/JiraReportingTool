@@ -27,4 +27,10 @@ public interface IJiraService
     /// Used to populate the Support Bug Time Logged column in the sprint report.
     /// </summary>
     Task<SprintReport> GetEpicBugsAsync(string epicKey);
+
+    /// <summary>
+    /// Fetches epic summaries (key → name) for the given epic keys.
+    /// Used by the Excel export to resolve epic names when LoadedEpics is empty.
+    /// </summary>
+    Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys);
 }

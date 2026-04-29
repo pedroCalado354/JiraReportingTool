@@ -53,9 +53,11 @@ public sealed record TaskAssigneeRow(
     int    Done,
     int    InProgress,
     int    ToDo,
-    double CompletionPct,        // Done / Total × 100
-    double EpicSharePct,         // Total / AllIssues × 100
-    long   TotalSpentSec         // time logged across all their issues
+    double CompletionPct,              // Done / Total × 100
+    double EpicSharePct,               // Total / AllIssues × 100
+    long   TotalSpentSec,              // time logged across all their issues
+    long   TotalOriginalEstimateSec,   // sum of original estimates
+    long   TotalRemainingEstimateSec   // sum of remaining estimates
 );
 
 /// <summary>Per-assignee bug breakdown row.</summary>
@@ -299,14 +301,19 @@ public static class EpicProgressCalculator
                 var inProgress = list.Count(i => Cat(i.StatusCategoryKey) == "indeterminate");
                 var todo       = Math.Max(0, list.Count - done - inProgress);
                 return new TaskAssigneeRow(
-                    Assignee:      g.Key,
-                    Total:         list.Count,
-                    Done:          done,
-                    InProgress:    inProgress,
-                    ToDo:          todo,
-                    CompletionPct: SafePct(done, list.Count),
-                    EpicSharePct:  SafePct(list.Count, epicTotal),
-                    TotalSpentSec: list.Sum(i => (long)i.TimeSpentSeconds)
+                    Assignee:                   g.Key,
+                    Total:                      list.Count,
+                    Done:                       done,
+                    InProgress:                 inProgress,
+                    ToDo:                       todo,
+                    CompletionPct:              SafePct(done, list.Count),
+                    EpicSharePct:               SafePct(list.Count, epicTotal),
+                    TotalSpentSec:              list.Sum(i => (long)i.TimeSpentSeconds),
+                    TotalOriginalEstimateSec:   list.Sum(i => (long)i.OriginalEstimateSeconds),
+                    TotalRemainingEstimateSec:  list
+                        .Where(i => Cat(i.StatusCategoryKey) != "done" &&
+                                    !string.Equals(i.Status, "Rejected", StringComparison.OrdinalIgnoreCase))
+                        .Sum(i => (long)i.RemainingEstimateSeconds)
                 );
             })
             .OrderByDescending(r => r.Total)

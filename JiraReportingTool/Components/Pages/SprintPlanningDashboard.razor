@@ -144,6 +144,11 @@
             <div class="stat-label">Missing Est.</div>
             <div class="stat-sub">active, no remaining est.</div>
         </div>
+        <div class="stat-card @(SupportBugAllocatedHours > 0 ? "stat-red" : "")">
+            <div class="stat-value">@(SupportBugAllocatedHours > 0 ? $"{SupportBugAllocatedHours:0.#}h" : "—")</div>
+            <div class="stat-label">Bug Hours</div>
+            <div class="stat-sub">allocated for support bugs</div>
+        </div>
     </div>
 
     <!-- ═══ PLAN CRUD BAR ═══════════════════════════════════════════════ -->
@@ -497,10 +502,10 @@
                                                         {
                                                             <td class="rpt-td rpt-td-dash">—</td>
                                                         }
-                                                        @if (row.BugTotalEstimateSeconds > 0)
+                                                        @if ((row.CustomCategory == "Support Bug" || row.CustomCategory == "Feature Bug") && row.CustomHours > 0)
                                                         {
                                                             <td class="rpt-td rpt-td-pct">
-                                                                <span class="risk-badge @GetCompletionBadgeClass(row)" title="@FormatEstimate("", row.BugTotalLoggedSeconds) logged / @FormatEstimate("", row.BugTotalEstimateSeconds) estimated (all team)">@GetCompletionPct(row)</span>
+                                                                <span class="risk-badge @GetCompletionBadgeClass(row)" title="@FormatEstimate("", row.SupportBugLoggedSeconds) logged / @($"{row.CustomHours:0.#}h") planned">@GetCompletionPct(row)</span>
                                                             </td>
                                                         }
                                                         else
@@ -881,7 +886,7 @@
 
                                                         <div class="stacked-block"
                                                              style="top:@(topOff)px; width:calc(@(wPct)% - 6px); background:@GetBlockColor(blk.TaskId);"
-                                                             title="@GetTaskLabel(blk.TaskId)"
+                                                             title="@GetBlockTooltip(blk)"
                                                              @onclick:stopPropagation="true">
                                                             <div class="stacked-block-content">
                                                                 <span class="stacked-block-title">@GetTaskShortLabel(blk.TaskId)</span>
@@ -1209,6 +1214,14 @@
     private int MissingEstCount    => GetScheduledIssues().Count(t =>
         t.StatusCategoryKey != "done" && t.OriginalEstimateSeconds > 0 && t.RemainingEstimateSeconds == 0);
 
+    private decimal SupportBugAllocatedHours =>
+        _customTasks.Values
+            .Where(ct => ct.Category == "Support Bug")
+            .Sum(ct => Allocations
+                .Where(a => a.TaskId == ct.Id && !IsDayOff(a.TeamMemberId, a.Date)
+                    && a.Date >= SprintStart && a.Date <= SprintEnd)
+                .Sum(a => a.HoursAllocated));
+
     private double DonePct => ScheduledJiraTaskCount == 0 ? 0
         : (double)DoneTaskCount / ScheduledJiraTaskCount * 100;
 
@@ -1245,8 +1258,8 @@
     {
         if (row.IsCustom)
         {
-            if (row.BugTotalEstimateSeconds > 0)
-                return $"{(double)row.BugTotalLoggedSeconds / row.BugTotalEstimateSeconds * 100:0}%";
+            if ((row.CustomCategory == "Support Bug" || row.CustomCategory == "Feature Bug") && row.CustomHours > 0)
+                return $"{row.SupportBugLoggedSeconds / (double)(row.CustomHours * 3600) * 100:0}%";
             return "—";
         }
         if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "100%";
@@ -1262,11 +1275,11 @@
     {
         if (row.IsCustom)
         {
-            if (row.BugTotalEstimateSeconds > 0)
+            if ((row.CustomCategory == "Support Bug" || row.CustomCategory == "Feature Bug") && row.CustomHours > 0)
             {
-                var pct = (double)row.BugTotalLoggedSeconds / row.BugTotalEstimateSeconds * 100;
+                var pct = row.SupportBugLoggedSeconds / (double)(row.CustomHours * 3600) * 100;
                 if (pct > 100) return "risk-red";
-                if (pct >= 80)  return "risk-amber";
+                if (pct >= 80) return "risk-amber";
                 return "risk-green";
             }
             return "risk-gray";
@@ -1568,7 +1581,7 @@
                     SprintPlanId   = _currentPlanId ?? 0,
                     TaskId         = a.TaskId,
                     TaskLabel      = GetTaskLabel(a.TaskId),
-                    EpicKey        = LoadedEpics.Values.FirstOrDefault(e => e.Tasks.Any(t => t.Id == a.TaskId))?.EpicKey ?? "",
+                    EpicKey        = GetEpicKeyForAllocation(a.TaskId),
                     MemberId       = a.TeamMemberId,
                     MemberName     = TeamMembers.FirstOrDefault(m => m.Id == a.TeamMemberId)?.Name ?? "",
                     Date           = a.Date,
@@ -2244,6 +2257,16 @@
     private Dictionary<string, SprintIssue> _reportIssues = new(StringComparer.OrdinalIgnoreCase);
     private bool _isRefreshingReport = false;
 
+    private string GetEpicKeyForAllocation(int taskId)
+    {
+        var jk = GetJiraKeyForTaskId(taskId);
+        if (jk == null) return "";
+        foreach (var kvp in LoadedEpics)
+            if (kvp.Value.Tasks.Any(t => t.Key.Equals(jk, StringComparison.OrdinalIgnoreCase)))
+                return kvp.Key;
+        return "";
+    }
+
     private string? GetJiraKeyForTaskId(int taskId)
     {
         if (_taskCache.TryGetValue(taskId, out var cached) && !string.IsNullOrEmpty(cached.Key))
@@ -2833,6 +2856,20 @@
         return $"{t.Key} - {t.Summary} (Est: {t.OriginalEstimate})";
     }
 
+    // Block tooltip: for custom tasks shows actual sprint-allocated hours (not configured size).
+    private string GetBlockTooltip(CalendarBlock blk)
+    {
+        if (_customTasks.TryGetValue(blk.TaskId, out var ct))
+        {
+            var sprintHours = Allocations
+                .Where(a => a.GroupId == blk.GroupId
+                    && a.Date >= SprintStart && a.Date <= SprintEnd)
+                .Sum(a => a.HoursAllocated);
+            return $"{ct.Category}: {ct.Name} ({sprintHours:0.#}h)";
+        }
+        return GetTaskLabel(blk.TaskId);
+    }
+
     private string GetTaskShortLabel(int taskId)
     {
         if (_customTasks.TryGetValue(taskId, out var ct))
@@ -2979,103 +3016,99 @@ private static decimal ParseJiraDurationToHours(string? input)
         InfoMessage = null;
         try
         {
+            // Ensure _reportIssues is populated (needed to resolve task → epic mapping).
+            // This is a no-op if the user has already visited Report/Daily view.
+            if (_reportIssues.Count == 0)
+                await RefreshReportDataAsync();
+
             using var wb = new XLWorkbook();
 
-            // ── Sheet 1: Sprint Summary ──
-            var summary = wb.Worksheets.Add("Sprint Summary");
-            summary.Cell(1, 1).Value = "Sprint";          summary.Cell(1, 2).Value = SprintName;
-            summary.Cell(2, 1).Value = "Start";           summary.Cell(2, 2).Value = SprintStart.ToString("dd-MMM-yyyy");
-            summary.Cell(3, 1).Value = "End";             summary.Cell(3, 2).Value = SprintEnd.ToString("dd-MMM-yyyy");
-            summary.Cell(4, 1).Value = "Working Days";    summary.Cell(4, 2).Value = WorkingDaysCount;
-            summary.Cell(5, 1).Value = "Total Tasks";     summary.Cell(5, 2).Value = TotalTaskCount;
-            summary.Cell(6, 1).Value = "Assigned";        summary.Cell(6, 2).Value = AssignedCount;
-            summary.Cell(7, 1).Value = "Unassigned";      summary.Cell(7, 2).Value = UnassignedCount;
-            summary.Cell(8, 1).Value = "Scope Hours";     summary.Cell(8, 2).Value = (double)TotalScopeHours;
-            summary.Cell(9, 1).Value = "Allocated Hours"; summary.Cell(9, 2).Value = (double)TotalAllocatedHours;
-            summary.Cell(10, 1).Value = "Coverage %";    summary.Cell(10, 2).Value = (double)CoveragePercent;
-            summary.Columns().AdjustToContents();
-
-            // ── Sheet 2: Assignments ──
-            var sheet = wb.Worksheets.Add("Assignments");
-            var headers = new[] { "Epic", "Task Key", "Summary", "Team", "Assigned To", "From", "To", "Hours" };
-            for (int c = 0; c < headers.Length; c++)
-            {
-                var cell = sheet.Cell(1, c + 1);
-                cell.Value = headers[c];
-                cell.Style.Font.Bold = true;
-                cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#EEF2FF");
-                cell.Style.Font.FontColor = XLColor.FromHtml("#4338CA");
-            }
-
-            var groups = Allocations
-                .Where(a => a.Date >= SprintStart && a.Date <= SprintEnd)
-                .GroupBy(a => (a.TeamMemberId, a.GroupId))
-                .Select(g => new
-                {
-                    TaskId = g.First().TaskId, TeamMemberId = g.Key.TeamMemberId,
-                    From = g.Min(a => a.Date), To = g.Max(a => a.Date),
-                    TotalHours = g.Sum(a => a.HoursAllocated)
-                })
-                .OrderBy(a => TeamMembers.FirstOrDefault(x => x.Id == a.TeamMemberId)?.Team ?? "")
-                .ThenBy(a => TeamMembers.FirstOrDefault(x => x.Id == a.TeamMemberId)?.Name ?? "")
-                .ThenBy(a => a.From)
-                .ToList();
-
-            for (int i = 0; i < groups.Count; i++)
-            {
-                var a      = groups[i];
-                var row    = i + 2;
-                var task   = FindTask(a.TaskId);
-                var member = TeamMembers.FirstOrDefault(x => x.Id == a.TeamMemberId);
-                var epicK  = LoadedEpics.Values.FirstOrDefault(e => e.Tasks.Any(t => t.Id == a.TaskId))?.EpicKey ?? "-";
-                sheet.Cell(row, 1).Value = epicK;
-                sheet.Cell(row, 2).Value = task?.Key ?? "-";
-                sheet.Cell(row, 3).Value = task?.Summary ?? "-";
-                sheet.Cell(row, 4).Value = member?.Team ?? "-";
-                sheet.Cell(row, 5).Value = member?.Name ?? "-";
-                sheet.Cell(row, 6).Value = a.From.ToString("dd-MMM-yyyy");
-                sheet.Cell(row, 7).Value = a.To.ToString("dd-MMM-yyyy");
-                sheet.Cell(row, 8).Value = (double)a.TotalHours;
-            }
-            sheet.Columns().AdjustToContents();
-            sheet.Column(3).Width = 50;
-
-            // ── Sheet 3: Calendar ──
-            var cal = wb.Worksheets.Add("Calendar");
-
-            // Header row: "Member" + one column per visible date
-            cal.Cell(1, 1).Value = "Member";
-            cal.Cell(1, 1).Style.Font.Bold = true;
-            for (int d = 0; d < VisibleDates.Count; d++)
-            {
-                var hdr = cal.Cell(1, d + 2);
-                hdr.Value = VisibleDates[d].ToString("ddd dd-MMM");
-                hdr.Style.Font.Bold = true;
-                hdr.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-                if (IsWeekend(VisibleDates[d]))
-                    hdr.Style.Fill.BackgroundColor = XLColor.LightGray;
-                else
-                    hdr.Style.Fill.BackgroundColor = XLColor.FromHtml("#EEF2FF");
-            }
-
-            // One row per team member
             var calMembers = string.IsNullOrEmpty(ActiveTeamFilter)
                 ? TeamMembers
                 : TeamMembers.Where(m => m.Team == ActiveTeamFilter).ToList();
+
+            // ── Build task-key → epic-key map from freshly-fetched _reportIssues ─────
+            // _reportIssues was just populated by RefreshReportDataAsync() so every
+            // issue has EpicKey and EpicName set from the Jira API response.
+            var taskKeyToEpicKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var epicNameMap      = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var issue in _reportIssues.Values)
+            {
+                if (!string.IsNullOrEmpty(issue.Key) && !string.IsNullOrEmpty(issue.EpicKey))
+                    taskKeyToEpicKey[issue.Key] = issue.EpicKey;
+                if (!string.IsNullOrEmpty(issue.EpicKey) &&
+                    !string.IsNullOrEmpty(issue.EpicName) && issue.EpicName != "No Epic")
+                    epicNameMap.TryAdd(issue.EpicKey, issue.EpicName);
+            }
+            // Supplement epic names from LoadedEpics task list
+            foreach (var (ek, state) in LoadedEpics)
+                foreach (var t in state.Tasks)
+                    if (!string.IsNullOrEmpty(t.EpicName) && t.EpicName != "No Epic")
+                        epicNameMap.TryAdd(ek, t.EpicName);
+
+            // ── Epic → color map ──────────────────────────────────────────────────
+            var epicPalette = new[]
+            {
+                "#DBEAFE", "#D1FAE5", "#FEF3C7", "#FCE7F3",
+                "#EDE9FE", "#FFEDD5", "#CFFAFE", "#E0F2FE",
+            };
+            // Include epics discovered via _reportIssues (covers the case where LoadedEpics is empty)
+            var epicKeys = LoadedEpics.Keys
+                .Concat(_reportIssues.Values
+                    .Select(i => i.EpicKey)
+                    .Where(k => !string.IsNullOrEmpty(k)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            // Fetch names for any epic keys not already covered by _reportIssues / LoadedEpics
+            var missingNameKeys = epicKeys.Where(k => !epicNameMap.ContainsKey(k)).ToList();
+            if (missingNameKeys.Count > 0)
+            {
+                try
+                {
+                    var fetchedNames = await JiraService.FetchEpicNamesAsync(missingNameKeys);
+                    foreach (var kvp in fetchedNames)
+                        epicNameMap.TryAdd(kvp.Key, kvp.Value);
+                }
+                catch { }
+            }
+
+            var epicColorMap = epicKeys
+                .Select((k, i) => (k, epicPalette[i % epicPalette.Length]))
+                .ToDictionary(x => x.k, x => x.Item2, StringComparer.OrdinalIgnoreCase);
+
+            // ── Shared: write date header row ────────────────────────────────────
+            void WriteCalendarHeader(IXLWorksheet ws)
+            {
+                var h = ws.Cell(1, 1);
+                h.Value = "Member"; h.Style.Font.Bold = true;
+                for (int d = 0; d < VisibleDates.Count; d++)
+                {
+                    var hdr = ws.Cell(1, d + 2);
+                    hdr.Value = VisibleDates[d].ToString("ddd dd-MMM");
+                    hdr.Style.Font.Bold = true;
+                    hdr.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                    hdr.Style.Fill.BackgroundColor = IsWeekend(VisibleDates[d])
+                        ? XLColor.LightGray : XLColor.FromHtml("#EEF2FF");
+                }
+            }
+
+            // ── Sheet 1: Calendar ────────────────────────────────────────────────
+            var cal = wb.Worksheets.Add("Calendar");
+            WriteCalendarHeader(cal);
 
             for (int r = 0; r < calMembers.Count; r++)
             {
                 var member = calMembers[r];
                 var rowIdx = r + 2;
-                var nameCell = cal.Cell(rowIdx, 1);
-                nameCell.Value = $"{member.Name} ({member.Team})";
-                nameCell.Style.Font.Bold = true;
+                var nc = cal.Cell(rowIdx, 1);
+                nc.Value = $"{member.Name} ({member.Team})";
+                nc.Style.Font.Bold = true;
 
                 for (int d = 0; d < VisibleDates.Count; d++)
                 {
                     var date = VisibleDates[d];
                     var cell = cal.Cell(rowIdx, d + 2);
-
                     if (IsMemberTimeOff(member.Id, date) || IsHoliday(date))
                     {
                         cell.Value = IsHoliday(date) ? "Holiday" : "Time Off";
@@ -3083,46 +3116,311 @@ private static decimal ParseJiraDurationToHours(string? input)
                         cell.Style.Font.Italic = true;
                         continue;
                     }
-                    if (IsWeekend(date))
-                    {
-                        cell.Style.Fill.BackgroundColor = XLColor.LightGray;
-                        continue;
-                    }
-
-                    var dayAllocs = Allocations
-                        .Where(a => a.TeamMemberId == member.Id && a.Date == date)
-                        .ToList();
-
+                    if (IsWeekend(date)) { cell.Style.Fill.BackgroundColor = XLColor.LightGray; continue; }
+                    var dayAllocs = Allocations.Where(a => a.TeamMemberId == member.Id && a.Date == date).ToList();
                     if (dayAllocs.Count > 0)
                     {
-                        var parts = dayAllocs
+                        cell.Value = string.Join(" | ", dayAllocs
                             .GroupBy(a => a.TaskId)
-                            .Select(g =>
-                            {
-                                var lbl = GetTaskShortLabel(g.Key);
-                                var hrs = g.Sum(a => a.HoursAllocated);
-                                return $"{lbl} ({hrs:0.#}h)";
-                            });
-                        cell.Value = string.Join(" | ", parts);
+                            .Select(g => $"{GetTaskShortLabel(g.Key)} ({g.Sum(a => a.HoursAllocated):0.#}h)"));
                         cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#DBEAFE");
                     }
                 }
             }
-
             cal.Row(1).Height = 30;
             cal.Column(1).Width = 22;
-            for (int d = 0; d < VisibleDates.Count; d++)
-                cal.Column(d + 2).Width = 28;
+            for (int d = 0; d < VisibleDates.Count; d++) cal.Column(d + 2).Width = 28;
             cal.Rows().Style.Alignment.WrapText = false;
 
-            // ── Stream to download ──
-            using var ms     = new System.IO.MemoryStream();
+            // ── Sheet 2: Calendar V2 ─────────────────────────────────────────────
+            // One row per member-task pair. Columns: Member | Task | Total | date…
+            // ─────────────────────────────────────────────────────────────────────
+            var cal2 = wb.Worksheets.Add("Calendar V2");
+
+            // Header
+            void StyleV2Header(IXLCell c, bool weekend)
+            {
+                c.Style.Font.Bold = true;
+                c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                c.Style.Fill.BackgroundColor = weekend ? XLColor.LightGray : XLColor.FromHtml("#1e40af");
+                if (!weekend) c.Style.Font.FontColor = XLColor.White;
+            }
+            var hMember = cal2.Cell(1, 1); hMember.Value = "Member";
+            hMember.Style.Font.Bold = true;
+            hMember.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e40af");
+            hMember.Style.Font.FontColor = XLColor.White;
+            var hTask = cal2.Cell(1, 2); hTask.Value = "Task";
+            hTask.Style.Font.Bold = true;
+            hTask.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e40af");
+            hTask.Style.Font.FontColor = XLColor.White;
+            var hTotal = cal2.Cell(1, 3); hTotal.Value = "Total";
+            hTotal.Style.Font.Bold = true;
+            hTotal.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            hTotal.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e40af");
+            hTotal.Style.Font.FontColor = XLColor.White;
+            for (int d = 0; d < VisibleDates.Count; d++)
+            {
+                var dh = cal2.Cell(1, d + 4);
+                dh.Value = VisibleDates[d].ToString("ddd dd-MMM");
+                StyleV2Header(dh, IsWeekend(VisibleDates[d]));
+            }
+
+            // Cell fill color per task category
+            XLColor V2TaskColor(int taskId)
+            {
+                if (_customTasks.TryGetValue(taskId, out var ctc))
+                    return ctc.Category switch
+                    {
+                        "Support Bug" or "Feature Bug" => XLColor.FromHtml("#FEE2E2"),
+                        "Review"  => XLColor.FromHtml("#FEF3C7"),
+                        "On-Call" => XLColor.FromHtml("#FFEDD5"),
+                        _         => XLColor.FromHtml("#EDE9FE"),
+                    };
+                // Jira task → epic color (pastel)
+                var jk = GetJiraKeyForTaskId(taskId);
+                if (jk != null && taskKeyToEpicKey.TryGetValue(jk, out var ek) && epicColorMap.TryGetValue(ek, out var col))
+                    return XLColor.FromHtml(col);
+                return XLColor.FromHtml("#DBEAFE");
+            }
+
+            // Column B label: "KEY - Summary" for Jira tasks, "Category: Name" for custom
+            string V2TaskLabel(int taskId)
+            {
+                if (_customTasks.TryGetValue(taskId, out var ctc))
+                    return $"{ctc.Category}: {ctc.Name}";
+
+                // Prefer live cache (Summary field populated by API)
+                if (_taskCache.TryGetValue(taskId, out var cached) && !string.IsNullOrEmpty(cached.Key))
+                    return string.IsNullOrEmpty(cached.Summary)
+                        ? cached.Key
+                        : $"{cached.Key} - {cached.Summary}";
+
+                // Fall back to persisted label "KEY - SUMMARY (Est: X)"
+                if (_taskLabelFallback.TryGetValue(taskId, out var fb))
+                {
+                    var sepIdx = fb.IndexOf(" - ", StringComparison.Ordinal);
+                    if (sepIdx > 0)
+                    {
+                        var key     = fb[..sepIdx].Trim();
+                        var rest    = fb[(sepIdx + 3)..];
+                        var estIdx  = rest.LastIndexOf(" (Est:", StringComparison.Ordinal);
+                        var summary = estIdx > 0 ? rest[..estIdx] : rest;
+                        return $"{key} - {summary}";
+                    }
+                    return fb;
+                }
+
+                var jk = GetJiraKeyForTaskId(taskId);
+                return jk ?? $"#{taskId}";
+            }
+
+            int v2Row = 2;
+            string? prevTeam = null;
+            foreach (var member in calMembers)
+            {
+                // Team banner row
+                if (member.Team != prevTeam)
+                {
+                    prevTeam = member.Team;
+                    var teamCell = cal2.Cell(v2Row, 1);
+                    teamCell.Value = member.Team.ToUpperInvariant();
+                    teamCell.Style.Font.Bold = true;
+                    teamCell.Style.Font.FontColor = XLColor.FromHtml("#1e40af");
+                    teamCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#EEF2FF");
+                    cal2.Range(v2Row, 1, v2Row, 3 + VisibleDates.Count).Merge();
+                    v2Row++;
+                }
+
+                // Gather unique tasks for this member, ordered by first allocation date
+                var memberTasks = Allocations
+                    .Where(a => a.TeamMemberId == member.Id
+                        && a.Date >= SprintStart && a.Date <= SprintEnd)
+                    .GroupBy(a => a.TaskId)
+                    .OrderBy(g => g.Min(a => a.Date))
+                    .ToList();
+
+                int memberFirstRow = v2Row;
+
+                if (memberTasks.Count == 0)
+                {
+                    // No allocations — one placeholder row
+                    cal2.Cell(v2Row, 1).Value = $"{member.Name}";
+                    cal2.Cell(v2Row, 1).Style.Font.Bold = true;
+                    cal2.Cell(v2Row, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#EEF2FF");
+                    for (int d = 0; d < VisibleDates.Count; d++)
+                    {
+                        var date = VisibleDates[d];
+                        var ec = cal2.Cell(v2Row, d + 4);
+                        if (IsWeekend(date)) ec.Style.Fill.BackgroundColor = XLColor.LightGray;
+                        else if (IsMemberTimeOff(member.Id, date) || IsHoliday(date))
+                        {
+                            ec.Value = IsHoliday(date) ? "Holiday" : "Time Off";
+                            ec.Style.Fill.BackgroundColor = XLColor.LightYellow;
+                            ec.Style.Font.Italic = true;
+                        }
+                    }
+                    v2Row++;
+                }
+                else
+                {
+                    foreach (var taskGrp in memberTasks)
+                    {
+                        int taskId = taskGrp.Key;
+                        var taskColor = V2TaskColor(taskId);
+                        bool isFirst = taskGrp == memberTasks[0];
+
+                        // Col A — member name (populated on every row; merge later)
+                        var memberCell = cal2.Cell(v2Row, 1);
+                        if (isFirst) { memberCell.Value = member.Name; memberCell.Style.Font.Bold = true; }
+                        memberCell.Style.Fill.BackgroundColor = XLColor.FromHtml("#EEF2FF");
+                        memberCell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Top;
+
+                        // Col B — task key / name
+                        var taskCell2 = cal2.Cell(v2Row, 2);
+                        taskCell2.Value = V2TaskLabel(taskId);
+                        taskCell2.Style.Fill.BackgroundColor = taskColor;
+
+                        // Col C — sprint total for this task
+                        var sprintTotal = taskGrp.Sum(a => a.HoursAllocated);
+                        var totalCell = cal2.Cell(v2Row, 3);
+                        totalCell.Value = $"{sprintTotal:0.#}h";
+                        totalCell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                        totalCell.Style.Fill.BackgroundColor = taskColor;
+                        totalCell.Style.Font.Bold = true;
+
+                        // Date columns
+                        for (int d = 0; d < VisibleDates.Count; d++)
+                        {
+                            var date = VisibleDates[d];
+                            var dc = cal2.Cell(v2Row, d + 4);
+                            if (IsWeekend(date))
+                            {
+                                dc.Style.Fill.BackgroundColor = XLColor.LightGray;
+                                continue;
+                            }
+                            if (IsMemberTimeOff(member.Id, date) || IsHoliday(date))
+                            {
+                                dc.Value = IsHoliday(date) ? "Holiday" : "Time Off";
+                                dc.Style.Fill.BackgroundColor = XLColor.LightYellow;
+                                dc.Style.Font.Italic = true;
+                                dc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                                continue;
+                            }
+                            var dayHours = taskGrp.Where(a => a.Date == date).Sum(a => a.HoursAllocated);
+                            if (dayHours > 0)
+                            {
+                                dc.Value = $"{dayHours:0.#}h";
+                                dc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                                dc.Style.Fill.BackgroundColor = taskColor;
+                            }
+                        }
+
+                        v2Row++;
+                    }
+
+                    // Merge column A across all task rows for this member
+                    if (v2Row - memberFirstRow > 1)
+                        cal2.Range(memberFirstRow, 1, v2Row - 1, 1).Merge();
+                }
+
+                // Thin separator row between members
+                var sepRange = cal2.Range(v2Row, 1, v2Row, 3 + VisibleDates.Count);
+                sepRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#F3F4F6");
+                v2Row++;
+            }
+
+            cal2.Row(1).Height = 28;
+            cal2.Column(1).Width = 20;
+            cal2.Column(2).Width = 48;
+            cal2.Column(3).Width = 9;
+            for (int d = 0; d < VisibleDates.Count; d++) cal2.Column(d + 4).Width = 13;
+            cal2.Rows().Style.Alignment.WrapText = false;
+            cal2.SheetView.FreezeRows(1);
+            cal2.SheetView.FreezeColumns(2);
+
+            // ── Sheet 3: Report ──────────────────────────────────────────────────
+            var rpt = wb.Worksheets.Add("Report");
+            var rptHeaders = new[]
+            {
+                "Member", "Key / Type", "Title", "Status",
+                "Original Est", "Remaining", "Time Logged", "%", "Feasible", "Last Activity"
+            };
+            for (int c = 0; c < rptHeaders.Length; c++)
+            {
+                var hc = rpt.Cell(1, c + 1);
+                hc.Value = rptHeaders[c];
+                hc.Style.Font.Bold = true;
+                hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#EEF2FF");
+                hc.Style.Font.FontColor = XLColor.FromHtml("#1e40af");
+            }
+
+            int rptRow = 2;
+            foreach (var member in calMembers)
+            {
+                var rows = GetReportRowsForMember(member.Id);
+                if (rows.Count == 0) continue;
+
+                for (int i = 0; i < rows.Count; i++)
+                {
+                    var row = rows[i];
+                    rpt.Cell(rptRow, 1).Value = i == 0 ? $"{member.Name} ({member.Team})" : "";
+                    if (i == 0) rpt.Cell(rptRow, 1).Style.Font.Bold = true;
+
+                    if (row.IsCustom)
+                    {
+                        rpt.Cell(rptRow, 2).Value = row.CustomCategory;
+                        rpt.Cell(rptRow, 3).Value = row.Title;
+                        rpt.Cell(rptRow, 4).Value = "";
+                        rpt.Cell(rptRow, 5).Value = $"{row.CustomHours:0.#}h";
+                        rpt.Cell(rptRow, 6).Value = "—";
+                        rpt.Cell(rptRow, 7).Value = row.SupportBugLoggedSeconds > 0
+                            ? FormatEstimate("", row.SupportBugLoggedSeconds) : "—";
+                        rpt.Cell(rptRow, 8).Value = GetCompletionPct(row);
+                        rpt.Cell(rptRow, 9).Value = "—";
+                        rpt.Cell(rptRow, 10).Value = row.SupportBugLastActivity.HasValue
+                            ? row.SupportBugLastActivity.Value.ToString("dd MMM, HH:mm") : "—";
+                    }
+                    else
+                    {
+                        rpt.Cell(rptRow, 2).Value = row.Key;
+                        rpt.Cell(rptRow, 3).Value = row.Title;
+                        rpt.Cell(rptRow, 4).Value = row.Status;
+                        rpt.Cell(rptRow, 5).Value = FormatEstimate(row.OriginalEstimate, row.OriginalEstimateSeconds);
+                        rpt.Cell(rptRow, 6).Value = FormatEstimate(row.RemainingEstimate, row.RemainingEstimateSeconds);
+                        rpt.Cell(rptRow, 7).Value = FormatEstimate(row.TimeSpent, row.TimeSpentSeconds);
+                        rpt.Cell(rptRow, 8).Value = GetCompletionPct(row);
+                        rpt.Cell(rptRow, 9).Value = GetFeasibilityLabel(row);
+                        rpt.Cell(rptRow, 10).Value = row.LastActivityDate.HasValue
+                            ? row.LastActivityDate.Value.ToString("dd MMM, HH:mm") : "Never";
+                    }
+
+                    // Shade custom rows faintly
+                    if (row.IsCustom)
+                        rpt.Row(rptRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#F9FAFB");
+
+                    rptRow++;
+                }
+
+                // Blank separator row between members
+                rptRow++;
+            }
+
+            rpt.Row(1).Height = 22;
+            rpt.Column(1).Width = 24;
+            rpt.Column(2).Width = 14;
+            rpt.Column(3).Width = 52;
+            rpt.Column(4).Width = 16;
+            for (int c = 5; c <= 10; c++) rpt.Column(c).Width = 14;
+            rpt.Rows().Style.Alignment.WrapText = false;
+
+            // ── Stream to download ────────────────────────────────────────────────
+            using var ms = new System.IO.MemoryStream();
             wb.SaveAs(ms);
             var base64   = Convert.ToBase64String(ms.ToArray());
             var fileName = $"SprintPlanning_{(string.IsNullOrWhiteSpace(SprintName) ? "Export" : SprintName.Replace(" ", "_"))}_{DateTime.Now:yyyyMMdd}.xlsx";
             const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
             await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
-            InfoMessage = $"Exported {groups.Count} assignment(s) to {fileName}.";
+            InfoMessage = $"Exported to {fileName}.";
         }
         catch (Exception ex)
         {

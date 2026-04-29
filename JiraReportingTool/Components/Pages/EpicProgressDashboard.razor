@@ -160,6 +160,8 @@
                         <span>To Do</span>
                         <span>Completion</span>
                         <span>Epic Share</span>
+                        <span>Original Est.</span>
+                        <span>Remaining</span>
                         <span>Time Logged</span>
                     </div>
                     @foreach (var row in Metrics.AssigneeBreakdown)
@@ -174,6 +176,16 @@
                                 @EpicProgressCalculator.FormatPct(row.CompletionPct)
                             </span>
                             <span class="at-pct">@EpicProgressCalculator.FormatPct(row.EpicSharePct)</span>
+                            <span class="at-time">
+                                @(row.TotalOriginalEstimateSec > 0
+                                    ? EpicProgressCalculator.FormatSeconds(row.TotalOriginalEstimateSec)
+                                    : "—")
+                            </span>
+                            <span class="at-time">
+                                @(row.TotalRemainingEstimateSec > 0
+                                    ? EpicProgressCalculator.FormatSeconds(row.TotalRemainingEstimateSec)
+                                    : "—")
+                            </span>
                             <span class="at-time">
                                 @(row.TotalSpentSec > 0
                                     ? EpicProgressCalculator.FormatSeconds(row.TotalSpentSec)
@@ -1523,7 +1535,7 @@
 
     .at-header, .at-row {
         display: grid;
-        grid-template-columns: 1fr 56px 56px 96px 56px 90px 82px 90px;
+        grid-template-columns: 1fr 56px 56px 96px 56px 90px 82px 90px 90px 90px;
         gap: 6px; align-items: center; font-size: 12px;
         padding: 5px 8px; border-radius: 6px;
     }
