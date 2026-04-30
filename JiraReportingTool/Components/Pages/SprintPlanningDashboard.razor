@@ -2973,7 +2973,7 @@
     {
         bool isDevReady = string.Equals(t.Status, "Dev Ready", StringComparison.OrdinalIgnoreCase);
         if (isDevReady)
-            return ParseJiraDurationToHours(t.OriginalEstimate);
+            return t.OriginalEstimateSeconds / 3600m;
         var remSec = Math.Max(0, t.OriginalEstimateSeconds - t.TimeSpentSeconds);
         return remSec / 3600m;
     }
@@ -3318,7 +3318,39 @@ private static decimal ParseJiraDurationToHours(string? input)
                         v2Row++;
                     }
 
-                    // Merge column A across all task rows for this member
+                    // Per-member totals row
+                    cal2.Cell(v2Row, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#EEF2FF");
+                    var mTotalB = cal2.Cell(v2Row, 2);
+                    mTotalB.Value = "Total";
+                    mTotalB.Style.Font.Bold = true;
+                    mTotalB.Style.Font.FontColor = XLColor.FromHtml("#1e40af");
+                    mTotalB.Style.Fill.BackgroundColor = XLColor.FromHtml("#DBEAFE");
+                    var mGrandTotal = memberTasks.Sum(g => g.Sum(a => a.HoursAllocated));
+                    var mTotalC = cal2.Cell(v2Row, 3);
+                    mTotalC.Value = $"{mGrandTotal:0.#}h";
+                    mTotalC.Style.Font.Bold = true;
+                    mTotalC.Style.Font.FontColor = XLColor.FromHtml("#1e40af");
+                    mTotalC.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                    mTotalC.Style.Fill.BackgroundColor = XLColor.FromHtml("#DBEAFE");
+                    for (int d = 0; d < VisibleDates.Count; d++)
+                    {
+                        var date = VisibleDates[d];
+                        var tc = cal2.Cell(v2Row, d + 4);
+                        if (IsWeekend(date)) { tc.Style.Fill.BackgroundColor = XLColor.LightGray; continue; }
+                        if (IsMemberTimeOff(member.Id, date) || IsHoliday(date)) { tc.Style.Fill.BackgroundColor = XLColor.LightYellow; continue; }
+                        var daySum = memberTasks.Sum(g => g.Where(a => a.Date == date).Sum(a => a.HoursAllocated));
+                        tc.Style.Fill.BackgroundColor = XLColor.FromHtml("#DBEAFE");
+                        if (daySum > 0)
+                        {
+                            tc.Value = $"{daySum:0.#}h";
+                            tc.Style.Font.Bold = true;
+                            tc.Style.Font.FontColor = XLColor.FromHtml("#1e40af");
+                            tc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                        }
+                    }
+                    v2Row++;
+
+                    // Merge column A across all task rows + totals row for this member
                     if (v2Row - memberFirstRow > 1)
                         cal2.Range(memberFirstRow, 1, v2Row - 1, 1).Merge();
                 }
