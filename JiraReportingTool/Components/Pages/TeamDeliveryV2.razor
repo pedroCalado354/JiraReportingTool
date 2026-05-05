@@ -238,6 +238,13 @@
                 <span class="tdd-tab-badge">@ScopeChangedIssues.Count</span>
             }
         </button>
+        <button class="tdd-tab @(ActiveTab=="tracking" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("tracking")'>
+            Team Tracking
+            @if (Report != null && TrackingNeedsCount > 0)
+            {
+                <span class="tdd-tab-badge tdd-tab-badge-danger">@TrackingNeedsCount</span>
+            }
+        </button>
     </div>
 
     <div class="tdd-panel">
@@ -1088,6 +1095,181 @@
     </div>
 }
 
+<!-- ══ TAB 8: TEAM TRACKING ═══════════════════════════════════════════════ -->
+@if (Report != null && ActiveTab == "tracking")
+{
+    var trkRows      = ApplySortTRK(BuildTrackingRows());
+    var statusGroups = FilteredIssues
+        .GroupBy(i => new { i.Status, i.StatusCategoryKey })
+        .OrderBy(g => g.Key.StatusCategoryKey switch { "new" => 0, "indeterminate" => 1, "done" => 2, _ => 3 })
+        .ThenBy(g => g.Key.Status)
+        .Select(g => (Status: g.Key.Status, Cat: g.Key.StatusCategoryKey, Count: g.Count()))
+        .ToList();
+
+    @if (TrackingNeedsCount > 0 || TrackingLowCount > 0)
+    {
+        <div class="tdd-tracking-alert">
+            <span class="tdd-tracking-alert-icon">⚠</span>
+            @if (TrackingNeedsCount > 0)
+            {
+                <span><span class="tdd-badge tdd-badge-danger">@TrackingNeedsCount</span> member@(TrackingNeedsCount == 1 ? "" : "s") need new tasks</span>
+            }
+            @if (TrackingNeedsCount > 0 && TrackingLowCount > 0)
+            {
+                <span class="tdd-cell-muted">·</span>
+            }
+            @if (TrackingLowCount > 0)
+            {
+                <span><span class="tdd-badge tdd-badge-warn">@TrackingLowCount</span> running low (&lt;6h remaining)</span>
+            }
+        </div>
+    }
+
+    <div class="tdd-trk-statusbar">
+        <span class="tdd-trk-statusbar-label">@FilteredIssues.Count tickets</span>
+        @foreach (var sg in statusGroups)
+        {
+            var chipMod = sg.Status.Equals("On Hold", StringComparison.OrdinalIgnoreCase)
+                ? "tdd-trk-scchip-onhold"
+                : $"tdd-trk-scchip-{sg.Cat}";
+            <span class="tdd-trk-scchip @chipMod">
+                @sg.Status <span class="tdd-trk-scchip-count">@sg.Count</span>
+            </span>
+        }
+    </div>
+
+    <div class="tdd-section-title">Active Work — @trkRows.Count() members</div>
+    <div class="tdd-table-wrap">
+        <table class="tdd-table">
+            <thead>
+                <tr>
+                    <th class="sortable @(SI("TRKMember", _sortColTRK, _sortAscTRK))" @onclick='() => SortTRK("TRKMember")'>Member</th>
+                    <th class="sortable @(SI("TRKActive",  _sortColTRK, _sortAscTRK))" @onclick='() => SortTRK("TRKActive")'>Active Tasks</th>
+                    <th class="sortable @(SI("TRKRem",     _sortColTRK, _sortAscTRK))" @onclick='() => SortTRK("TRKRem")'>Remaining</th>
+                    <th class="sortable @(SI("TRKIdle",    _sortColTRK, _sortAscTRK))" @onclick='() => SortTRK("TRKIdle")'>Last Active</th>
+                    <th class="sortable @(SI("TRKSignal",  _sortColTRK, _sortAscTRK))" @onclick='() => SortTRK("TRKSignal")'>Signal</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in trkRows)
+                {
+                    var tkExp     = _trackingExpanded.Contains(row.Person);
+                    var avatarMod = row.Signal == "needs" ? "tdd-avatar-danger" : row.Signal == "low" ? "tdd-avatar-warn" : "tdd-avatar-primary";
+
+                    <tr class="tdd-tracking-row @(tkExp ? "tdd-tracking-row-on" : "")" @onclick="() => ToggleTracking(row.Person)">
+                        <td>
+                            <div class="tdd-tracking-member">
+                                <div class="tdd-avatar tdd-avatar-sm @avatarMod">@Initials(row.Person)</div>
+                                <span class="tdd-fw">@row.Person</span>
+                            </div>
+                        </td>
+                        <td>
+                            @if (!row.AllActive.Any())
+                            {
+                                <span class="tdd-cell-muted">No active tasks</span>
+                            }
+                            else
+                            {
+                                <div class="tdd-tracking-pills">
+                                    @foreach (var ai in row.AllActive.Take(3))
+                                    {
+                                        var isOnHold = ai.Status.Equals("On Hold", StringComparison.OrdinalIgnoreCase);
+                                        <span class="tdd-tracking-pill @(isOnHold ? "tdd-tracking-pill-hold" : "")">
+                                            <span class="tdd-sdot tdd-sdot-@ai.StatusCategoryKey"></span>
+                                            <span class="tdd-type-chip tdd-type-chip-@ai.IssueType.ToLower().Replace(" ","").Replace("-","")">@(ai.IssueType.Length > 0 ? ai.IssueType[..1].ToUpper() : "?")</span>
+                                            @ai.Key
+                                        </span>
+                                    }
+                                    @if (row.AllActive.Count > 3)
+                                    {
+                                        <span class="tdd-cell-muted" style="font-size:11px">+@(row.AllActive.Count - 3)</span>
+                                    }
+                                </div>
+                            }
+                        </td>
+                        <td class="tdd-nowrap @(row.Signal == "needs" || row.Signal == "low" ? "tdd-text-danger tdd-fw" : "")">
+                            @(row.TotalRem > 0 ? FmtH(row.TotalRem) : "—")
+                        </td>
+                        <td class="tdd-nowrap">
+                            @if (row.DaysIdle == 999)    { <span class="tdd-cell-muted">—</span> }
+                            else if (row.DaysIdle == 0)  { <span class="tdd-text-success">Today</span> }
+                            else if (row.DaysIdle == 1)  { <span class="tdd-cell-muted">Yesterday</span> }
+                            else                         { <span class="@(row.DaysIdle >= 3 ? "tdd-text-danger" : "tdd-text-warn")">@row.DaysIdle d ago</span> }
+                        </td>
+                        <td>
+                            @if (row.Signal == "needs")     { <span class="tdd-badge tdd-badge-danger">Needs Tasks</span> }
+                            else if (row.Signal == "low")   { <span class="tdd-badge tdd-badge-warn">Running Low</span> }
+                            else if (row.Signal == "soon")  { <span class="tdd-badge tdd-badge-neutral">Available Soon</span> }
+                            else                            { <span class="tdd-badge tdd-badge-ok">Busy</span> }
+                        </td>
+                        <td class="tdd-cell-muted" style="width:20px;text-align:center">@(tkExp ? "▲" : "▼")</td>
+                    </tr>
+
+                    @if (tkExp)
+                    {
+                        <tr class="tdd-tracking-sub-row">
+                            <td colspan="6" style="padding:0 0 8px 36px">
+                                @if (!row.AllActive.Any())
+                                {
+                                    <div class="tdd-cell-muted" style="padding:8px 0;font-style:italic">No active tasks assigned.</div>
+                                }
+                                else
+                                {
+                                    <table class="tdd-table tdd-tracking-sub">
+                                        <thead>
+                                            <tr>
+                                                <th>Key</th>
+                                                <th>Type</th>
+                                                <th>Summary</th>
+                                                <th>Status</th>
+                                                <th>Remaining</th>
+                                                <th>Progress</th>
+                                                <th>Last Log</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var ai in row.AllActive)
+                                            {
+                                                var pct       = IssueProgress(ai);
+                                                var isOnHold  = ai.Status.Equals("On Hold", StringComparison.OrdinalIgnoreCase);
+                                                <tr class="@(isOnHold ? "tdd-trk-onhold-row" : "")">
+                                                    <td class="tdd-cell-key tdd-nowrap">@ai.Key</td>
+                                                    <td class="tdd-nowrap"><span class="tdd-type-badge tdd-type-@ai.IssueType.ToLower()">@ai.IssueType</span></td>
+                                                    <td class="tdd-cell-sum">
+                                                        @ai.Summary
+                                                        @if (isOnHold) { <span class="tdd-badge tdd-badge-neutral tdd-badge-sm" style="margin-left:4px">On Hold</span> }
+                                                    </td>
+                                                    <td><span class="tdd-status-badge tdd-status-@ai.StatusCategoryKey">@ai.Status</span></td>
+                                                    <td class="tdd-nowrap">@(ai.RemainingEstimate == "-" ? "—" : ai.RemainingEstimate)</td>
+                                                    <td>
+                                                        <div class="tdd-prog-wrap">
+                                                            <div class="tdd-prog-bar">
+                                                                <div class="tdd-prog-fill @(pct > 100 ? "tdd-prog-over" : pct == 100 ? "tdd-prog-full" : "tdd-prog-partial")" style="width:@Math.Min(pct, 100)%"></div>
+                                                            </div>
+                                                            <span class="tdd-prog-pct">@pct%</span>
+                                                        </div>
+                                                    </td>
+                                                    <td class="tdd-nowrap tdd-cell-muted">
+                                                        @if (ai.DaysSinceLastWorklog == 0)      { <span class="tdd-text-success">Today</span> }
+                                                        else if (ai.DaysSinceLastWorklog < 999) { <span class="@(ai.DaysSinceLastWorklog >= 2 ? "tdd-text-danger" : "")">@ai.DaysSinceLastWorklog d ago</span> }
+                                                        else                                    { <span>—</span> }
+                                                    </td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+    </div>
+    <div class="tdd-tracking-hint">Signal rules · <strong>Busy</strong>: any bug in progress, or 12h+ non-bug remaining · <strong>Available Soon</strong>: &lt;12h · <strong>Running Low</strong>: &lt;6h · <strong>Needs Tasks</strong>: no non-bug/non-held work · On Hold tasks are shown but excluded from signals</div>
+}
+
 <!-- ── Export Modal ──────────────────────────────────────────────────────── -->
 @if (ShowExportModal)
 {
@@ -1514,6 +1696,45 @@ th.sortable        { cursor: pointer; user-select: none; white-space: nowrap; }
 th.sortable::after { content: " ⇅"; font-size: 10px; opacity: .4; }
 th.sort-asc::after { content: " ▲"; font-size: 10px; opacity: .9; }
 th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
+
+/* ── Team Tracking ─────────────────────────────────────────────────────── */
+.tdd-tab-badge-danger            { background: var(--tdd-danger) !important; }
+.tdd-tracking-alert              { display: flex; align-items: center; gap: 8px; padding: 10px 14px; background: #fff7ed; border: 1px solid #fed7aa; border-radius: var(--tdd-radius); margin-bottom: 12px; font-size: 13px; }
+.tdd-tracking-alert-icon         { font-size: 15px; color: var(--tdd-warn); }
+.tdd-tracking-row                { cursor: pointer; transition: background .12s; }
+.tdd-tracking-row:hover          { background: var(--tdd-hover); }
+.tdd-tracking-row-on             { background: #f0f4ff; }
+.tdd-tracking-sub-row td         { background: #f8f9fc; }
+.tdd-tracking-member             { display: flex; align-items: center; gap: 8px; }
+.tdd-avatar-sm                   { width: 28px; height: 28px; font-size: 10px; }
+.tdd-tracking-pills              { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.tdd-tracking-pill               { display: inline-flex; align-items: center; gap: 3px; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 10px; padding: 1px 7px; font-size: 12px; font-family: monospace; white-space: nowrap; }
+.tdd-sdot                        { display: inline-block; width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+.tdd-sdot-indeterminate          { background: #3b82f6; }
+.tdd-sdot-new                    { background: #9ca3af; }
+.tdd-sdot-done                   { background: var(--tdd-success); }
+.tdd-tracking-sub                { margin: 4px 0; font-size: 12px; }
+.tdd-tracking-sub th,
+.tdd-tracking-sub td             { padding: 4px 8px; font-size: 12px; }
+.tdd-tracking-hint               { margin-top: 10px; font-size: 11px; color: #9ca3af; }
+/* ── Status breakdown bar ───────────────────────────────────────────────── */
+.tdd-trk-statusbar               { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 14px; }
+.tdd-trk-statusbar-label         { font-size: 12px; color: var(--tdd-muted); font-weight: 500; padding-right: 4px; }
+.tdd-trk-scchip                  { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500; border: 1px solid transparent; cursor: default; }
+.tdd-trk-scchip-new              { background: #f3f4f6; border-color: #d1d5db; color: #374151; }
+.tdd-trk-scchip-indeterminate    { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+.tdd-trk-scchip-onhold           { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.tdd-trk-scchip-done             { background: #f0fdf4; border-color: #bbf7d0; color: #166534; }
+.tdd-trk-scchip-count            { font-weight: 700; }
+/* ── On Hold row dimming ─────────────────────────────────────────────────── */
+.tdd-trk-onhold-row td           { opacity: .6; }
+.tdd-tracking-pill-hold          { opacity: .6; }
+.tdd-type-chip                   { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; border-radius: 2px; font-size: 9px; font-weight: 700; color: #fff; flex-shrink: 0; }
+.tdd-type-chip-bug               { background: var(--tdd-danger); }
+.tdd-type-chip-story             { background: #22c55e; }
+.tdd-type-chip-task              { background: #6b7280; }
+.tdd-type-chip-subtask           { background: #9ca3af; }
+.tdd-type-chip-feature           { background: var(--tdd-primary); }
 </style>
 
 @code {
@@ -1987,6 +2208,86 @@ th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
     {
         if (!ExpandedMembers.Remove(name)) ExpandedMembers.Add(name);
     }
+
+    private HashSet<string> _trackingExpanded = [];
+    private string _sortColTRK = ""; private bool _sortAscTRK = true;
+
+    private void ToggleTracking(string name)
+    {
+        if (!_trackingExpanded.Remove(name)) _trackingExpanded.Add(name);
+    }
+
+    private void SortTRK(string c)
+    {
+        if (_sortColTRK == c) _sortAscTRK = !_sortAscTRK; else { _sortColTRK = c; _sortAscTRK = true; }
+    }
+
+    private record TrkRow(string Person, List<SprintIssue> AllActive, List<SprintIssue> Effective,
+                          int TotalRem, int NonBugRem, bool HasBug, int DaysIdle, string Signal);
+
+    private List<TrkRow> BuildTrackingRows() => WorkloadPeople.Select(person =>
+    {
+        var allActive = FilteredIssues
+            .Where(i => i.Assignee.Equals(person, StringComparison.OrdinalIgnoreCase)
+                     && i.StatusCategoryKey == "indeterminate")
+            .OrderBy(i => i.RemainingEstimateSeconds)
+            .ToList();
+        var effective   = allActive.Where(i => !i.Status.Equals("On Hold", StringComparison.OrdinalIgnoreCase)).ToList();
+        var hasBug      = effective.Any(i => i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase));
+        var nonBugRem   = effective.Where(i => !i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase))
+                                   .Sum(i => i.RemainingEstimateSeconds);
+        var nonBugCount = effective.Count(i => !i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase));
+        var totalRem    = effective.Sum(i => i.RemainingEstimateSeconds);
+        var lastLog     = FilteredIssues
+            .Where(i => i.Assignee.Equals(person, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(i => i.Worklogs)
+            .Where(WorklogInRange)
+            .Select(w => w.Started)
+            .DefaultIfEmpty()
+            .Max();
+        var daysIdle = lastLog == default ? 999 : (int)(DateTime.Today - lastLog.Date).TotalDays;
+        var signal   = hasBug                                         ? "busy"
+                     : effective.Count == 0 || nonBugCount == 0      ? "needs"
+                     : nonBugRem < 6 * 3600                          ? "low"
+                     : nonBugRem < 12 * 3600                         ? "soon"
+                     : "busy";
+        return new TrkRow(person, allActive, effective, totalRem, nonBugRem, hasBug, daysIdle, signal);
+    }).ToList();
+
+    private IEnumerable<TrkRow> ApplySortTRK(IEnumerable<TrkRow> rows) => _sortColTRK switch
+    {
+        "TRKMember" => _sortAscTRK ? rows.OrderBy(r => r.Person)                    : rows.OrderByDescending(r => r.Person),
+        "TRKActive" => _sortAscTRK ? rows.OrderBy(r => r.Effective.Count)           : rows.OrderByDescending(r => r.Effective.Count),
+        "TRKRem"    => _sortAscTRK ? rows.OrderBy(r => r.TotalRem)                  : rows.OrderByDescending(r => r.TotalRem),
+        "TRKIdle"   => _sortAscTRK ? rows.OrderBy(r => r.DaysIdle)                  : rows.OrderByDescending(r => r.DaysIdle),
+        "TRKSignal" => _sortAscTRK ? rows.OrderBy(r => TrkSignalOrder(r.Signal))    : rows.OrderByDescending(r => TrkSignalOrder(r.Signal)),
+        _           => rows.OrderBy(r => TrkSignalOrder(r.Signal)).ThenBy(r => r.Person),
+    };
+
+    private static int TrkSignalOrder(string s) => s switch { "needs" => 0, "low" => 1, "soon" => 2, _ => 3 };
+
+    private int TrackingNeedsCount => WorkloadPeople.Count(p =>
+    {
+        var effective = FilteredIssues
+            .Where(i => i.Assignee.Equals(p, StringComparison.OrdinalIgnoreCase)
+                     && i.StatusCategoryKey == "indeterminate"
+                     && !i.Status.Equals("On Hold", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (effective.Any(i => i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase))) return false;
+        return !effective.Any();
+    });
+
+    private int TrackingLowCount => WorkloadPeople.Count(p =>
+    {
+        var effective = FilteredIssues
+            .Where(i => i.Assignee.Equals(p, StringComparison.OrdinalIgnoreCase)
+                     && i.StatusCategoryKey == "indeterminate"
+                     && !i.Status.Equals("On Hold", StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        if (effective.Any(i => i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase))) return false;
+        var rem = effective.Sum(i => i.RemainingEstimateSeconds);
+        return rem > 0 && rem < 6 * 3600;
+    });
 
     // ── Charts ───────────────────────────────────────────────────────────────
     protected override async Task OnAfterRenderAsync(bool firstRender)

@@ -9,130 +9,335 @@
 
 <h1 class="mb-3">Support Issues Search</h1>
 
-<!-- ── Search form ────────────────────────────────────────────────────────── -->
-<div class="card border-0 shadow-sm mb-4">
-    <div class="card-body">
-        <label class="form-label small text-muted mb-1">
-            Issue Keys — enter one per line, or comma-separated
-        </label>
-        <textarea class="form-control font-monospace"
-                  rows="3"
-                  @bind="_rawInput"
-                  placeholder="JM-11755&#10;JM-11756, JM-11757"
-                  style="resize:vertical"></textarea>
+<!-- ── Search forms ──────────────────────────────────────────────────────────── -->
+<div class="row g-3 mb-4">
 
-        <div class="d-flex gap-2 mt-2 align-items-center">
-            <button class="btn btn-primary" @onclick="SearchAsync"
-                    disabled="@(_loading || string.IsNullOrWhiteSpace(_rawInput))">
-                @if (_loading)
-                {
-                    <span class="spinner-border spinner-border-sm me-1" role="status"></span>
-                }
-                Search
-            </button>
-            @if (_issues.Count > 0)
-            {
-                <button class="btn btn-outline-secondary" @onclick="Clear">Clear</button>
-                <button class="btn btn-outline-success ms-auto" @onclick="ExportToXlsx"
-                        title="Export remaining tasks grouped by organisation">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
-                         viewBox="0 0 16 16" class="me-1">
-                        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
-                        <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
-                    </svg>
-                    Export .xlsx
-                </button>
-            }
-        </div>
+    <!-- JSSUPPORT -->
+    <div class="col-md-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <label class="form-label small fw-semibold text-muted mb-1">
+                    JSSUPPORT Issue Keys — one per line or comma-separated
+                </label>
+                <textarea class="form-control font-monospace"
+                          rows="3"
+                          @bind="_rawInput"
+                          placeholder="JM-11755&#10;JM-11756, JM-11757"
+                          style="resize:vertical"></textarea>
 
-        @if (_errors.Count > 0)
-        {
-            <div class="mt-2">
-                @foreach (var e in _errors)
+                <div class="d-flex gap-2 mt-2 align-items-center">
+                    <button class="btn btn-primary" @onclick="SearchAsync"
+                            disabled="@(_loading || string.IsNullOrWhiteSpace(_rawInput))">
+                        @if (_loading)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        Search
+                    </button>
+                    @if (_issues.Count > 0)
+                    {
+                        <button class="btn btn-outline-secondary" @onclick="Clear">Clear</button>
+                        <button class="btn btn-outline-success ms-auto" @onclick="ExportToXlsx"
+                                title="Export remaining tasks grouped by organisation">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
+                                 viewBox="0 0 16 16" class="me-1">
+                                <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                                <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                            </svg>
+                            Export .xlsx
+                        </button>
+                    }
+                </div>
+
+                @if (_errors.Count > 0)
                 {
-                    <div class="alert alert-warning py-1 px-2 small mb-1">@e</div>
+                    <div class="mt-2">
+                        @foreach (var e in _errors)
+                        {
+                            <div class="alert alert-warning py-1 px-2 small mb-1">@e</div>
+                        }
+                    </div>
                 }
             </div>
-        }
+        </div>
     </div>
+
+    <!-- Internal Support -->
+    <div class="col-md-6">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-body">
+                <label class="form-label small fw-semibold text-muted mb-1">
+                    Internal Support Issue Keys — one per line or comma-separated
+                </label>
+                <textarea class="form-control font-monospace"
+                          rows="3"
+                          @bind="_rawInputInternal"
+                          placeholder="JM-16949&#10;JM-16950, JM-16951"
+                          style="resize:vertical"></textarea>
+
+                <div class="d-flex gap-2 mt-2 align-items-center">
+                    <button class="btn btn-primary" @onclick="SearchInternalAsync"
+                            disabled="@(_loadingInternal || string.IsNullOrWhiteSpace(_rawInputInternal))">
+                        @if (_loadingInternal)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+                        }
+                        Search
+                    </button>
+                    @if (_internalIssues.Count > 0)
+                    {
+                        <button class="btn btn-outline-secondary" @onclick="ClearInternal">Clear</button>
+                        @if (_internalIssues.Any(i => i.RelatesTo.Count > 0))
+                        {
+                            <button class="btn btn-outline-success ms-auto" @onclick="ExportInternalLinksAsync"
+                                    title="Export relates-to linked items grouped by internal issue">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
+                                     viewBox="0 0 16 16" class="me-1">
+                                    <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                                    <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                                </svg>
+                                Export .xlsx
+                            </button>
+                        }
+                    }
+                </div>
+
+                @if (_internalErrors.Count > 0)
+                {
+                    <div class="mt-2">
+                        @foreach (var e in _internalErrors)
+                        {
+                            <div class="alert alert-warning py-1 px-2 small mb-1">@e</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
 </div>
 
-<!-- ── Results grouped by Organisation ───────────────────────────────────── -->
-@if (_issues.Count > 0)
+<!-- ── Results ────────────────────────────────────────────────────────────────── -->
+@if (_issues.Count > 0 || _internalIssues.Count > 0)
 {
-    var groups = _issues
-        .GroupBy(i => string.IsNullOrEmpty(i.Organisation) ? "No Organisation" : i.Organisation)
-        .OrderBy(g => g.Key);
+    <ul class="nav nav-tabs mb-3">
+        <li class="nav-item">
+            <button class="nav-link @(_activeTab == "jssupport" ? "active" : "")"
+                    @onclick='() => _activeTab = "jssupport"'>
+                JSSUPPORT
+                @if (_issues.Count > 0)
+                {
+                    <span class="badge bg-secondary ms-1">@_issues.Count</span>
+                }
+            </button>
+        </li>
+        <li class="nav-item">
+            <button class="nav-link @(_activeTab == "internal" ? "active" : "")"
+                    @onclick='() => _activeTab = "internal"'>
+                Internal Support
+                @if (_internalIssues.Count > 0)
+                {
+                    <span class="badge bg-secondary ms-1">@_internalIssues.Count</span>
+                }
+            </button>
+        </li>
+    </ul>
 
-    <div class="mb-2 d-flex align-items-center gap-3">
-        <span class="text-muted small">@_issues.Count issue(s) found across @groups.Count() organisation(s)</span>
-    </div>
-
-    @foreach (var group in groups)
+    <!-- ── JSSUPPORT tab ────────────────────────────────────────────────────── -->
+    @if (_activeTab == "jssupport" && _issues.Count > 0)
     {
-        <div class="card border-0 shadow-sm mb-3">
-            <div class="card-header d-flex align-items-center gap-2 py-2"
-                 style="background:#1e3a5f; color:white;">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
-                     viewBox="0 0 16 16">
-                    <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002A.274.274 0 0 1 15 13H7.022zM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM6.936 9.28a5.88 5.88 0 0 0-1.23-.247A7.35 7.35 0 0 0 5 9c-4 0-5 3-5 4 0 .667.333 1 1 1h4.216A2.238 2.238 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816zM4.92 10A5.493 5.493 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275zM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0zm3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
-                </svg>
-                <span class="fw-semibold">@group.Key</span>
-                <span class="badge bg-light text-dark ms-1">@group.Count()</span>
-            </div>
-            <div class="card-body p-0">
-                <div class="table-responsive">
-                    <table class="table table-hover align-middle small mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th class="sortable @(SI("Key",      _sortColJS, _sortAscJS))" style="width:110px" @onclick='() => SortJS("Key")'>Key</th>
-                                <th class="sortable @(SI("Summary",  _sortColJS, _sortAscJS))" @onclick='() => SortJS("Summary")'>Summary</th>
-                                <th class="sortable @(SI("Status",   _sortColJS, _sortAscJS))" style="width:130px" @onclick='() => SortJS("Status")'>Status</th>
-                                <th class="sortable @(SI("Assignee", _sortColJS, _sortAscJS))" style="width:160px" @onclick='() => SortJS("Assignee")'>Assignee</th>
-                                <th class="sortable @(SI("Created",  _sortColJS, _sortAscJS))" style="width:130px" @onclick='() => SortJS("Created")'>Created</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var issue in ApplySortJS(group))
-                            {
+        var groups = _issues
+            .GroupBy(i => string.IsNullOrEmpty(i.Organisation) ? "No Organisation" : i.Organisation)
+            .OrderBy(g => g.Key);
+
+        <div class="mb-2 d-flex align-items-center gap-3">
+            <span class="text-muted small">@_issues.Count issue(s) found across @groups.Count() organisation(s)</span>
+        </div>
+
+        @foreach (var group in groups)
+        {
+            <div class="card border-0 shadow-sm mb-3">
+                <div class="card-header d-flex align-items-center gap-2 py-2"
+                     style="background:#1e3a5f; color:white;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
+                         viewBox="0 0 16 16">
+                        <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002A.274.274 0 0 1 15 13H7.022zM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM6.936 9.28a5.88 5.88 0 0 0-1.23-.247A7.35 7.35 0 0 0 5 9c-4 0-5 3-5 4 0 .667.333 1 1 1h4.216A2.238 2.238 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816zM4.92 10A5.493 5.493 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275zM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0zm3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
+                    </svg>
+                    <span class="fw-semibold">@group.Key</span>
+                    <span class="badge bg-light text-dark ms-1">@group.Count()</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle small mb-0">
+                            <thead class="table-light">
                                 <tr>
-                                    <td class="fw-semibold text-nowrap">
-                                        <a href="@issue.Url" target="_blank" rel="noopener"
-                                           class="text-decoration-none">
-                                            @issue.Key
-                                            <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"
-                                                 fill="currentColor" viewBox="0 0 16 16" class="ms-1 text-muted">
-                                                <path d="M6.354 5.5H4a3 3 0 0 0 0 6h3a3 3 0 0 0 2.83-4H9c-.086 0-.17.01-.25.031A2 2 0 0 1 7 9.5H4a2 2 0 1 1 0-4h1.535c.218-.376.495-.714.82-1z"/>
-                                                <path d="M9 5.5a3 3 0 0 0-2.83 4h1.098A2 2 0 0 1 9 6.5h3a2 2 0 1 1 0 4h-1.535a4.02 4.02 0 0 1-.82 1H12a3 3 0 1 0 0-6H9z"/>
-                                            </svg>
-                                        </a>
-                                    </td>
-                                    <td>@issue.Summary</td>
-                                    <td>
-                                        <span class="badge @StatusBadge(issue.StatusCategoryKey)">
-                                            @issue.Status
-                                        </span>
-                                    </td>
-                                    <td class="text-nowrap">@issue.Assignee</td>
-                                    <td class="text-nowrap text-muted">@FormatDate(issue.Created)</td>
+                                    <th class="sortable @(SI("Key",      _sortColJS, _sortAscJS))" style="width:110px" @onclick='() => SortJS("Key")'>Key</th>
+                                    <th class="sortable @(SI("Summary",  _sortColJS, _sortAscJS))" @onclick='() => SortJS("Summary")'>Summary</th>
+                                    <th class="sortable @(SI("Status",   _sortColJS, _sortAscJS))" style="width:130px" @onclick='() => SortJS("Status")'>Status</th>
+                                    <th class="sortable @(SI("Assignee", _sortColJS, _sortAscJS))" style="width:160px" @onclick='() => SortJS("Assignee")'>Assignee</th>
+                                    <th class="sortable @(SI("Created",  _sortColJS, _sortAscJS))" style="width:130px" @onclick='() => SortJS("Created")'>Created</th>
                                 </tr>
-                            }
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                @foreach (var issue in ApplySortJS(group))
+                                {
+                                    <tr>
+                                        <td class="fw-semibold text-nowrap">
+                                            <a href="@issue.Url" target="_blank" rel="noopener"
+                                               class="text-decoration-none">
+                                                @issue.Key
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"
+                                                     fill="currentColor" viewBox="0 0 16 16" class="ms-1 text-muted">
+                                                    <path d="M6.354 5.5H4a3 3 0 0 0 0 6h3a3 3 0 0 0 2.83-4H9c-.086 0-.17.01-.25.031A2 2 0 0 1 7 9.5H4a2 2 0 1 1 0-4h1.535c.218-.376.495-.714.82-1z"/>
+                                                    <path d="M9 5.5a3 3 0 0 0-2.83 4h1.098A2 2 0 0 1 9 6.5h3a2 2 0 1 1 0 4h-1.535a4.02 4.02 0 0 1-.82 1H12a3 3 0 1 0 0-6H9z"/>
+                                                </svg>
+                                            </a>
+                                        </td>
+                                        <td>@issue.Summary</td>
+                                        <td>
+                                            <span class="badge @StatusBadge(issue.StatusCategoryKey)">
+                                                @issue.Status
+                                            </span>
+                                        </td>
+                                        <td class="text-nowrap">@issue.Assignee</td>
+                                        <td class="text-nowrap text-muted">@FormatDate(issue.Created)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
+        }
+    }
+
+    <!-- ── Internal Support tab ─────────────────────────────────────────────── -->
+    @if (_activeTab == "internal" && _internalIssues.Count > 0)
+    {
+        var groups = _internalIssues
+            .GroupBy(i => string.IsNullOrEmpty(i.Organisation) ? "No Organisation" : i.Organisation)
+            .OrderBy(g => g.Key);
+
+        <div class="mb-2 d-flex align-items-center gap-3">
+            <span class="text-muted small">@_internalIssues.Count issue(s) found across @groups.Count() organisation(s)</span>
         </div>
+
+        @foreach (var group in groups)
+        {
+            <div class="card border-0 shadow-sm mb-3">
+                <div class="card-header d-flex align-items-center gap-2 py-2"
+                     style="background:#2d5a27; color:white;">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor"
+                         viewBox="0 0 16 16">
+                        <path d="M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1h8zm-7.978-1A.261.261 0 0 1 7 12.996c.001-.264.167-1.03.76-1.72C8.312 10.629 9.282 10 11 10c1.717 0 2.687.63 3.24 1.276.593.69.758 1.457.76 1.72l-.008.002A.274.274 0 0 1 15 13H7.022zM11 7a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm3-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0zM6.936 9.28a5.88 5.88 0 0 0-1.23-.247A7.35 7.35 0 0 0 5 9c-4 0-5 3-5 4 0 .667.333 1 1 1h4.216A2.238 2.238 0 0 1 5 13c0-1.01.377-2.042 1.09-2.904.243-.294.526-.569.846-.816zM4.92 10A5.493 5.493 0 0 0 4 13H1c0-.26.164-1.03.76-1.724.545-.636 1.492-1.256 3.16-1.275zM1.5 5.5a3 3 0 1 1 6 0 3 3 0 0 1-6 0zm3-2a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/>
+                    </svg>
+                    <span class="fw-semibold">@group.Key</span>
+                    <span class="badge bg-light text-dark ms-1">@group.Count()</span>
+                </div>
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-hover align-middle small mb-0">
+                            <thead class="table-light">
+                                <tr>
+                                    <th class="sortable @(SI("Key",      _sortColInt, _sortAscInt))" style="width:110px" @onclick='() => SortInt("Key")'>Key</th>
+                                    <th class="sortable @(SI("Summary",  _sortColInt, _sortAscInt))" @onclick='() => SortInt("Summary")'>Summary</th>
+                                    <th class="sortable @(SI("Status",   _sortColInt, _sortAscInt))" style="width:130px" @onclick='() => SortInt("Status")'>Status</th>
+                                    <th class="sortable @(SI("Assignee", _sortColInt, _sortAscInt))" style="width:160px" @onclick='() => SortInt("Assignee")'>Assignee</th>
+                                    <th class="sortable @(SI("Created",  _sortColInt, _sortAscInt))" style="width:130px" @onclick='() => SortInt("Created")'>Created</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var issue in ApplySortInt(group))
+                                {
+                                    <tr>
+                                        <td class="fw-semibold text-nowrap">
+                                            <a href="@issue.Url" target="_blank" rel="noopener"
+                                               class="text-decoration-none">
+                                                @issue.Key
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"
+                                                     fill="currentColor" viewBox="0 0 16 16" class="ms-1 text-muted">
+                                                    <path d="M6.354 5.5H4a3 3 0 0 0 0 6h3a3 3 0 0 0 2.83-4H9c-.086 0-.17.01-.25.031A2 2 0 0 1 7 9.5H4a2 2 0 1 1 0-4h1.535c.218-.376.495-.714.82-1z"/>
+                                                    <path d="M9 5.5a3 3 0 0 0-2.83 4h1.098A2 2 0 0 1 9 6.5h3a2 2 0 1 1 0 4h-1.535a4.02 4.02 0 0 1-.82 1H12a3 3 0 1 0 0-6H9z"/>
+                                                </svg>
+                                            </a>
+                                        </td>
+                                        <td>@issue.Summary</td>
+                                        <td>
+                                            <span class="badge @StatusBadge(issue.StatusCategoryKey)">
+                                                @issue.Status
+                                            </span>
+                                        </td>
+                                        <td class="text-nowrap">@issue.Assignee</td>
+                                        <td class="text-nowrap text-muted">@FormatDate(issue.Created)</td>
+                                    </tr>
+                                    @if (issue.RelatesTo.Count > 0)
+                                    {
+                                        <tr style="background:#f8fdf7;">
+                                            <td colspan="5" class="ps-4 pt-1 pb-2" style="border-top:none;">
+                                                <div class="text-muted fw-semibold mb-1" style="font-size:0.72rem; letter-spacing:.03em;">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="currentColor"
+                                                         viewBox="0 0 16 16" class="me-1">
+                                                        <path d="M6.354 5.5H4a3 3 0 0 0 0 6h3a3 3 0 0 0 2.83-4H9c-.086 0-.17.01-.25.031A2 2 0 0 1 7 9.5H4a2 2 0 1 1 0-4h1.535c.218-.376.495-.714.82-1z"/>
+                                                        <path d="M9 5.5a3 3 0 0 0-2.83 4h1.098A2 2 0 0 1 9 6.5h3a2 2 0 1 1 0 4h-1.535a4.02 4.02 0 0 1-.82 1H12a3 3 0 1 0 0-6H9z"/>
+                                                    </svg>
+                                                    relates to
+                                                </div>
+                                                <table class="table table-sm table-borderless mb-0" style="background:transparent; font-size:0.8rem;">
+                                                    <tbody>
+                                                        @foreach (var linked in issue.RelatesTo)
+                                                        {
+                                                            <tr>
+                                                                <td style="width:140px; padding:2px 10px 2px 0;" class="fw-semibold text-nowrap">
+                                                                    <a href="@linked.Url" target="_blank" rel="noopener"
+                                                                       class="text-decoration-none">
+                                                                        @linked.Key
+                                                                    </a>
+                                                                </td>
+                                                                <td style="padding:2px 10px 2px 0;">@linked.Summary</td>
+                                                                <td style="width:160px; padding:2px 0;">
+                                                                    <span class="badge @StatusBadge(linked.StatusCategoryKey)">
+                                                                        @linked.Status
+                                                                    </span>
+                                                                </td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        }
     }
 }
 
 @code {
+    // ── JSSUPPORT state ──────────────────────────────────────────────────────────
     private string _rawInput = "";
     private bool _loading;
     private readonly List<JiraIssueViewModel> _issues = [];
     private readonly List<string> _errors = [];
 
-    private string _sortColJS = "Key"; private bool _sortAscJS = true;
-    private void SortJS(string c) { if (_sortColJS == c) _sortAscJS = !_sortAscJS; else { _sortColJS = c; _sortAscJS = true; } }
+    // ── Internal state ───────────────────────────────────────────────────────────
+    private string _rawInputInternal = "";
+    private bool _loadingInternal;
+    private readonly List<JiraIssueViewModel> _internalIssues = [];
+    private readonly List<string> _internalErrors = [];
+
+    private string _activeTab = "jssupport";
+
+    // ── Sort state ───────────────────────────────────────────────────────────────
+    private string _sortColJS = "Key";  private bool _sortAscJS  = true;
+    private string _sortColInt = "Key"; private bool _sortAscInt = true;
+
+    private void SortJS(string c)  { if (_sortColJS  == c) _sortAscJS  = !_sortAscJS;  else { _sortColJS  = c; _sortAscJS  = true; } }
+    private void SortInt(string c) { if (_sortColInt == c) _sortAscInt = !_sortAscInt; else { _sortColInt = c; _sortAscInt = true; } }
+
     private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
 
     private IEnumerable<JiraIssueViewModel> ApplySortJS(IEnumerable<JiraIssueViewModel> issues) => _sortColJS switch
@@ -145,47 +350,78 @@
         _          => issues.OrderBy(i => i.Key),
     };
 
+    private IEnumerable<JiraIssueViewModel> ApplySortInt(IEnumerable<JiraIssueViewModel> issues) => _sortColInt switch
+    {
+        "Key"      => _sortAscInt ? issues.OrderBy(i => i.Key)      : issues.OrderByDescending(i => i.Key),
+        "Summary"  => _sortAscInt ? issues.OrderBy(i => i.Summary)  : issues.OrderByDescending(i => i.Summary),
+        "Status"   => _sortAscInt ? issues.OrderBy(i => i.Status)   : issues.OrderByDescending(i => i.Status),
+        "Assignee" => _sortAscInt ? issues.OrderBy(i => i.Assignee) : issues.OrderByDescending(i => i.Assignee),
+        "Created"  => _sortAscInt ? issues.OrderBy(i => i.Created)  : issues.OrderByDescending(i => i.Created),
+        _          => issues.OrderBy(i => i.Key),
+    };
+
     private string _baseUrl => Config["Jira:BaseUrl"]?.TrimEnd('/') ?? "";
 
-    // ── Search ───────────────────────────────────────────────────────────────
+    // ── JSSUPPORT Search ─────────────────────────────────────────────────────────
 
     private async Task SearchAsync()
     {
-        var keys = _rawInput
-            .Split(['\n', '\r', ',', ';'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(k => k.Trim().ToUpperInvariant())
-            .Where(k => !string.IsNullOrEmpty(k))
-            .Distinct()
-            .ToList();
-
+        var keys = ParseKeys(_rawInput);
         if (keys.Count == 0) return;
 
         _loading = true;
         _errors.Clear();
         _issues.Clear();
+        _activeTab = "jssupport";
         StateHasChanged();
 
-        var tasks = keys.Select(FetchIssueAsync).ToList();
-        var results = await Task.WhenAll(tasks);
-
+        var results = await Task.WhenAll(keys.Select(k => FetchIssueAsync(k, includeLinks: false)));
         foreach (var (issue, error) in results)
         {
-            if (issue != null)
-                _issues.Add(issue);
-            else if (error != null)
-                _errors.Add(error);
+            if (issue != null) _issues.Add(issue);
+            else if (error != null) _errors.Add(error);
         }
 
         _loading = false;
     }
 
-    private async Task<(JiraIssueViewModel? issue, string? error)> FetchIssueAsync(string key)
+    // ── Internal Search ──────────────────────────────────────────────────────────
+
+    private async Task SearchInternalAsync()
+    {
+        var keys = ParseKeys(_rawInputInternal);
+        if (keys.Count == 0) return;
+
+        _loadingInternal = true;
+        _internalErrors.Clear();
+        _internalIssues.Clear();
+        _activeTab = "internal";
+        StateHasChanged();
+
+        var results = await Task.WhenAll(keys.Select(k => FetchIssueAsync(k, includeLinks: true)));
+        foreach (var (issue, error) in results)
+        {
+            if (issue != null) _internalIssues.Add(issue);
+            else if (error != null) _internalErrors.Add(error);
+        }
+
+        _loadingInternal = false;
+    }
+
+    private static List<string> ParseKeys(string raw) =>
+        raw.Split(['\n', '\r', ',', ';'], StringSplitOptions.RemoveEmptyEntries)
+           .Select(k => k.Trim().ToUpperInvariant())
+           .Where(k => !string.IsNullOrEmpty(k))
+           .Distinct()
+           .ToList();
+
+    private async Task<(JiraIssueViewModel? issue, string? error)> FetchIssueAsync(string key, bool includeLinks)
     {
         try
         {
             var json = await JiraService.GetIssue(key);
             using var doc = System.Text.Json.JsonDocument.Parse(json);
-            var root = doc.RootElement;
+            var root   = doc.RootElement;
             var fields = root.GetProperty("fields");
 
             var issue = new JiraIssueViewModel
@@ -235,10 +471,34 @@
                 {
                     issue.Worklogs.Add(new WorklogItem
                     {
-                        Author    = wl.TryGetProperty("author",    out var a)  ? a.GetProperty("displayName").GetString()  ?? "" : "",
-                        TimeSpent = wl.TryGetProperty("timeSpent", out var ts) ? ts.GetString() ?? "" : "",
+                        Author    = wl.TryGetProperty("author",    out var a)   ? a.GetProperty("displayName").GetString() ?? "" : "",
+                        TimeSpent = wl.TryGetProperty("timeSpent", out var ts)  ? ts.GetString() ?? "" : "",
                         Started   = wl.TryGetProperty("started",   out var st2) ? st2.GetString() ?? "" : ""
                     });
+                }
+            }
+
+            // Issue links — "relates to" only, for internal issues
+            if (includeLinks &&
+                fields.TryGetProperty("issuelinks", out var links) &&
+                links.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var link in links.EnumerateArray())
+                {
+                    if (!link.TryGetProperty("type", out var linkType)) continue;
+
+                    var inward  = linkType.TryGetProperty("inward",  out var iw) ? iw.GetString() ?? "" : "";
+                    var outward = linkType.TryGetProperty("outward", out var ow) ? ow.GetString() ?? "" : "";
+
+                    if (!inward.Contains("relates",  StringComparison.OrdinalIgnoreCase) &&
+                        !outward.Contains("relates", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    if (link.TryGetProperty("inwardIssue",  out var inwardEl))
+                        issue.RelatesTo.Add(ParseLinkedIssue(inwardEl));
+
+                    if (link.TryGetProperty("outwardIssue", out var outwardEl))
+                        issue.RelatesTo.Add(ParseLinkedIssue(outwardEl));
                 }
             }
 
@@ -250,21 +510,47 @@
         }
     }
 
+    private LinkedIssueItem ParseLinkedIssue(System.Text.Json.JsonElement el)
+    {
+        var key  = el.TryGetProperty("key", out var k) ? k.GetString() ?? "" : "";
+        var item = new LinkedIssueItem { Key = key, Url = $"{_baseUrl}/browse/{key}" };
+
+        if (!el.TryGetProperty("fields", out var f)) return item;
+
+        item.Summary = f.TryGetProperty("summary", out var s) ? s.GetString() ?? "" : "";
+
+        if (f.TryGetProperty("status", out var st))
+        {
+            item.Status = st.TryGetProperty("name", out var sn) ? sn.GetString() ?? "" : "";
+            if (st.TryGetProperty("statusCategory", out var sc) &&
+                sc.TryGetProperty("key", out var sck))
+                item.StatusCategoryKey = sck.GetString() ?? "";
+        }
+
+        return item;
+    }
+
     private void Clear()
     {
         _issues.Clear();
         _errors.Clear();
         _rawInput = "";
+        if (_internalIssues.Count > 0) _activeTab = "internal";
     }
 
-    // ── Export ───────────────────────────────────────────────────────────────
+    private void ClearInternal()
+    {
+        _internalIssues.Clear();
+        _internalErrors.Clear();
+        _rawInputInternal = "";
+        if (_issues.Count > 0) _activeTab = "jssupport";
+    }
+
+    // ── Export ───────────────────────────────────────────────────────────────────
 
     private async Task ExportToXlsx()
     {
-        // "Remaining" = not done
-        var remaining = _issues
-            .Where(i => !string.Equals(i.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase))
-            .ToList();
+        var remaining = _issues.ToList();
 
         using var wb = new XLWorkbook();
         BuildOrgSheet(wb.Worksheets.Add("Remaining Tasks"), remaining);
@@ -277,11 +563,117 @@
             $"JiraSearch_{DateTime.Today:yyyyMMdd}.xlsx", mime);
     }
 
+    private async Task ExportInternalLinksAsync()
+    {
+        using var wb = new XLWorkbook();
+        BuildInternalLinksSheet(wb.Worksheets.Add("Relates To"), _internalIssues);
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        var b64  = Convert.ToBase64String(ms.ToArray());
+        const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        await JS.InvokeVoidAsync("downloadBase64File", b64,
+            $"InternalLinks_{DateTime.Today:yyyyMMdd}.xlsx", mime);
+    }
+
+    private void BuildInternalLinksSheet(IXLWorksheet ws, List<JiraIssueViewModel> internalIssues)
+    {
+        string[] headers = ["Internal Issue", "Key", "Summary", "Status", "URL"];
+
+        static void StyleHeader(IXLCell c)
+        {
+            c.Style.Font.Bold = true;
+            c.Style.Font.FontColor = XLColor.White;
+            c.Style.Fill.BackgroundColor = XLColor.FromHtml("#2d5a27");
+            c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            c.Style.Alignment.Vertical   = XLAlignmentVerticalValues.Center;
+        }
+
+        for (int i = 0; i < headers.Length; i++)
+        {
+            var hc = ws.Cell(1, i + 1);
+            StyleHeader(hc);
+            hc.Value = headers[i];
+        }
+        ws.Row(1).Height = 22;
+        ws.SheetView.FreezeRows(1);
+
+        int  row   = 2;
+        bool shade = false;
+
+        foreach (var parent in internalIssues.Where(i => i.RelatesTo.Count > 0).OrderBy(i => i.Key))
+        {
+            // Group separator: "JM-XXXXX — Summary"
+            var sepRange = ws.Range(row, 1, row, headers.Length);
+            sepRange.Merge();
+            sepRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#e0ede0");
+            sepRange.Style.Font.Bold = true;
+            sepRange.Style.Font.FontColor = XLColor.FromHtml("#2d5a27");
+            sepRange.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
+            sepRange.Style.Border.BottomBorderColor = XLColor.FromHtml("#2d5a27");
+            ws.Cell(row, 1).Value = $"  {parent.Key}  —  {parent.Summary}  ({parent.RelatesTo.Count} linked)";
+            ws.Row(row).Height = 20;
+            row++;
+            shade = false;
+
+            foreach (var linked in parent.RelatesTo)
+            {
+                var bg = shade ? XLColor.FromHtml("#f0f7f0") : XLColor.White;
+                ws.Row(row).Style.Fill.BackgroundColor = bg;
+
+                int col = 1;
+                ws.Cell(row, col++).Value = parent.Key;
+                ws.Cell(row, col++).Value = linked.Key;
+                ws.Cell(row, col++).Value = linked.Summary;
+                ws.Cell(row, col++).Value = linked.Status;
+
+                var urlCell = ws.Cell(row, col++);
+                if (!string.IsNullOrEmpty(linked.Url))
+                {
+                    urlCell.Value = linked.Url;
+                    urlCell.SetHyperlink(new XLHyperlink(linked.Url));
+                    urlCell.Style.Font.FontColor = XLColor.FromHtml("#0d6efd");
+                    urlCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+                }
+
+                var statusCell = ws.Cell(row, 4);
+                statusCell.Style.Fill.BackgroundColor = linked.StatusCategoryKey switch
+                {
+                    "indeterminate" => XLColor.FromHtml("#d1ecf1"),
+                    "new"           => XLColor.FromHtml("#fff3cd"),
+                    _               => bg
+                };
+
+                shade = !shade;
+                row++;
+            }
+        }
+
+        // Totals
+        if (row > 2)
+        {
+            var totRange = ws.Range(row, 1, row, headers.Length);
+            totRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+            totRange.Style.Font.Bold = true;
+            ws.Cell(row, 1).Value = "TOTAL LINKED";
+            ws.Cell(row, 2).Value = internalIssues.Sum(i => i.RelatesTo.Count);
+            ws.Row(row).Height = 18;
+        }
+
+        ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorder = XLBorderStyleValues.Medium;
+        ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorderColor = XLColor.FromHtml("#2d5a27");
+
+        ws.Column(1).Width = 16; // Internal Issue
+        ws.Column(2).Width = 16; // Key
+        ws.Column(3).Width = 55; // Summary
+        ws.Column(4).Width = 20; // Status
+        ws.Column(5).Width = 55; // URL
+    }
+
     private void BuildOrgSheet(IXLWorksheet ws, List<JiraIssueViewModel> issues)
     {
         string[] headers = ["Organisation", "Key", "Summary", "Status", "URL"];
 
-        // Style helpers
         static void StyleHeader(IXLCell c, bool isGroup = false)
         {
             c.Style.Font.Bold = true;
@@ -293,7 +685,6 @@
             c.Style.Alignment.Vertical   = XLAlignmentVerticalValues.Center;
         }
 
-        // ── Column header row ─────────────────────────────────────────────────
         for (int i = 0; i < headers.Length; i++)
             StyleHeader(ws.Cell(1, i + 1));
 
@@ -303,18 +694,16 @@
         ws.Row(1).Height = 22;
         ws.SheetView.FreezeRows(1);
 
-        // ── Data rows grouped by organisation ─────────────────────────────────
         var groups = issues
             .GroupBy(i => string.IsNullOrEmpty(i.Organisation) ? "No Organisation" : i.Organisation)
             .OrderBy(g => g.Key)
             .ToList();
 
-        int row = 2;
+        int  row   = 2;
         bool shade = false;
 
         foreach (var group in groups)
         {
-            // Organisation separator row
             var sepRange = ws.Range(row, 1, row, headers.Length);
             sepRange.Merge();
             sepRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#e8e0f0");
@@ -337,15 +726,7 @@
                 ws.Cell(row, col++).Value = issue.Key;
                 ws.Cell(row, col++).Value = issue.Summary;
                 ws.Cell(row, col++).Value = issue.Status;
-                // ws.Cell(row, col++).Value = issue.Assignee;
 
-                // // Created date formatted
-                // if (DateTime.TryParse(issue.Created, out var dt))
-                //     ws.Cell(row, col++).Value = dt.ToString("dd/MM/yyyy");
-                // else
-                //     ws.Cell(row, col++).Value = issue.Created;
-
-                // URL as hyperlink
                 var urlCell = ws.Cell(row, col++);
                 if (!string.IsNullOrEmpty(issue.Url))
                 {
@@ -355,7 +736,6 @@
                     urlCell.Style.Font.Underline = XLFontUnderlineValues.Single;
                 }
 
-                // Status conditional formatting (static fill since it's a single cell)
                 var statusCell = ws.Cell(row, 4);
                 statusCell.Style.Fill.BackgroundColor = issue.StatusCategoryKey switch
                 {
@@ -369,7 +749,6 @@
             }
         }
 
-        // ── Totals row ────────────────────────────────────────────────────────
         if (row > 2)
         {
             var totRange = ws.Range(row, 1, row, headers.Length);
@@ -380,11 +759,9 @@
             ws.Row(row).Height = 18;
         }
 
-        // ── Table outer border ────────────────────────────────────────────────
         ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorder = XLBorderStyleValues.Medium;
         ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorderColor = XLColor.FromHtml("#1e3a5f");
 
-        // ── Column widths ─────────────────────────────────────────────────────
         ws.Column(1).Width = 28; // Organisation
         ws.Column(2).Width = 12; // Key
         ws.Column(3).Width = 55; // Summary
@@ -394,7 +771,7 @@
         ws.Column(7).Width = 55; // URL
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Helpers ──────────────────────────────────────────────────────────────────
 
     private static string StatusBadge(string categoryKey) => categoryKey switch
     {
@@ -410,19 +787,20 @@
         return date;
     }
 
-    // ── Models ───────────────────────────────────────────────────────────────
+    // ── Models ───────────────────────────────────────────────────────────────────
 
     public class JiraIssueViewModel
     {
-        public string Key             { get; set; } = "";
-        public string Summary         { get; set; } = "";
-        public string Status          { get; set; } = "";
+        public string Key               { get; set; } = "";
+        public string Summary           { get; set; } = "";
+        public string Status            { get; set; } = "";
         public string StatusCategoryKey { get; set; } = "";
-        public string Assignee        { get; set; } = "Unassigned";
-        public string Created         { get; set; } = "";
-        public string Organisation    { get; set; } = "";
-        public string Url             { get; set; } = "";
-        public List<WorklogItem> Worklogs { get; set; } = [];
+        public string Assignee          { get; set; } = "Unassigned";
+        public string Created           { get; set; } = "";
+        public string Organisation      { get; set; } = "";
+        public string Url               { get; set; } = "";
+        public List<WorklogItem>     Worklogs  { get; set; } = [];
+        public List<LinkedIssueItem> RelatesTo { get; set; } = [];
     }
 
     public class WorklogItem
@@ -430,5 +808,14 @@
         public string Author    { get; set; } = "";
         public string TimeSpent { get; set; } = "";
         public string Started   { get; set; } = "";
+    }
+
+    public class LinkedIssueItem
+    {
+        public string Key               { get; set; } = "";
+        public string Summary           { get; set; } = "";
+        public string Status            { get; set; } = "";
+        public string StatusCategoryKey { get; set; } = "";
+        public string Url               { get; set; } = "";
     }
 }
