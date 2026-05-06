@@ -241,6 +241,20 @@
                     }
                 </div>
                 <div class="qm-kpi">
+                    <div class="qm-kpi-value @(RejectedBugCount == 0 ? "qm-green" : "qm-orange")">@RejectedBugCount</div>
+                    <div class="qm-kpi-label">Rejected Bugs</div>
+                    <div class="qm-kpi-sub">
+                        @if (ActiveBugCount > 0)
+                        {
+                            @($"{(RejectedBugCount * 100.0 / ActiveBugCount):0.0}% of total bugs")
+                        }
+                        else
+                        {
+                            <span>no bugs found</span>
+                        }
+                    </div>
+                </div>
+                <div class="qm-kpi">
                     <div class="qm-kpi-value @BugRateClass(OverallBugRate)">@OverallBugRate.ToString("0.0")%</div>
                     <div class="qm-kpi-label">Bug Rate</div>
                     <div class="qm-kpi-bar-track">
@@ -688,7 +702,9 @@
         i.IssueType.Contains("Enhancement", StringComparison.OrdinalIgnoreCase);
 
     // ── Bug aggregates ────────────────────────────────────────────────────────
-    private int ActiveBugCount => ActiveFilteredIssues.Count(IsBug);
+    private int ActiveBugCount    => ActiveFilteredIssues.Count(IsBug);
+    private int RejectedBugCount  => ActiveFilteredIssues.Count(i => IsBug(i) &&
+        i.Status.Equals("Rejected", StringComparison.OrdinalIgnoreCase));
 
     private double OverallBugRate => ActiveFilteredIssues.Count == 0 ? 0
         : (double)ActiveBugCount / ActiveFilteredIssues.Count * 100;
@@ -891,9 +907,8 @@
     private double BugOverheadPct   => FeatureDevHours == 0 ? -1 : BugFixHours / FeatureDevHours * 100;
 
     // ── Quality score (0–100) ─────────────────────────────────────────────────
-    // Three equal thirds: Bug Effort Ratio + Avg Bug Fix Time + Bug Overhead.
+    // Two equal halves: Bug Overhead (BugHours/FeatureHours) + Bug Effort Ratio (BugHours/TotalHours).
     // Each uses a quadratic penalty so small overruns hurt less than large ones.
-    // Avg Fix Time is normalised against a 40 h ceiling (1 work-week).
     // Any metric with no data (< 0) is treated as perfect so it doesn't penalise.
     private int QualityScore
     {
@@ -901,24 +916,21 @@
         {
             if (ActiveFilteredIssues.Count == 0) return 100;
 
-            var effortScore = BugFixEffortRatio < 0 ? 1.0
-                : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(BugFixEffortRatio, 100.0) / 100.0), 2);
-
-            var fixTimeScore = AvgFixTimeHours < 0 ? 1.0
-                : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(AvgFixTimeHours, 40.0) / 40.0), 2);
-
             var overheadScore = BugOverheadPct < 0 ? 1.0
                 : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(BugOverheadPct, 100.0) / 100.0), 2);
 
-            return Math.Clamp((int)(effortScore * 34 + fixTimeScore * 33 + overheadScore * 33), 0, 100);
+            var effortScore = BugFixEffortRatio < 0 ? 1.0
+                : Math.Pow(Math.Max(0.0, 1.0 - Math.Min(BugFixEffortRatio, 100.0) / 100.0), 2);
+
+            return Math.Clamp((int)(overheadScore * 50 + effortScore * 50), 0, 100);
         }
     }
 
     private string QualityBand      => QualityScore >= 75 ? "good" : QualityScore >= 50 ? "fair" : "poor";
     private string QualityBandLabel => QualityScore >= 75
-        ? "Good — low bug effort, fast fix times and low overhead"
+        ? "Good — low bug overhead and low proportion of time on bugs"
         : QualityScore >= 50 ? "Fair — moderate bug pressure, monitor closely"
-        : "Poor — high bug effort ratio or significant overhead";
+        : "Poor — high bug overhead or too much time on bugs vs features";
 
     // ── Epic helpers ──────────────────────────────────────────────────────────
     private static int    EpicBugCount(EpicSummary e) => e.Issues.Count(IsBug);

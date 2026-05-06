@@ -87,7 +87,7 @@
                     @if (_internalIssues.Count > 0)
                     {
                         <button class="btn btn-outline-secondary" @onclick="ClearInternal">Clear</button>
-                        @if (_internalIssues.Any(i => i.RelatesTo.Count > 0))
+                        @if (_internalIssues.Any(i => i.Links.Count > 0))
                         {
                             <button class="btn btn-outline-success ms-auto" @onclick="ExportInternalLinksAsync"
                                     title="Export relates-to linked items grouped by internal issue">
@@ -270,39 +270,42 @@
                                         <td class="text-nowrap">@issue.Assignee</td>
                                         <td class="text-nowrap text-muted">@FormatDate(issue.Created)</td>
                                     </tr>
-                                    @if (issue.RelatesTo.Count > 0)
+                                    @if (issue.Links.Count > 0)
                                     {
                                         <tr style="background:#f8fdf7;">
                                             <td colspan="5" class="ps-4 pt-1 pb-2" style="border-top:none;">
-                                                <div class="text-muted fw-semibold mb-1" style="font-size:0.72rem; letter-spacing:.03em;">
-                                                    <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="currentColor"
-                                                         viewBox="0 0 16 16" class="me-1">
-                                                        <path d="M6.354 5.5H4a3 3 0 0 0 0 6h3a3 3 0 0 0 2.83-4H9c-.086 0-.17.01-.25.031A2 2 0 0 1 7 9.5H4a2 2 0 1 1 0-4h1.535c.218-.376.495-.714.82-1z"/>
-                                                        <path d="M9 5.5a3 3 0 0 0-2.83 4h1.098A2 2 0 0 1 9 6.5h3a2 2 0 1 1 0 4h-1.535a4.02 4.02 0 0 1-.82 1H12a3 3 0 1 0 0-6H9z"/>
-                                                    </svg>
-                                                    relates to
-                                                </div>
-                                                <table class="table table-sm table-borderless mb-0" style="background:transparent; font-size:0.8rem;">
-                                                    <tbody>
-                                                        @foreach (var linked in issue.RelatesTo)
-                                                        {
-                                                            <tr>
-                                                                <td style="width:140px; padding:2px 10px 2px 0;" class="fw-semibold text-nowrap">
-                                                                    <a href="@linked.Url" target="_blank" rel="noopener"
-                                                                       class="text-decoration-none">
-                                                                        @linked.Key
-                                                                    </a>
-                                                                </td>
-                                                                <td style="padding:2px 10px 2px 0;">@linked.Summary</td>
-                                                                <td style="width:160px; padding:2px 0;">
-                                                                    <span class="badge @StatusBadge(linked.StatusCategoryKey)">
-                                                                        @linked.Status
-                                                                    </span>
-                                                                </td>
-                                                            </tr>
-                                                        }
-                                                    </tbody>
-                                                </table>
+                                                @foreach (var linkGroup in issue.Links.GroupBy(l => l.LinkType).OrderBy(g => g.Key))
+                                                {
+                                                    <div class="text-muted fw-semibold mt-1 mb-1" style="font-size:0.72rem; letter-spacing:.03em;">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" fill="currentColor"
+                                                             viewBox="0 0 16 16" class="me-1">
+                                                            <path d="M6.354 5.5H4a3 3 0 0 0 0 6h3a3 3 0 0 0 2.83-4H9c-.086 0-.17.01-.25.031A2 2 0 0 1 7 9.5H4a2 2 0 1 1 0-4h1.535c.218-.376.495-.714.82-1z"/>
+                                                            <path d="M9 5.5a3 3 0 0 0-2.83 4h1.098A2 2 0 0 1 9 6.5h3a2 2 0 1 1 0 4h-1.535a4.02 4.02 0 0 1-.82 1H12a3 3 0 1 0 0-6H9z"/>
+                                                        </svg>
+                                                        @linkGroup.Key
+                                                    </div>
+                                                    <table class="table table-sm table-borderless mb-1" style="background:transparent; font-size:0.8rem;">
+                                                        <tbody>
+                                                            @foreach (var linked in linkGroup)
+                                                            {
+                                                                <tr>
+                                                                    <td style="width:140px; padding:2px 10px 2px 0;" class="fw-semibold text-nowrap">
+                                                                        <a href="@linked.Url" target="_blank" rel="noopener"
+                                                                           class="text-decoration-none">
+                                                                            @linked.Key
+                                                                        </a>
+                                                                    </td>
+                                                                    <td style="padding:2px 10px 2px 0;">@linked.Summary</td>
+                                                                    <td style="width:160px; padding:2px 0;">
+                                                                        <span class="badge @StatusBadge(linked.StatusCategoryKey)">
+                                                                            @linked.Status
+                                                                        </span>
+                                                                    </td>
+                                                                </tr>
+                                                            }
+                                                        </tbody>
+                                                    </table>
+                                                }
                                             </td>
                                         </tr>
                                     }
@@ -478,7 +481,7 @@
                 }
             }
 
-            // Issue links — "relates to" only, for internal issues
+            // Issue links — all types (blocks, relates to, etc.), for internal issues
             if (includeLinks &&
                 fields.TryGetProperty("issuelinks", out var links) &&
                 links.ValueKind == System.Text.Json.JsonValueKind.Array)
@@ -487,18 +490,22 @@
                 {
                     if (!link.TryGetProperty("type", out var linkType)) continue;
 
-                    var inward  = linkType.TryGetProperty("inward",  out var iw) ? iw.GetString() ?? "" : "";
-                    var outward = linkType.TryGetProperty("outward", out var ow) ? ow.GetString() ?? "" : "";
+                    var inwardDesc  = linkType.TryGetProperty("inward",  out var iw) ? iw.GetString() ?? "" : "";
+                    var outwardDesc = linkType.TryGetProperty("outward", out var ow) ? ow.GetString() ?? "" : "";
 
-                    if (!inward.Contains("relates",  StringComparison.OrdinalIgnoreCase) &&
-                        !outward.Contains("relates", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    if (link.TryGetProperty("inwardIssue",  out var inwardEl))
-                        issue.RelatesTo.Add(ParseLinkedIssue(inwardEl));
+                    if (link.TryGetProperty("inwardIssue", out var inwardEl))
+                    {
+                        var item = ParseLinkedIssue(inwardEl);
+                        item.LinkType = inwardDesc;
+                        issue.Links.Add(item);
+                    }
 
                     if (link.TryGetProperty("outwardIssue", out var outwardEl))
-                        issue.RelatesTo.Add(ParseLinkedIssue(outwardEl));
+                    {
+                        var item = ParseLinkedIssue(outwardEl);
+                        item.LinkType = outwardDesc;
+                        issue.Links.Add(item);
+                    }
                 }
             }
 
@@ -578,7 +585,7 @@
 
     private void BuildInternalLinksSheet(IXLWorksheet ws, List<JiraIssueViewModel> internalIssues)
     {
-        string[] headers = ["Internal Issue", "Key", "Summary", "Status", "URL"];
+        string[] headers = ["Internal Issue", "Link Type", "Key", "Summary", "Status", "URL"];
 
         static void StyleHeader(IXLCell c)
         {
@@ -601,7 +608,7 @@
         int  row   = 2;
         bool shade = false;
 
-        foreach (var parent in internalIssues.Where(i => i.RelatesTo.Count > 0).OrderBy(i => i.Key))
+        foreach (var parent in internalIssues.Where(i => i.Links.Count > 0).OrderBy(i => i.Key))
         {
             // Group separator: "JM-XXXXX — Summary"
             var sepRange = ws.Range(row, 1, row, headers.Length);
@@ -611,18 +618,19 @@
             sepRange.Style.Font.FontColor = XLColor.FromHtml("#2d5a27");
             sepRange.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
             sepRange.Style.Border.BottomBorderColor = XLColor.FromHtml("#2d5a27");
-            ws.Cell(row, 1).Value = $"  {parent.Key}  —  {parent.Summary}  ({parent.RelatesTo.Count} linked)";
+            ws.Cell(row, 1).Value = $"  {parent.Key}  —  {parent.Summary}  ({parent.Links.Count} linked)";
             ws.Row(row).Height = 20;
             row++;
             shade = false;
 
-            foreach (var linked in parent.RelatesTo)
+            foreach (var linked in parent.Links.OrderBy(l => l.LinkType).ThenBy(l => l.Key))
             {
                 var bg = shade ? XLColor.FromHtml("#f0f7f0") : XLColor.White;
                 ws.Row(row).Style.Fill.BackgroundColor = bg;
 
                 int col = 1;
                 ws.Cell(row, col++).Value = parent.Key;
+                ws.Cell(row, col++).Value = linked.LinkType;
                 ws.Cell(row, col++).Value = linked.Key;
                 ws.Cell(row, col++).Value = linked.Summary;
                 ws.Cell(row, col++).Value = linked.Status;
@@ -636,7 +644,7 @@
                     urlCell.Style.Font.Underline = XLFontUnderlineValues.Single;
                 }
 
-                var statusCell = ws.Cell(row, 4);
+                var statusCell = ws.Cell(row, 5);
                 statusCell.Style.Fill.BackgroundColor = linked.StatusCategoryKey switch
                 {
                     "indeterminate" => XLColor.FromHtml("#d1ecf1"),
@@ -656,7 +664,7 @@
             totRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
             totRange.Style.Font.Bold = true;
             ws.Cell(row, 1).Value = "TOTAL LINKED";
-            ws.Cell(row, 2).Value = internalIssues.Sum(i => i.RelatesTo.Count);
+            ws.Cell(row, 2).Value = internalIssues.Sum(i => i.Links.Count);
             ws.Row(row).Height = 18;
         }
 
@@ -664,10 +672,11 @@
         ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorderColor = XLColor.FromHtml("#2d5a27");
 
         ws.Column(1).Width = 16; // Internal Issue
-        ws.Column(2).Width = 16; // Key
-        ws.Column(3).Width = 55; // Summary
-        ws.Column(4).Width = 20; // Status
-        ws.Column(5).Width = 55; // URL
+        ws.Column(2).Width = 16; // Link Type
+        ws.Column(3).Width = 16; // Key
+        ws.Column(4).Width = 55; // Summary
+        ws.Column(5).Width = 20; // Status
+        ws.Column(6).Width = 55; // URL
     }
 
     private void BuildOrgSheet(IXLWorksheet ws, List<JiraIssueViewModel> issues)
@@ -799,8 +808,8 @@
         public string Created           { get; set; } = "";
         public string Organisation      { get; set; } = "";
         public string Url               { get; set; } = "";
-        public List<WorklogItem>     Worklogs  { get; set; } = [];
-        public List<LinkedIssueItem> RelatesTo { get; set; } = [];
+        public List<WorklogItem>     Worklogs { get; set; } = [];
+        public List<LinkedIssueItem> Links    { get; set; } = [];
     }
 
     public class WorklogItem
@@ -812,6 +821,7 @@
 
     public class LinkedIssueItem
     {
+        public string LinkType          { get; set; } = "";
         public string Key               { get; set; } = "";
         public string Summary           { get; set; } = "";
         public string Status            { get; set; } = "";
