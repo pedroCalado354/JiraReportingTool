@@ -14,7 +14,11 @@
       "Bash(git add *)",
       "Bash(git commit *)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Pedro Calado\\\\source\\\\repos\\\\JiraReportingTool\" -Recurse -File)",
-      "Bash(Select-Object -ExpandProperty FullName)"
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Pedro Calado\\\\source\\\\repos\\\\JiraReportingTool\" -Recurse -Directory)",
+      "Bash(Sort-Object)",
+      "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\Pedro Calado\\\\source\\\\repos\\\\JiraReportingTool\" -Recurse -Filter \"*.razor\")",
+      "Bash(Select-Object FullName)"
     ]
   }
 }

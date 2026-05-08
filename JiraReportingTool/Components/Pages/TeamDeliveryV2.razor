@@ -121,45 +121,87 @@
         }
     </div>
 
-    <!-- ── Stats strip ───────────────────────────────────────────────────── -->
-    <div class="tdd-stats-strip">
-        <div class="tdd-stat">
-            <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "done")<span class="tdd-stat-of">/@FilteredIssues.Count</span></span>
-            <span class="tdd-stat-lbl">Done</span>
+    <!-- ── Stats grid ───────────────────────────────────────────────────── -->
+    <div class="tdd-stats-grid">
+        <div class="tdd-metric-group">
+            <div class="tdd-metric-group-label">Completion</div>
+            <div class="tdd-metric-group-body">
+                <div class="tdd-stat">
+                    <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "done")<span class="tdd-stat-of">/@FilteredIssues.Count</span></span>
+                    <span class="tdd-stat-lbl">Done</span>
+                </div>
+                <div class="tdd-stat @(CompletionBehind ? "tdd-stat-danger" : (FilteredCompletionPct >= 100 ? "tdd-stat-risk-success" : ""))">
+                    <span class="tdd-stat-val @(CompletionBehind ? "tdd-text-danger" : (FilteredCompletionPct >= 100 ? "tdd-text-success" : ""))">@((int)FilteredCompletionPct)%</span>
+                    <span class="tdd-stat-lbl">% Done</span>
+                </div>
+                <div class="tdd-stat">
+                    <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "indeterminate")</span>
+                    <span class="tdd-stat-lbl">In Progress</span>
+                </div>
+                <div class="tdd-stat">
+                    <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "new")</span>
+                    <span class="tdd-stat-lbl">To Do</span>
+                </div>
+            </div>
         </div>
-        <div class="tdd-stat">
-            <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "indeterminate")</span>
-            <span class="tdd-stat-lbl">In Progress</span>
+        <div class="tdd-metric-group">
+            <div class="tdd-metric-group-label">Hours</div>
+            <div class="tdd-metric-group-body">
+                <div class="tdd-stat">
+                    <span class="tdd-stat-val tdd-text-muted">@FmtH(FilteredTotalLoggedSeconds)<span class="tdd-stat-of"> / @FmtH(FilteredIssues.Sum(i => i.OriginalEstimateSeconds))</span></span>
+                    <span class="tdd-stat-lbl">Logged / Planned</span>
+                </div>
+                <div class="tdd-stat @(OverCapacity ? "tdd-stat-danger" : "")">
+                    <span class="tdd-stat-val @(OverCapacity ? "tdd-text-danger" : "")">@FmtH(FilteredRemainingSeconds)</span>
+                    <span class="tdd-stat-lbl">Remaining</span>
+                </div>
+                <div class="tdd-stat">
+                    <span class="tdd-stat-val">@FmtH(EffectiveDaysRemaining * 6 * 3600)</span>
+                    <span class="tdd-stat-lbl">Capacity</span>
+                </div>
+            </div>
         </div>
-        <div class="tdd-stat">
-            <span class="tdd-stat-val">@FilteredIssues.Count(i => i.StatusCategoryKey == "new")</span>
-            <span class="tdd-stat-lbl">To Do</span>
+        <div class="tdd-metric-group">
+            <div class="tdd-metric-group-label">Risk</div>
+            <div class="tdd-metric-group-body">
+                <div class="tdd-stat tdd-stat-risk-@RiskClass(Report.RiskLevel)">
+                    <span class="tdd-stat-val tdd-stat-risk-val-@RiskClass(Report.RiskLevel)">@RiskShort(Report.RiskLevel)</span>
+                    <span class="tdd-stat-lbl">Sprint Risk</span>
+                </div>
+                <div class="tdd-stat @(RiskIssues.Count > 0 ? "tdd-stat-danger" : "")">
+                    <span class="tdd-stat-val @(RiskIssues.Count > 0 ? "tdd-text-danger" : "")">@RiskIssues.Count</span>
+                    <span class="tdd-stat-lbl">At Risk</span>
+                </div>
+                <div class="tdd-stat @(OpenBugsCount > 0 ? "tdd-stat-warn" : "")">
+                    <span class="tdd-stat-val @(OpenBugsCount > 0 ? "tdd-text-warn" : "")">@OpenBugsCount</span>
+                    <span class="tdd-stat-lbl">Open Bugs</span>
+                </div>
+                <div class="tdd-stat @(StaleCount > 0 ? "tdd-stat-warn" : "")">
+                    <span class="tdd-stat-val @(StaleCount > 0 ? "tdd-text-warn" : "")">@StaleCount</span>
+                    <span class="tdd-stat-lbl">Stale</span>
+                </div>
+            </div>
         </div>
-        <div class="tdd-stat-divider"></div>
-        <div class="tdd-stat">
-            <span class="tdd-stat-val tdd-text-muted">@FmtH(FilteredTotalLoggedSeconds)<span class="tdd-stat-of"> / @FmtH(FilteredIssues.Sum(i => i.OriginalEstimateSeconds))</span></span>
-            <span class="tdd-stat-lbl">Logged / Planned</span>
-        </div>
-        <div class="tdd-stat @(OverCapacity ? "tdd-stat-danger" : "")">
-            <span class="tdd-stat-val @(OverCapacity ? "tdd-text-danger" : "")">@FmtH(FilteredRemainingSeconds)</span>
-            <span class="tdd-stat-lbl">Remaining</span>
-        </div>
-        <div class="tdd-stat">
-            <span class="tdd-stat-val">@FmtH(EffectiveDaysRemaining * 6 * 3600)</span>
-            <span class="tdd-stat-lbl">Capacity</span>
-        </div>
-        <div class="tdd-stat-divider"></div>
-        <div class="tdd-stat @(OpenBugsCount > 0 ? "tdd-stat-warn" : "")">
-            <span class="tdd-stat-val @(OpenBugsCount > 0 ? "tdd-text-warn" : "")">@OpenBugsCount</span>
-            <span class="tdd-stat-lbl">Open Bugs</span>
-        </div>
-        <div class="tdd-stat @(RiskIssues.Count > 0 ? "tdd-stat-danger" : "")">
-            <span class="tdd-stat-val @(RiskIssues.Count > 0 ? "tdd-text-danger" : "")">@RiskIssues.Count</span>
-            <span class="tdd-stat-lbl">At Risk</span>
-        </div>
-        <div class="tdd-stat tdd-stat-risk-@RiskClass(Report.RiskLevel)">
-            <span class="tdd-stat-val tdd-stat-risk-val-@RiskClass(Report.RiskLevel)">@RiskShort(Report.RiskLevel)</span>
-            <span class="tdd-stat-lbl">Sprint Risk</span>
+        <div class="tdd-metric-group">
+            <div class="tdd-metric-group-label">Quality</div>
+            <div class="tdd-metric-group-body">
+                <div class="tdd-stat @(ScopePct > 20 ? "tdd-stat-danger" : ScopePct > 10 ? "tdd-stat-warn" : "")">
+                    <span class="tdd-stat-val @(ScopePct > 20 ? "tdd-text-danger" : ScopePct > 10 ? "tdd-text-warn" : "")">@((int)ScopePct)%</span>
+                    <span class="tdd-stat-lbl">Scope Creep</span>
+                </div>
+                @{
+                    var logEffClass = LogEfficiencyPct == 0 ? "" : LogEfficiencyPct > 130 || LogEfficiencyPct < 50 ? "tdd-stat-danger" : LogEfficiencyPct > 110 ? "tdd-stat-warn" : "";
+                    var logEffValClass = LogEfficiencyPct == 0 ? "tdd-text-muted" : LogEfficiencyPct > 130 || LogEfficiencyPct < 50 ? "tdd-text-danger" : LogEfficiencyPct > 110 ? "tdd-text-warn" : "tdd-text-success";
+                }
+                <div class="tdd-stat @logEffClass">
+                    <span class="tdd-stat-val @logEffValClass">@(LogEfficiencyPct == 0 ? "—" : $"{(int)LogEfficiencyPct}%")</span>
+                    <span class="tdd-stat-lbl">Log Efficiency</span>
+                </div>
+                <div class="tdd-stat @(TotalQaRejections > 0 ? "tdd-stat-warn" : "")">
+                    <span class="tdd-stat-val @(TotalQaRejections > 0 ? "tdd-text-warn" : "")">@TotalQaRejections</span>
+                    <span class="tdd-stat-lbl">QA Rejections</span>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -209,8 +251,20 @@
                        @bind="FilterDateTo" @bind:after="OnFilterChanged" />
             </div>
         </div>
+        <div class="tdd-filter-group">
+            <label class="tdd-label">Exclude Epics</label>
+            <input class="tdd-input tdd-input-sm" placeholder="JM-123, JM-456…"
+                   @bind="_excludeEpicsInput" @bind:event="oninput"
+                   @bind:after="OnFilterChanged"
+                   title="Comma-separated epic keys to exclude from all calculations" />
+            @if (ExcludedEpicKeys.Count > 0)
+            {
+                <span class="tdd-exclude-badge">@ExcludedEpicKeys.Count excluded</span>
+            }
+        </div>
         @if (!string.IsNullOrEmpty(FilterAssignee) || !string.IsNullOrEmpty(FilterEpic) ||
-             !string.IsNullOrEmpty(FilterType) || FilterDateFrom.HasValue || FilterDateTo.HasValue)
+             !string.IsNullOrEmpty(FilterType) || FilterDateFrom.HasValue || FilterDateTo.HasValue ||
+             !string.IsNullOrEmpty(_excludeEpicsInput))
         {
             <button class="tdd-btn tdd-btn-ghost" @onclick="ClearFilters">Clear filters</button>
         }
@@ -1504,24 +1558,41 @@
 .tdd-dualbar-behind  { background: var(--tdd-danger); }
 .tdd-dualbar-pct     { font-size: 12px; font-weight: 600; width: 38px; text-align: right; flex-shrink: 0; }
 
-/* ── Stats strip ───────────────────────────────────────────────────────── */
-.tdd-stats-strip {
+/* ── Stats grid (grouped) ──────────────────────────────────────────────── */
+.tdd-stats-grid {
     display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
     background: var(--tdd-surface);
     border: 1px solid var(--tdd-border);
     border-radius: var(--tdd-radius);
-    padding: 10px 16px;
     margin-bottom: 14px;
     box-shadow: var(--tdd-shadow);
-    align-items: center;
+    overflow: hidden;
 }
-.tdd-stat       { display: flex; flex-direction: column; align-items: center; padding: 4px 12px; border-radius: 6px; }
+.tdd-metric-group {
+    flex: 1;
+    padding: 10px 16px 12px;
+    border-right: 1px solid var(--tdd-border);
+    min-width: 0;
+}
+.tdd-metric-group:last-child { border-right: none; }
+.tdd-metric-group-label {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--tdd-muted);
+    margin-bottom: 8px;
+}
+.tdd-metric-group-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+    align-items: flex-end;
+}
+.tdd-stat       { display: flex; flex-direction: column; align-items: center; padding: 4px 10px; border-radius: 6px; }
 .tdd-stat-val   { font-size: 20px; font-weight: 700; color: var(--tdd-text); line-height: 1.15; }
 .tdd-stat-of    { font-size: 13px; font-weight: 400; color: var(--tdd-muted); }
 .tdd-stat-lbl   { font-size: 11px; color: var(--tdd-muted); margin-top: 1px; white-space: nowrap; }
-.tdd-stat-divider { width: 1px; background: var(--tdd-border); height: 36px; margin: 0 4px; }
 .tdd-stat-danger { background: #fef2f2; }
 .tdd-stat-warn  { background: #fffbeb; }
 .tdd-stat-risk-success { background: #f0fdf4; }
@@ -1547,7 +1618,8 @@
 .tdd-filter-group { display: flex; flex-direction: column; gap: 3px; }
 .tdd-date-range   { display: flex; align-items: center; gap: 6px; }
 .tdd-date-sep     { color: var(--tdd-muted); font-size: 12px; }
-.tdd-filter-count { font-size: 12px; color: var(--tdd-muted); margin-left: auto; align-self: center; }
+.tdd-filter-count  { font-size: 12px; color: var(--tdd-muted); margin-left: auto; align-self: center; }
+.tdd-exclude-badge { font-size: 11px; font-weight: 600; color: #92400e; background: #fef3c7; border: 1px solid #fde68a; border-radius: 10px; padding: 1px 7px; white-space: nowrap; }
 
 /* ── Tabs ──────────────────────────────────────────────────────────────── */
 .tdd-tabs {
@@ -1879,11 +1951,18 @@ th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
     private List<SprintIssue> IssuesWithDueDate => FilteredIssues.Where(i => i.DueDate.HasValue).ToList();
 
     // ── Filters ─────────────────────────────────────────────────────────────
-    private string FilterAssignee = "";
-    private string FilterEpic     = "";
-    private string FilterType     = "";
-    private string AssigneeSearch  = "";
-    private string EpicSearch      = "";
+    private string FilterAssignee    = "";
+    private string FilterEpic        = "";
+    private string FilterType        = "";
+    private string AssigneeSearch    = "";
+    private string EpicSearch        = "";
+    private string _excludeEpicsInput = "";
+
+    private HashSet<string> ExcludedEpicKeys =>
+        _excludeEpicsInput
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(k => k.ToUpperInvariant())
+            .ToHashSet();
     private DateTime? FilterDateFrom;
     private DateTime? FilterDateTo;
 
@@ -1904,6 +1983,7 @@ th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
 
     private List<SprintIssue> FilteredIssues => Report?.Issues
         .Where(i =>
+            (ExcludedEpicKeys.Count == 0 || !ExcludedEpicKeys.Contains((i.EpicKey ?? "").ToUpperInvariant())) &&
             (string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee) &&
             (string.IsNullOrEmpty(FilterEpic)     || i.EpicKey  == FilterEpic) &&
             (string.IsNullOrEmpty(FilterType)     || string.Equals(i.IssueType, FilterType, StringComparison.OrdinalIgnoreCase)) &&
@@ -1956,6 +2036,17 @@ th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
 
     private int OpenBugsCount =>
         FilteredBugs.Count(i => i.StatusCategoryKey != "done");
+
+    private double LogEfficiencyPct
+    {
+        get
+        {
+            var planned = FilteredIssues.Sum(i => i.OriginalEstimateSeconds);
+            return planned == 0 ? 0 : Math.Round(FilteredTotalLoggedSeconds * 100.0 / planned, 0);
+        }
+    }
+
+    private int TotalQaRejections => FilteredIssues.Sum(i => i.QaRejectedCount);
 
     // ── Breakdown dictionaries ──────────────────────────────────────────────
     private record BreakdownRow(int Total, int Done);
@@ -2306,14 +2397,15 @@ th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
 
     private void ClearFilters()
     {
-        FilterAssignee = "";
-        FilterEpic     = "";
-        FilterType     = "";
-        AssigneeSearch = "";
-        EpicSearch     = "";
-        FilterDateFrom = null;
-        FilterDateTo   = null;
-        _renderCharts  = true;
+        FilterAssignee      = "";
+        FilterEpic          = "";
+        FilterType          = "";
+        AssigneeSearch      = "";
+        EpicSearch          = "";
+        FilterDateFrom      = null;
+        FilterDateTo        = null;
+        _excludeEpicsInput  = "";
+        _renderCharts       = true;
     }
 
     private async Task SwitchTab(string tab)

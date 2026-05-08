@@ -428,8 +428,8 @@ public class JiraService : IJiraService
                         Comment = ExtractAdfText(wl)
                     };
                     if (wl.TryGetProperty("started", out var started) &&
-                        DateTime.TryParse(started.GetString(), out var dt))
-                        entry.Started = dt;
+                        DateTimeOffset.TryParse(started.GetString(), out var dto))
+                        entry.Started = dto.DateTime;   // preserves original local date from Jira's timezone offset
                     issue.Worklogs.Add(entry);
                 }
                 // Jira returns at most 20 worklogs in search responses — flag for re-fetch if truncated
@@ -503,8 +503,8 @@ public class JiraService : IJiraService
                     Comment = ExtractAdfText(wl)
                 };
                 if (wl.TryGetProperty("started", out var started) &&
-                    DateTime.TryParse(started.GetString(), out var dt))
-                    entry.Started = dt;
+                    DateTimeOffset.TryParse(started.GetString(), out var dto))
+                    entry.Started = dto.DateTime;   // preserves original local date from Jira's timezone offset
                 issue.Worklogs.Add(entry);
             }
         }
@@ -557,7 +557,7 @@ public class JiraService : IJiraService
 
         var jql = Uri.EscapeDataString(
             $"issueType = Bug AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate";
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate,duedate";
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, truncated) = ParseSprintReport(json, "");
         await FetchMissingWorklogsAsync(report, truncated);
@@ -568,6 +568,16 @@ public class JiraService : IJiraService
             issue.EpicName = epicSummary;
         }
 
+        return report;
+    }
+
+    public async Task<SprintReport> GetPriorityBugsAsync()
+    {
+        var jql = Uri.EscapeDataString(
+            "project = JM AND \"Customers Jimpisoft[Dropdown]\" is not EMPTY AND issuetype = Bug AND status not in (Done, Rejected) AND priority in (Highest) AND createdDate <= -7d AND \"JS Project[Radio Buttons]\" = \"Rentway Pro\"");
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,created,duedate";
+        var json = await FetchAllPagesAsync(jql, fields);
+        var (report, _) = ParseSprintReport(json, "");
         return report;
     }
 

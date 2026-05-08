@@ -524,6 +524,10 @@
                                                     }
                                                     else
                                                     {
+                                                        var isInProgress = string.Equals(row.Status, "in progress", StringComparison.OrdinalIgnoreCase);
+                                                        var isStaleActivity = isInProgress &&
+                                                            (!row.LastActivityDate.HasValue ||
+                                                             (DateTime.Now - row.LastActivityDate.Value).TotalHours > 24);
                                                         <td class="rpt-td rpt-td-key">
                                                             <span class="rpt-jira-key">@row.Key</span>
                                                         </td>
@@ -540,7 +544,8 @@
                                                         <td class="rpt-td rpt-td-feasible">
                                                             <span class="feas-badge @GetFeasibilityClass(row)">@GetFeasibilityLabel(row)</span>
                                                         </td>
-                                                        <td class="rpt-td rpt-td-activity">
+                                                        <td class="rpt-td rpt-td-activity @(isStaleActivity ? "rpt-activity-stale" : "")"
+                                                            title="@(isStaleActivity ? "In Progress — no activity in the last 24h" : "")">
                                                             @if (row.LastActivityDate.HasValue)
                                                             {
                                                                 <span>@row.LastActivityDate.Value.ToString("dd MMM, HH:mm")</span>
@@ -4172,6 +4177,7 @@ private static decimal ParseJiraDurationToHours(string? input)
     .rpt-td-feasible { text-align: center; }
     .rpt-td-activity { font-size: 12px; color: #374151; white-space: nowrap; }
     .rpt-activity-never { color: #9ca3af; font-style: italic; }
+    .rpt-activity-stale { background: #fee2e2 !important; color: #991b1b; font-weight: 600; }
 
     .feas-badge {
         display: inline-block;

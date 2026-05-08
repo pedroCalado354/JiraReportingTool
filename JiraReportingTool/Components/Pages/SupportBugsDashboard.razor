@@ -1,0 +1,1706 @@
+@page "/support-bugs"
+@rendermode InteractiveServer
+@using JiraReportingTool.Models
+@using ClosedXML.Excel
+@using System.IO
+@inject IJiraService JiraService
+@inject IConfiguration Config
+@inject IJSRuntime JS
+
+<!-- ═══════════════════ HEADER ═══════════════════ -->
+<div class="sb-root">
+
+    <div class="sb-load-bar">
+        <div class="sb-load-inner">
+            <div class="sb-load-title-block">
+                <div class="sb-load-title-row">
+                    <span class="sb-load-title">Support Bugs</span>
+                    @if (!string.IsNullOrEmpty(_loadedEpicKey))
+                    {
+                        <a class="sb-epic-badge" href="@_jiraBase/browse/@_loadedEpicKey" target="_blank" rel="noopener noreferrer">
+                            @_loadedEpicKey ↗
+                        </a>
+                    }
+                </div>
+                <span class="sb-load-sub">Health, time logged &amp; sprint progress</span>
+            </div>
+
+            <div class="sb-cfg-group">
+                <label class="sb-cfg-label">Epic Key</label>
+                <input class="sb-input sb-epic-input" placeholder="e.g. JM-16560" @bind="_epicKeyInput" @bind:event="oninput"
+                       @onkeydown="@(async e => { if (e.Key == "Enter") await LoadAsync(); })" />
+            </div>
+            <div class="sb-cfg-group">
+                <label class="sb-cfg-label">Sprint Start</label>
+                <InputDate class="sb-input sb-input-date" @bind-Value="_sprintStart" />
+            </div>
+            <div class="sb-cfg-group">
+                <label class="sb-cfg-label">Sprint End</label>
+                <InputDate class="sb-input sb-input-date" @bind-Value="_sprintEnd" />
+            </div>
+
+            <div class="sb-load-actions">
+                <button class="sb-btn sb-btn-primary" @onclick="LoadAsync" disabled="@(_loading || string.IsNullOrWhiteSpace(_epicKeyInput))">
+                    @if (_loading) { <span class="sb-spinner"></span> } <span>Load Bugs</span>
+                </button>
+                @if (_bugs.Count > 0)
+                {
+                    <button class="sb-btn sb-btn-ghost" @onclick="ExportToExcelAsync" title="Export to Excel">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                            <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                        </svg>
+                        Export .xlsx
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <div class="sb-error">@_errorMessage</div>
+    }
+
+    @if (_bugs.Count > 0)
+    {
+        <!-- ═══════════════════ STATS STRIP ═══════════════════ -->
+        <div class="sb-metrics">
+            <div class="sb-metric sb-metric-neutral">
+                <div class="sb-metric-val">@TotalCount</div>
+                <div class="sb-metric-lbl">Total Bugs</div>
+            </div>
+            <div class="sb-metric sb-metric-green">
+                <div class="sb-metric-val">@DoneCount <span class="sb-metric-pct">@($"{DonePct:0}%")</span></div>
+                <div class="sb-metric-lbl">Done</div>
+            </div>
+            <div class="sb-metric sb-metric-blue">
+                <div class="sb-metric-val">@InProgressCount</div>
+                <div class="sb-metric-lbl">In Progress</div>
+            </div>
+            <div class="sb-metric @(OverdueCount > 0 ? "sb-metric-red" : "sb-metric-neutral")">
+                <div class="sb-metric-val">@OverdueCount</div>
+                <div class="sb-metric-lbl">Overdue</div>
+            </div>
+            <div class="sb-metric @(AtRiskCount > 0 ? "sb-metric-amber" : "sb-metric-neutral")">
+                <div class="sb-metric-val">@AtRiskCount</div>
+                <div class="sb-metric-lbl">At Risk</div>
+            </div>
+            <div class="sb-metric @(NoDueDateCount > 0 ? "sb-metric-amber" : "sb-metric-neutral")">
+                <div class="sb-metric-val">@NoDueDateCount</div>
+                <div class="sb-metric-lbl">No Due Date</div>
+            </div>
+            <div class="sb-metric-divider"></div>
+            <div class="sb-metric sb-metric-time">
+                <div class="sb-metric-val sb-metric-val-sm">@FormatSeconds(TotalSprintSeconds)</div>
+                <div class="sb-metric-lbl">Sprint Logged</div>
+            </div>
+            <div class="sb-metric sb-metric-time">
+                <div class="sb-metric-val sb-metric-val-sm">@FormatSeconds(TotalLoggedSeconds)</div>
+                <div class="sb-metric-lbl">Total Logged</div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════ FILTER BAR ═══════════════════ -->
+        <div class="sb-filters-panel">
+            <div class="sb-filter-row">
+                <span class="sb-filter-label">Assignee</span>
+                <div class="sb-filter-chips">
+                    <button class="sb-chip-btn @(_selectedAssignees.Count == 0 ? "active" : "")" @onclick="() => _selectedAssignees.Clear()">All</button>
+                    @foreach (var name in AllAssignees)
+                    {
+                        <button class="sb-chip-btn @(_selectedAssignees.Contains(name) ? "active" : "")"
+                                title="@name"
+                                @onclick="() => ToggleAssignee(name)">@GetShortName(name)</button>
+                    }
+                </div>
+            </div>
+            <div class="sb-filter-sep"></div>
+            <div class="sb-filter-row sb-filter-row-inline">
+                <div class="sb-filter-inline-group">
+                    <span class="sb-filter-label">Status</span>
+                    <div class="sb-filter-chips">
+                        @foreach (var s in new[] { "all", "In Progress", "To Do", "Done", "On Hold" })
+                        {
+                            <button class="sb-chip-btn @(_statusFilter == s ? "active" : "")" @onclick="() => _statusFilter = s">
+                                @(s == "all" ? "All" : s)
+                            </button>
+                        }
+                    </div>
+                </div>
+                <div class="sb-filter-inline-sep"></div>
+                <div class="sb-filter-inline-group">
+                    <span class="sb-filter-label">Health</span>
+                    <div class="sb-filter-chips">
+                        @foreach (var (key, label) in new[] { ("all","All"), ("overdue","Overdue"), ("at-risk","At Risk"), ("on-track","On Track"), ("no-due-date","No Due Date"), ("done","Done") })
+                        {
+                            <button class="sb-chip-btn sb-chip-health-@key @(_healthFilter == key ? "active" : "")" @onclick="() => _healthFilter = key">@label</button>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════════ ASSIGNEE SUMMARY ═══════════════════ -->
+        <div class="sb-section">
+            <div class="sb-section-header" @onclick="() => _showAssigneeSummary = !_showAssigneeSummary">
+                <span class="sb-section-toggle">@(_showAssigneeSummary ? "▾" : "▸")</span>
+                <span class="sb-section-title">Assignee Summary</span>
+                <span class="sb-section-sub">@AllAssignees.Count() members · sprint: @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</span>
+            </div>
+            @if (_showAssigneeSummary)
+            {
+                <div class="sb-assignee-grid">
+                    @foreach (var grp in AssigneeSummaries)
+                    {
+                        var acPct = grp.Total > 0 ? grp.Done * 100 / grp.Total : 0;
+                        <div class="sb-assignee-card">
+                            <div class="sb-ac-head">
+                                <div class="sb-ac-avatar" style="background:@GetAvatarColor(grp.Name)">@GetInitials(grp.Name)</div>
+                                <div class="sb-ac-head-info">
+                                    <div class="sb-ac-name">@grp.Name</div>
+                                    <div class="sb-ac-pct-label">@acPct% complete · @grp.Total bugs</div>
+                                </div>
+                            </div>
+                            <div class="sb-ac-progress">
+                                <div class="sb-ac-progress-fill" style="width:@acPct%"></div>
+                            </div>
+                            <div class="sb-ac-chips">
+                                @if (grp.Overdue > 0)    { <span class="ac-chip ac-chip-red">@grp.Overdue overdue</span> }
+                                @if (grp.AtRisk > 0)     { <span class="ac-chip ac-chip-amber">@grp.AtRisk at risk</span> }
+                                @if (grp.InProgress > 0) { <span class="ac-chip ac-chip-blue">@grp.InProgress active</span> }
+                                @if (grp.NoDueDate > 0)  { <span class="ac-chip ac-chip-gray">@grp.NoDueDate no date</span> }
+                                <span class="ac-chip ac-chip-green">@grp.Done done</span>
+                            </div>
+                            <div class="sb-ac-time">
+                                <span><span class="sb-ac-time-lbl">Sprint</span> @FormatSeconds(grp.SprintSeconds)</span>
+                                <span><span class="sb-ac-time-lbl">Total</span> @FormatSeconds(grp.TotalSeconds)</span>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <!-- ═══════════════════ TABS ═══════════════════ -->
+        <div class="sb-tabs">
+            <button class="sb-tab @(_activeTab == "bugs" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "bugs"'>
+                Bugs
+                <span class="sb-tab-badge sb-tab-badge-neutral">@FilteredBugs.Count()</span>
+            </button>
+            <button class="sb-tab @(_activeTab == "calendar" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "calendar"'>
+                Calendar
+                @if (BugsWithDueDate.Count > 0) { <span class="sb-tab-badge">@BugsWithDueDate.Count</span> }
+            </button>
+            <button class="sb-tab @(_activeTab == "priority" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "priority"'>
+                Priority
+                @if (_priorityBugs.Count > 0) { <span class="sb-tab-badge">@_priorityBugs.Count</span> }
+            </button>
+        </div>
+
+        <!-- ═══════════════════ BUGS TAB ═══════════════════ -->
+        @if (_activeTab == "bugs")
+        {
+        <div class="sb-section">
+            <div class="sb-table-wrap">
+                <table class="sb-table">
+                    <thead>
+                        <tr>
+                            <th class="sb-th sb-th-pri sortable @SI("pri")" @onclick='() => Sort("pri")' title="Priority">P</th>
+                            <th class="sb-th sb-th-key sortable @SI("key")" @onclick='() => Sort("key")'>Key</th>
+                            <th class="sb-th sb-th-title sortable @SI("title")" @onclick='() => Sort("title")'>Title</th>
+                            <th class="sb-th sb-th-assignee sortable @SI("assignee")" @onclick='() => Sort("assignee")'>Assignee</th>
+                            <th class="sb-th sb-th-status sortable @SI("status")" @onclick='() => Sort("status")'>Status</th>
+                            <th class="sb-th sb-th-due sortable @SI("due")" @onclick='() => Sort("due")'>Due Date</th>
+                            <th class="sb-th sb-th-forecast">Forecast</th>
+                            <th class="sb-th sb-th-est sortable @SI("est")" @onclick='() => Sort("est")'>Orig Est</th>
+                            <th class="sb-th sb-th-est sortable @SI("logged")" @onclick='() => Sort("logged")'>Logged</th>
+                            <th class="sb-th sb-th-est">Sprint</th>
+                            <th class="sb-th sb-th-est sortable @SI("rem")" @onclick='() => Sort("rem")'>Remaining</th>
+                            <th class="sb-th sb-th-pct">%</th>
+                            <th class="sb-th sb-th-activity sortable @SI("activity")" @onclick='() => Sort("activity")'>Last Activity</th>
+                            <th class="sb-th sb-th-expand"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var bug in FilteredBugs)
+                        {
+                            var health   = GetHealth(bug);
+                            var forecast = GetForecast(bug);
+                            var lastAct  = GetLastActivity(bug);
+                            var stale    = IsStale(bug);
+                            var sprint   = GetSprintTimeSeconds(bug);
+                            var isExpanded = _expandedKeys.Contains(bug.Key);
+                            var sprintWorklogs = GetSprintWorklogs(bug);
+
+                            <tr class="sb-row @(isExpanded ? "sb-row-expanded" : "")">
+                                <td class="sb-td sb-td-pri">
+                                    <span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span>
+                                </td>
+                                <td class="sb-td sb-td-key">
+                                    <a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a>
+                                </td>
+                                <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                <td class="sb-td sb-td-status">
+                                    <span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span>
+                                </td>
+                                <td class="sb-td sb-td-due @GetDueCellClass(health)">
+                                    @if (bug.DueDate.HasValue)
+                                    {
+                                        <span class="sb-due-date">@bug.DueDate.Value.ToString("dd MMM")</span>
+                                        <span class="sb-due-delta @GetDueDeltaClass(health)">@GetDueDelta(bug)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="sb-no-due">—</span>
+                                    }
+                                </td>
+                                <td class="sb-td sb-td-forecast">
+                                    <span class="sb-forecast-badge @GetForecastClass(forecast)">@GetForecastLabel(forecast)</span>
+                                </td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(bug.OriginalEstimateSeconds)</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                                <td class="sb-td sb-td-est @(sprint > 0 ? "sb-sprint-time" : "")">@(sprint > 0 ? FormatSeconds(sprint) : "—")</td>
+                                <td class="sb-td sb-td-est">@(bug.RemainingEstimateSeconds > 0 ? FormatSeconds(bug.RemainingEstimateSeconds) : "—")</td>
+                                <td class="sb-td sb-td-pct">
+                                    @if (bug.OriginalEstimateSeconds > 0)
+                                    {
+                                        var pct = Math.Min(100, bug.TimeSpentSeconds * 100 / bug.OriginalEstimateSeconds);
+                                        <span class="sb-pct-bar-wrap" title="@pct% logged vs original estimate">
+                                            <span class="sb-pct-bar" style="width:@pct%"></span>
+                                            <span class="sb-pct-label">@pct%</span>
+                                        </span>
+                                    }
+                                    else { <span class="sb-no-due">—</span> }
+                                </td>
+                                <td class="sb-td @(stale ? "sb-td-stale" : "sb-td-activity")">
+                                    @if (lastAct.HasValue)
+                                    {
+                                        <span title="@(stale ? "No activity in the last 24h" : "")">@lastAct.Value.ToString("dd MMM, HH:mm")</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="sb-never">Never</span>
+                                    }
+                                </td>
+                                <td class="sb-td sb-td-expand">
+                                    @if (bug.Worklogs.Count > 0)
+                                    {
+                                        <button class="btn small sb-expand-btn" @onclick="() => ToggleRow(bug.Key)" title="@(isExpanded ? "Collapse" : $"{bug.Worklogs.Count} worklogs")">
+                                            @(isExpanded ? "▲" : $"▼ {bug.Worklogs.Count}")
+                                        </button>
+                                    }
+                                </td>
+                            </tr>
+
+                            @if (isExpanded)
+                            {
+                                <tr class="sb-worklog-row">
+                                    <td colspan="14" class="sb-worklog-cell">
+                                        <div class="sb-worklog-wrap">
+                                            <div class="sb-worklog-header">
+                                                <span>All Worklogs (@bug.Worklogs.Count)</span>
+                                                @if (sprintWorklogs.Count > 0 && sprintWorklogs.Count < bug.Worklogs.Count)
+                                                {
+                                                    <span class="sb-wl-sprint-note">@sprintWorklogs.Count in sprint period (@FormatSeconds(sprintWorklogs.Sum(w => w.TimeSpentSeconds)))</span>
+                                                }
+                                            </div>
+                                            <table class="sb-wl-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Date</th>
+                                                        <th>Author</th>
+                                                        <th>Time</th>
+                                                        <th>Comment</th>
+                                                        <th>Sprint?</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    @foreach (var wl in bug.Worklogs.OrderByDescending(w => w.Started))
+                                                    {
+                                                        var inSprint = IsInSprintPeriod(wl);
+                                                        <tr class="@(inSprint ? "sb-wl-in-sprint" : "")">
+                                                            <td>@wl.Started.ToString("dd MMM yyyy, HH:mm")</td>
+                                                            <td>@wl.Author</td>
+                                                            <td class="sb-wl-time">@wl.TimeSpent</td>
+                                                            <td class="sb-wl-comment">@(string.IsNullOrEmpty(wl.Comment) ? "—" : wl.Comment)</td>
+                                                            <td class="sb-wl-sprint-flag">@(inSprint ? "✓" : "")</td>
+                                                        </tr>
+                                                    }
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        }
+
+                        @if (!FilteredBugs.Any())
+                        {
+                            <tr><td colspan="14" class="sb-empty">No bugs match the current filters.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        } <!-- end bugs tab -->
+
+        <!-- ═══════════════════ CALENDAR TAB ═══════════════════ -->
+        @if (_activeTab == "calendar")
+        {
+            var firstDay    = new DateTime(_calYear, _calMonth, 1);
+            var daysInMonth = DateTime.DaysInMonth(_calYear, _calMonth);
+            var startOffset = ((int)firstDay.DayOfWeek + 6) % 7;
+            var totalCells  = startOffset + daysInMonth;
+            var calRows     = (int)Math.Ceiling(totalCells / 7.0);
+            var isCurMonth  = _calYear == DateTime.Today.Year && _calMonth == DateTime.Today.Month;
+            var issuesByDay = BugsWithDueDate
+                .Where(i => i.DueDate!.Value.Year == _calYear && i.DueDate.Value.Month == _calMonth)
+                .GroupBy(i => i.DueDate!.Value.Day)
+                .ToDictionary(g => g.Key, g => g.ToList());
+            var monthTotal  = issuesByDay.Values.Sum(l => l.Count);
+
+            <div class="sb-section sb-cal-root">
+                <div class="sb-cal-header">
+                    <button class="sb-btn sb-btn-ghost sb-cal-nav" @onclick="CalPrevMonth">&#8249;</button>
+                    <span class="sb-cal-month-label">@firstDay.ToString("MMMM yyyy")</span>
+                    <button class="sb-btn sb-btn-ghost sb-cal-nav" @onclick="CalNextMonth">&#8250;</button>
+                    @if (monthTotal > 0)
+                    {
+                        <span class="sb-cal-badge">@monthTotal bug@(monthTotal == 1 ? "" : "s") due</span>
+                    }
+                    else
+                    {
+                        <span class="sb-cal-empty-month">No bugs with due dates in this month</span>
+                    }
+                </div>
+                <div class="sb-cal-grid-wrap">
+                    <table class="sb-cal-table">
+                        <thead>
+                            <tr>
+                                @foreach (var dow in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" })
+                                {
+                                    <th class="sb-cal-th">@dow</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int r = 0; r < calRows; r++)
+                            {
+                                <tr>
+                                    @for (int c = 0; c < 7; c++)
+                                    {
+                                        var idx       = r * 7 + c;
+                                        var dayNum    = idx - startOffset + 1;
+                                        var isValid   = dayNum >= 1 && dayNum <= daysInMonth;
+                                        var isToday   = isValid && isCurMonth && dayNum == DateTime.Today.Day;
+                                        var isWeekend = c >= 5;
+                                        var dayIssues = isValid && issuesByDay.TryGetValue(dayNum, out var di) ? di : [];
+
+                                        <td class="sb-cal-cell @(!isValid ? "sb-cal-blank" : "") @(isWeekend ? "sb-cal-weekend" : "") @(isToday ? "sb-cal-today" : "")">
+                                            @if (isValid)
+                                            {
+                                                <div class="sb-cal-daynum @(isToday ? "sb-cal-daynum-today" : "")">@dayNum</div>
+                                                @foreach (var issue in dayIssues.OrderBy(i => i.StatusCategoryKey).ThenBy(i => i.Key))
+                                                {
+                                                    <a class="sb-cal-chip sb-cal-chip-@(issue.StatusCategoryKey)"
+                                                       href="@_jiraBase/browse/@issue.Key" target="_blank" rel="noopener noreferrer"
+                                                       title="@issue.Key — @issue.Summary&#10;Assignee: @issue.Assignee&#10;Status: @issue.Status">
+                                                        <span class="sb-cal-chip-key">@issue.Key</span>
+                                                        <span class="sb-cal-chip-sum">@(issue.Summary.Length > 30 ? issue.Summary[..30] + "…" : issue.Summary)</span>
+                                                    </a>
+                                                }
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        } <!-- end calendar tab -->
+
+        <!-- ═══════════════════ PRIORITY TAB ═══════════════════ -->
+        @if (_activeTab == "priority")
+        {
+        <div class="sb-section">
+            <div class="sb-section-header" style="cursor:default">
+                <span class="sb-section-title">Priority Bugs — Rentway Pro</span>
+                <span class="sb-section-sub">Highest priority · open &gt; 7 days · @_priorityBugs.Count ticket@(_priorityBugs.Count == 1 ? "" : "s")</span>
+            </div>
+            <div class="sb-table-wrap">
+                <table class="sb-table">
+                    <thead>
+                        <tr>
+                            <th class="sb-th sb-th-pri sortable @SIPri("pri")" @onclick='() => SortPri("pri")' title="Priority">P</th>
+                            <th class="sb-th sb-th-key sortable @SIPri("key")" @onclick='() => SortPri("key")'>Key</th>
+                            <th class="sb-th sb-th-title sortable @SIPri("title")" @onclick='() => SortPri("title")'>Title</th>
+                            <th class="sb-th sb-th-assignee sortable @SIPri("assignee")" @onclick='() => SortPri("assignee")'>Assignee</th>
+                            <th class="sb-th sb-th-status sortable @SIPri("status")" @onclick='() => SortPri("status")'>Status</th>
+                            <th class="sb-th sb-th-est sortable @SIPri("days")" @onclick='() => SortPri("days")'>Days Open</th>
+                            <th class="sb-th sb-th-due sortable @SIPri("due")" @onclick='() => SortPri("due")'>Due Date</th>
+                            <th class="sb-th sb-th-est sortable @SIPri("logged")" @onclick='() => SortPri("logged")'>Logged</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var bug in FilteredPriorityBugs)
+                        {
+                            var daysOpen = GetDaysOpen(bug);
+                            var health   = GetHealth(bug);
+                            <tr class="sb-row">
+                                <td class="sb-td sb-td-pri">
+                                    <span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span>
+                                </td>
+                                <td class="sb-td sb-td-key">
+                                    <a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a>
+                                </td>
+                                <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                <td class="sb-td sb-td-status">
+                                    <span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span>
+                                </td>
+                                <td class="sb-td sb-td-est @(daysOpen > 30 ? "kpi-red" : daysOpen > 14 ? "kpi-amber" : "")">@daysOpen d</td>
+                                <td class="sb-td sb-td-due @GetDueCellClass(health)">
+                                    @if (bug.DueDate.HasValue)
+                                    {
+                                        <span class="sb-due-date">@bug.DueDate.Value.ToString("dd MMM")</span>
+                                        <span class="sb-due-delta @GetDueDeltaClass(health)">@GetDueDelta(bug)</span>
+                                    }
+                                    else { <span class="sb-no-due">—</span> }
+                                </td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                            </tr>
+                        }
+                        @if (!FilteredPriorityBugs.Any())
+                        {
+                            <tr><td colspan="8" class="sb-empty">No priority bugs found.</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        } <!-- end priority tab -->
+
+    }
+    else if (!_loading && !string.IsNullOrEmpty(_loadedEpicKey))
+    {
+        <div class="sb-empty-state">No bugs found for epic <strong>@_loadedEpicKey</strong>.</div>
+    }
+    else if (!_loading && string.IsNullOrEmpty(_loadedEpicKey))
+    {
+        <div class="sb-empty-state">Enter a support bug epic key above and click <strong>Load Bugs</strong> to get started.</div>
+    }
+
+</div>
+
+@code {
+
+    // ── State ──────────────────────────────────────────────────────────────────
+    private string   _epicKeyInput        = "";
+    private string   _loadedEpicKey       = "";
+    private DateOnly _sprintStart         = DateOnly.FromDateTime(DateTime.Today.AddDays(-13));
+    private DateOnly _sprintEnd           = DateOnly.FromDateTime(DateTime.Today);
+    private bool     _loading             = false;
+    private string   _errorMessage        = "";
+    private bool     _showAssigneeSummary = true;
+
+    private List<SprintIssue>  _bugs              = new();
+    private List<SprintIssue>  _priorityBugs      = new();
+    private HashSet<string>    _expandedKeys      = new();
+    private HashSet<string>    _selectedAssignees = new();
+    private string             _statusFilter      = "all";
+    private string             _healthFilter      = "all";
+    private string             _activeTab         = "bugs";
+
+    // ── Sort state ────────────────────────────────────────────────────────────
+    private string _sortCol = "";
+    private bool   _sortAsc = true;
+    private void Sort(string col) { if (_sortCol == col) _sortAsc = !_sortAsc; else { _sortCol = col; _sortAsc = true; } }
+    private string SI(string col) => _sortCol == col ? (_sortAsc ? "sort-asc" : "sort-desc") : "";
+
+    // ── Priority sort state ───────────────────────────────────────────────────
+    private string _sortColPri = "";
+    private bool   _sortAscPri = true;
+    private void SortPri(string col) { if (_sortColPri == col) _sortAscPri = !_sortAscPri; else { _sortColPri = col; _sortAscPri = true; } }
+    private string SIPri(string col) => _sortColPri == col ? (_sortAscPri ? "sort-asc" : "sort-desc") : "";
+
+    // ── Calendar state ────────────────────────────────────────────────────────
+    private int _calYear  = DateTime.Today.Year;
+    private int _calMonth = DateTime.Today.Month;
+    private void CalPrevMonth() { if (_calMonth == 1) { _calMonth = 12; _calYear--; } else _calMonth--; }
+    private void CalNextMonth() { if (_calMonth == 12) { _calMonth = 1;  _calYear++; } else _calMonth++; }
+    private List<SprintIssue> BugsWithDueDate => FilteredBugs.Where(b => b.DueDate.HasValue).ToList();
+
+    private string _jiraBase => Config["Jira:BaseUrl"]?.TrimEnd('/') ?? "";
+
+    // ── Computed / Filtered ────────────────────────────────────────────────────
+    private IEnumerable<string> AllAssignees =>
+        _bugs.Select(b => b.Assignee ?? "Unassigned")
+             .Distinct()
+             .OrderBy(a => a);
+
+    private static readonly string[] PriorityOrder = ["Critical", "Highest", "High", "Medium", "Low", "Lowest"];
+
+    private IEnumerable<SprintIssue> FilteredBugs
+    {
+        get
+        {
+            var q = _bugs.AsEnumerable();
+            if (_selectedAssignees.Count > 0)
+                q = q.Where(b => _selectedAssignees.Contains(b.Assignee ?? "Unassigned"));
+            if (_statusFilter != "all")
+                q = q.Where(b => string.Equals(b.Status, _statusFilter, StringComparison.OrdinalIgnoreCase));
+            if (_healthFilter != "all")
+                q = q.Where(b => GetHealth(b) == _healthFilter);
+
+            return _sortCol switch
+            {
+                "pri"      => _sortAsc ? q.OrderBy(b => PriOrder(b))                           : q.OrderByDescending(b => PriOrder(b)),
+                "key"      => _sortAsc ? q.OrderBy(b => b.Key)                                 : q.OrderByDescending(b => b.Key),
+                "title"    => _sortAsc ? q.OrderBy(b => b.Summary)                             : q.OrderByDescending(b => b.Summary),
+                "assignee" => _sortAsc ? q.OrderBy(b => b.Assignee)                            : q.OrderByDescending(b => b.Assignee),
+                "status"   => _sortAsc ? q.OrderBy(b => b.Status)                              : q.OrderByDescending(b => b.Status),
+                "due"      => _sortAsc ? q.OrderBy(b => b.DueDate ?? DateTime.MaxValue)        : q.OrderByDescending(b => b.DueDate ?? DateTime.MinValue),
+                "est"      => _sortAsc ? q.OrderBy(b => b.OriginalEstimateSeconds)             : q.OrderByDescending(b => b.OriginalEstimateSeconds),
+                "logged"   => _sortAsc ? q.OrderBy(b => b.TimeSpentSeconds)                    : q.OrderByDescending(b => b.TimeSpentSeconds),
+                "rem"      => _sortAsc ? q.OrderBy(b => b.RemainingEstimateSeconds)            : q.OrderByDescending(b => b.RemainingEstimateSeconds),
+                "activity" => _sortAsc ? q.OrderBy(b => GetLastActivity(b) ?? DateTime.MinValue) : q.OrderByDescending(b => GetLastActivity(b) ?? DateTime.MaxValue),
+                _          => q.OrderBy(b => GetHealthOrder(b)).ThenBy(b => b.DueDate ?? DateTime.MaxValue).ThenBy(b => b.Key)
+            };
+        }
+    }
+
+    private static int PriOrder(SprintIssue b)
+    {
+        var idx = Array.FindIndex(PriorityOrder, p => p.Equals(b.Priority, StringComparison.OrdinalIgnoreCase));
+        return idx < 0 ? 99 : idx;
+    }
+
+    private IEnumerable<SprintIssue> FilteredPriorityBugs
+    {
+        get
+        {
+            var q = _priorityBugs.AsEnumerable();
+            return _sortColPri switch
+            {
+                "pri"      => _sortAscPri ? q.OrderBy(b => PriOrder(b))                    : q.OrderByDescending(b => PriOrder(b)),
+                "key"      => _sortAscPri ? q.OrderBy(b => b.Key)                          : q.OrderByDescending(b => b.Key),
+                "title"    => _sortAscPri ? q.OrderBy(b => b.Summary)                      : q.OrderByDescending(b => b.Summary),
+                "assignee" => _sortAscPri ? q.OrderBy(b => b.Assignee)                     : q.OrderByDescending(b => b.Assignee),
+                "status"   => _sortAscPri ? q.OrderBy(b => b.Status)                       : q.OrderByDescending(b => b.Status),
+                "days"     => _sortAscPri ? q.OrderByDescending(b => GetDaysOpen(b))       : q.OrderBy(b => GetDaysOpen(b)),
+                "due"      => _sortAscPri ? q.OrderBy(b => b.DueDate ?? DateTime.MaxValue) : q.OrderByDescending(b => b.DueDate ?? DateTime.MinValue),
+                "logged"   => _sortAscPri ? q.OrderBy(b => b.TimeSpentSeconds)             : q.OrderByDescending(b => b.TimeSpentSeconds),
+                _          => q.OrderBy(b => PriOrder(b)).ThenByDescending(b => GetDaysOpen(b))
+            };
+        }
+    }
+
+    private static int GetDaysOpen(SprintIssue b) =>
+        b.Created.HasValue ? (int)(DateTime.Today - b.Created.Value.Date).TotalDays : 0;
+
+    // ── Stats ──────────────────────────────────────────────────────────────────
+    private int    TotalCount       => _bugs.Count;
+    private int    DoneCount        => _bugs.Count(b => GetHealth(b) == "done");
+    private int    DonePct          => TotalCount > 0 ? DoneCount * 100 / TotalCount : 0;
+    private int    InProgressCount  => _bugs.Count(b => IsInProgress(b));
+    private int    OverdueCount     => _bugs.Count(b => GetHealth(b) == "overdue");
+    private int    AtRiskCount      => _bugs.Count(b => GetHealth(b) == "at-risk");
+    private int    NoDueDateCount   => _bugs.Count(b => GetHealth(b) == "no-due-date");
+    private int    TotalSprintSeconds => _bugs.Sum(b => GetSprintTimeSeconds(b));
+    private int    TotalLoggedSeconds => _bugs.Sum(b => b.TimeSpentSeconds);
+
+    // ── Assignee Summary ───────────────────────────────────────────────────────
+    private IEnumerable<AssigneeSummary> AssigneeSummaries =>
+        _bugs.GroupBy(b => b.Assignee ?? "Unassigned")
+             .Select(g => new AssigneeSummary
+             {
+                 Name        = g.Key,
+                 Total       = g.Count(),
+                 Done        = g.Count(b => GetHealth(b) == "done"),
+                 InProgress  = g.Count(b => IsInProgress(b)),
+                 Overdue     = g.Count(b => GetHealth(b) == "overdue"),
+                 AtRisk      = g.Count(b => GetHealth(b) == "at-risk"),
+                 NoDueDate   = g.Count(b => GetHealth(b) == "no-due-date"),
+                 SprintSeconds = g.Sum(b => GetSprintTimeSeconds(b)),
+                 TotalSeconds  = g.Sum(b => b.TimeSpentSeconds)
+             })
+             .OrderByDescending(a => a.Overdue)
+             .ThenByDescending(a => a.AtRisk)
+             .ThenBy(a => a.Name);
+
+    // ── Load ───────────────────────────────────────────────────────────────────
+    private async Task LoadAsync()
+    {
+        var key = _epicKeyInput.Trim().ToUpperInvariant();
+        if (string.IsNullOrEmpty(key)) return;
+
+        _loading      = true;
+        _errorMessage = "";
+        _bugs.Clear();
+        _priorityBugs.Clear();
+        _expandedKeys.Clear();
+        _selectedAssignees.Clear();
+        _statusFilter = "all";
+        _healthFilter = "all";
+        StateHasChanged();
+
+        try
+        {
+            var epicTask     = JiraService.GetEpicBugsAsync(key);
+            var priorityTask = JiraService.GetPriorityBugsAsync();
+            await Task.WhenAll(epicTask, priorityTask);
+
+            _bugs          = epicTask.Result.Issues ?? new();
+            _loadedEpicKey = key;
+            _priorityBugs  = priorityTask.Result.Issues ?? new();
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Failed to load bugs for {key}: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    // ── Health & Forecast ──────────────────────────────────────────────────────
+    private static bool IsDone(SprintIssue b) =>
+        b.StatusCategoryKey == "done" || string.Equals(b.Status, "done", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsInProgress(SprintIssue b) =>
+        b.StatusCategoryKey == "indeterminate" ||
+        string.Equals(b.Status, "in progress", StringComparison.OrdinalIgnoreCase);
+
+    private string GetHealth(SprintIssue b)
+    {
+        if (IsDone(b)) return "done";
+        if (!b.DueDate.HasValue) return "no-due-date";
+        var today = DateTime.Today;
+        if (b.DueDate.Value.Date < today) return "overdue";
+        if (b.DueDate.Value.Date <= today.AddDays(2)) return "at-risk";
+        return "on-track";
+    }
+
+    private int GetHealthOrder(SprintIssue b) => GetHealth(b) switch
+    {
+        "overdue"     => 0,
+        "at-risk"     => 1,
+        "no-due-date" => 2,
+        "on-track"    => 3,
+        "done"        => 4,
+        _             => 5
+    };
+
+    // Forecast: will the bug meet its deadline given remaining estimate?
+    private string GetForecast(SprintIssue b)
+    {
+        if (IsDone(b)) return "completed";
+        if (!b.DueDate.HasValue) return "no-due-date";
+
+        var health = GetHealth(b);
+        if (health == "overdue") return "missed";
+
+        // On Hold is always blocked
+        if (string.Equals(b.Status, "on hold", StringComparison.OrdinalIgnoreCase)) return "blocked";
+
+        var remainingSeconds = b.RemainingEstimateSeconds > 0
+            ? b.RemainingEstimateSeconds
+            : b.OriginalEstimateSeconds;
+
+        if (remainingSeconds <= 0) return "no-estimate";
+
+        var workingHoursLeft = CountWorkingHoursUntilDue(b.DueDate.Value) * 3600.0;
+        return remainingSeconds <= workingHoursLeft ? "will-meet" : "will-miss";
+    }
+
+    private static double CountWorkingHoursUntilDue(DateTime dueDate)
+    {
+        var d = DateTime.Today;
+        var days = 0;
+        while (d <= dueDate.Date)
+        {
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday) days++;
+            d = d.AddDays(1);
+        }
+        return days * 8.0;
+    }
+
+    // ── Due Date Display ───────────────────────────────────────────────────────
+    private static string GetDueCellClass(string health) => health switch
+    {
+        "overdue"     => "sb-due-overdue",
+        "at-risk"     => "sb-due-at-risk",
+        "on-track"    => "sb-due-ok",
+        "done"        => "sb-due-done",
+        _             => ""
+    };
+
+    private static string GetDueDeltaClass(string health) => health switch
+    {
+        "overdue"  => "sb-delta-red",
+        "at-risk"  => "sb-delta-amber",
+        "on-track" => "sb-delta-green",
+        _          => ""
+    };
+
+    private string GetDueDelta(SprintIssue b)
+    {
+        if (!b.DueDate.HasValue) return "";
+        var days = (b.DueDate.Value.Date - DateTime.Today).Days;
+        if (days < 0) return $"{-days}d overdue";
+        if (days == 0) return "due today";
+        if (days == 1) return "due tomorrow";
+        return $"{days}d left";
+    }
+
+    // ── Forecast Badge ─────────────────────────────────────────────────────────
+    private static string GetForecastClass(string f) => f switch
+    {
+        "completed"   => "fc-done",
+        "will-meet"   => "fc-meet",
+        "will-miss"   => "fc-miss",
+        "missed"      => "fc-miss",
+        "blocked"     => "fc-blocked",
+        "no-estimate" => "fc-noest",
+        "no-due-date" => "fc-nodue",
+        _             => "fc-nodue"
+    };
+
+    private static string GetForecastLabel(string f) => f switch
+    {
+        "completed"   => "Completed",
+        "will-meet"   => "Will Meet",
+        "will-miss"   => "Will Miss",
+        "missed"      => "Missed",
+        "blocked"     => "Blocked",
+        "no-estimate" => "No Estimate",
+        "no-due-date" => "No Due Date",
+        _             => "—"
+    };
+
+    // ── Status & Priority ──────────────────────────────────────────────────────
+    private static string GetStatusClass(string? status) => status?.ToLowerInvariant() switch
+    {
+        "dev ready"   => "status-dev-ready",
+        "in progress" => "status-in-progress",
+        "in review"   => "status-in-review",
+        "qa ready"    => "status-qa-ready",
+        "done"        => "status-done",
+        "on hold"     => "status-on-hold",
+        _             => "status-default"
+    };
+
+    private static string GetPriorityClass(string? p) => p?.ToLowerInvariant() switch
+    {
+        "highest" or "critical" => "pri-critical",
+        "high"                  => "pri-high",
+        "medium"                => "pri-medium",
+        "low"                   => "pri-low",
+        "lowest"                => "pri-lowest",
+        _                       => "pri-medium"
+    };
+
+    // ── Worklogs ───────────────────────────────────────────────────────────────
+    private int GetSprintTimeSeconds(SprintIssue b)
+    {
+        return b.Worklogs.Where(IsInSprintPeriod).Sum(w => w.TimeSpentSeconds);
+    }
+
+    private List<WorklogEntry> GetSprintWorklogs(SprintIssue b)
+    {
+        return b.Worklogs.Where(IsInSprintPeriod).OrderByDescending(w => w.Started).ToList();
+    }
+
+    private bool IsInSprintPeriod(WorklogEntry w)
+    {
+        var d = DateOnly.FromDateTime(w.Started);
+        return d >= _sprintStart && d <= _sprintEnd;
+    }
+
+    private static DateTime? GetLastActivity(SprintIssue b) =>
+        b.Worklogs.Count > 0 ? b.Worklogs.Max(w => w.Started) : null;
+
+    private bool IsStale(SprintIssue b) =>
+        IsInProgress(b) &&
+        (GetLastActivity(b) == null || (DateTime.Now - GetLastActivity(b)!.Value).TotalHours > 24);
+
+    // ── Filter Helpers ─────────────────────────────────────────────────────────
+    private void ToggleAssignee(string name)
+    {
+        if (!_selectedAssignees.Remove(name)) _selectedAssignees.Add(name);
+    }
+
+    private static string GetShortName(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length <= 1 ? name : parts[0];
+    }
+
+    private static string GetInitials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return "?";
+        if (parts.Length == 1) return parts[0][0].ToString().ToUpper();
+        return $"{parts[0][0]}{parts[^1][0]}".ToUpper();
+    }
+
+    private static string GetAvatarColor(string name)
+    {
+        var palette = new[] { "#6366f1","#8b5cf6","#ec4899","#14b8a6","#f59e0b","#10b981","#3b82f6","#ef4444","#f97316","#84cc16","#06b6d4","#a855f7" };
+        var hash = name.ToCharArray().Aggregate(0, (acc, c) => acc + c);
+        return palette[Math.Abs(hash) % palette.Length];
+    }
+
+    private void ToggleRow(string key)
+    {
+        if (!_expandedKeys.Remove(key)) _expandedKeys.Add(key);
+    }
+
+    // ── Formatting ─────────────────────────────────────────────────────────────
+    private static string FormatSeconds(int s)
+    {
+        if (s <= 0) return "—";
+        var h = s / 3600;
+        var m = (s % 3600) / 60;
+        return h > 0 ? (m > 0 ? $"{h}h {m}m" : $"{h}h") : $"{m}m";
+    }
+
+    // ── Excel Export ───────────────────────────────────────────────────────────
+    private async Task ExportToExcelAsync()
+    {
+        using var wb = new XLWorkbook();
+
+        var ws = wb.Worksheets.Add("Support Bugs");
+        var headers = new[] { "Key", "Title", "Assignee", "Status", "Priority", "Due Date", "Health", "Forecast",
+                               "Original Est", "Logged", "Sprint Logged", "Remaining", "% Done", "Last Activity" };
+        for (int c = 0; c < headers.Length; c++)
+        {
+            ws.Cell(1, c + 1).Value = headers[c];
+            ws.Cell(1, c + 1).Style.Font.Bold = true;
+        }
+
+        int row = 2;
+        foreach (var b in FilteredBugs)
+        {
+            var lastAct = GetLastActivity(b);
+            ws.Cell(row, 1).Value  = b.Key;
+            ws.Cell(row, 2).Value  = b.Summary;
+            ws.Cell(row, 3).Value  = b.Assignee ?? "";
+            ws.Cell(row, 4).Value  = b.Status ?? "";
+            ws.Cell(row, 5).Value  = b.Priority ?? "";
+            ws.Cell(row, 6).Value  = b.DueDate.HasValue ? b.DueDate.Value.ToString("yyyy-MM-dd") : "";
+            ws.Cell(row, 7).Value  = GetHealth(b);
+            ws.Cell(row, 8).Value  = GetForecastLabel(GetForecast(b));
+            ws.Cell(row, 9).Value  = FormatSeconds(b.OriginalEstimateSeconds);
+            ws.Cell(row, 10).Value = FormatSeconds(b.TimeSpentSeconds);
+            ws.Cell(row, 11).Value = FormatSeconds(GetSprintTimeSeconds(b));
+            ws.Cell(row, 12).Value = FormatSeconds(b.RemainingEstimateSeconds);
+            ws.Cell(row, 13).Value = b.OriginalEstimateSeconds > 0 ? $"{Math.Min(100, b.TimeSpentSeconds * 100 / b.OriginalEstimateSeconds)}%" : "";
+            ws.Cell(row, 14).Value = lastAct.HasValue ? lastAct.Value.ToString("dd MMM yyyy, HH:mm") : "Never";
+            row++;
+        }
+        ws.Columns().AdjustToContents();
+
+        var wsWl = wb.Worksheets.Add("Worklogs");
+        wsWl.Cell(1, 1).Value = "Key";    wsWl.Cell(1, 2).Value = "Date";
+        wsWl.Cell(1, 3).Value = "Author"; wsWl.Cell(1, 4).Value = "Time";
+        wsWl.Cell(1, 5).Value = "In Sprint"; wsWl.Cell(1, 6).Value = "Comment";
+        for (int c = 1; c <= 6; c++) wsWl.Cell(1, c).Style.Font.Bold = true;
+
+        int wlRow = 2;
+        foreach (var b in FilteredBugs)
+        {
+            foreach (var wl in b.Worklogs.OrderByDescending(w => w.Started))
+            {
+                wsWl.Cell(wlRow, 1).Value = b.Key;
+                wsWl.Cell(wlRow, 2).Value = wl.Started.ToString("yyyy-MM-dd HH:mm");
+                wsWl.Cell(wlRow, 3).Value = wl.Author;
+                wsWl.Cell(wlRow, 4).Value = wl.TimeSpent;
+                wsWl.Cell(wlRow, 5).Value = IsInSprintPeriod(wl) ? "Yes" : "";
+                wsWl.Cell(wlRow, 6).Value = wl.Comment ?? "";
+                wlRow++;
+            }
+        }
+        wsWl.Columns().AdjustToContents();
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        var base64   = Convert.ToBase64String(ms.ToArray());
+        var fileName = $"SupportBugs_{_loadedEpicKey}_{DateTime.Now:yyyyMMdd}.xlsx";
+        const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
+    }
+
+    // ── Inner types ────────────────────────────────────────────────────────────
+    private record AssigneeSummary
+    {
+        public string Name        { get; init; } = "";
+        public int    Total       { get; init; }
+        public int    Done        { get; init; }
+        public int    InProgress  { get; init; }
+        public int    Overdue     { get; init; }
+        public int    AtRisk      { get; init; }
+        public int    NoDueDate   { get; init; }
+        public int    SprintSeconds { get; init; }
+        public int    TotalSeconds  { get; init; }
+    }
+}
+
+<style>
+    /* ── Root ────────────────────────────────────────────────────── */
+    .sb-root {
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        max-width: 1600px;
+    }
+
+    /* ── Load bar (title + controls in one card) ─────────────────── */
+    .sb-load-bar {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 16px 20px;
+        box-shadow: var(--sh-xs);
+        margin-bottom: 0;
+    }
+
+    .sb-load-inner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 16px;
+    }
+
+    .sb-load-title-block {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-right: 8px;
+        align-self: center;
+    }
+
+    .sb-load-title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .sb-load-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--txt-1);
+        letter-spacing: -0.2px;
+    }
+
+    .sb-load-sub {
+        font-size: 12px;
+        color: var(--txt-3);
+    }
+
+    .sb-epic-badge {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--primary);
+        text-decoration: none;
+        background: var(--primary-light);
+        border: 1px solid var(--primary-border);
+        padding: 2px 10px;
+        border-radius: 20px;
+        transition: background 0.15s;
+    }
+    .sb-epic-badge:hover { background: #dbeafe; text-decoration: none; }
+
+    .sb-cfg-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .sb-cfg-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+    }
+
+    .sb-input {
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 13px;
+        font-family: inherit;
+        outline: none;
+        transition: border-color .15s, box-shadow .15s;
+        background: #fff;
+        color: var(--txt-1);
+    }
+    .sb-input:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.10);
+    }
+
+    .sb-epic-input { width: 130px; }
+    .sb-input-date { width: 148px; }
+
+    .sb-load-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .sb-btn {
+        border: none;
+        border-radius: 6px;
+        padding: 7px 16px;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: inherit;
+        cursor: pointer;
+        transition: opacity .15s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .sb-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .sb-btn:hover:not(:disabled) { opacity: .88; }
+
+    .sb-btn-primary { background: var(--primary); color: #fff; }
+    .sb-btn-ghost   { background: transparent; border: 1px solid #d1d5db; color: var(--txt-2); }
+    .sb-btn-ghost:hover:not(:disabled) { background: var(--surface-2); opacity: 1; }
+
+    .sb-spinner {
+        width: 13px; height: 13px;
+        border: 2px solid rgba(255,255,255,.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: sb-spin .7s linear infinite;
+        display: inline-block;
+        flex-shrink: 0;
+    }
+    @@keyframes sb-spin { to { transform: rotate(360deg); } }
+
+    .sb-error {
+        background: var(--danger-light);
+        color: var(--danger);
+        border: 1px solid var(--danger-border);
+        border-radius: var(--r-sm);
+        padding: 10px 14px;
+        font-size: 13px;
+    }
+
+    /* ── Metric strip ────────────────────────────────────────────── */
+    .sb-metrics {
+        display: flex;
+        align-items: stretch;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .sb-metric {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 14px 20px;
+        min-width: 100px;
+        box-shadow: var(--sh-xs);
+        border-left-width: 3px;
+        flex: 1;
+    }
+
+    .sb-metric-neutral { border-left-color: var(--border); }
+    .sb-metric-green   { border-left-color: var(--success); }
+    .sb-metric-blue    { border-left-color: var(--primary); }
+    .sb-metric-red     { border-left-color: var(--danger); }
+    .sb-metric-amber   { border-left-color: var(--warning); }
+    .sb-metric-time    { border-left-color: #8b5cf6; background: #faf5ff; border-color: #e9d5ff; border-left-color: #8b5cf6; }
+
+    .sb-metric-divider {
+        width: 1px;
+        background: var(--border);
+        margin: 4px 4px;
+        flex-shrink: 0;
+        align-self: stretch;
+    }
+
+    .sb-metric-val {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--txt-1);
+        line-height: 1.15;
+    }
+    .sb-metric-val-sm { font-size: 18px; }
+
+    .sb-metric-green .sb-metric-val  { color: var(--success); }
+    .sb-metric-blue .sb-metric-val   { color: var(--primary); }
+    .sb-metric-red .sb-metric-val    { color: var(--danger); }
+    .sb-metric-amber .sb-metric-val  { color: var(--warning); }
+    .sb-metric-time .sb-metric-val   { color: #7c3aed; }
+
+    .sb-metric-pct {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--txt-3);
+        margin-left: 3px;
+    }
+
+    .sb-metric-lbl {
+        font-size: 11px;
+        color: var(--txt-3);
+        margin-top: 3px;
+        white-space: nowrap;
+        font-weight: 500;
+    }
+
+    /* ── Filter panel ────────────────────────────────────────────── */
+    .sb-filters-panel {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        overflow: hidden;
+        box-shadow: var(--sh-xs);
+    }
+
+    .sb-filter-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 10px 16px;
+    }
+
+    .sb-filter-row-inline {
+        align-items: center;
+        background: var(--surface-2);
+    }
+
+    .sb-filter-sep {
+        height: 1px;
+        background: var(--border);
+    }
+
+    .sb-filter-inline-sep {
+        width: 1px;
+        background: var(--border);
+        align-self: stretch;
+        margin: 0 4px;
+    }
+
+    .sb-filter-inline-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .sb-filter-label {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .07em;
+        white-space: nowrap;
+        padding-top: 5px;
+        min-width: 58px;
+    }
+
+    .sb-filter-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+
+    .sb-chip-btn {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 10px;
+        border-radius: 20px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--txt-2);
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.12s;
+        line-height: 1.5;
+    }
+    .sb-chip-btn:hover {
+        border-color: var(--primary-border);
+        background: var(--primary-light);
+        color: var(--primary);
+    }
+    .sb-chip-btn.active {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: #fff;
+        font-weight: 600;
+    }
+
+    /* Health chip colour overrides when active */
+    .sb-chip-health-overdue.active    { background: var(--danger);  border-color: var(--danger); }
+    .sb-chip-health-at-risk.active    { background: var(--warning); border-color: var(--warning); }
+    .sb-chip-health-on-track.active   { background: var(--success); border-color: var(--success); }
+    .sb-chip-health-no-due-date.active { background: #6b7280; border-color: #6b7280; }
+    .sb-chip-health-done.active       { background: var(--success); border-color: var(--success); }
+
+    /* ── Sections ────────────────────────────────────────────────── */
+    .sb-section {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        overflow: hidden;
+        box-shadow: var(--sh-xs);
+    }
+
+    .sb-section-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 16px;
+        cursor: pointer;
+        user-select: none;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+        transition: background 0.1s;
+    }
+    .sb-section-header:hover { background: #e9ecef; }
+
+    .sb-section-toggle { font-size: 11px; color: var(--txt-4); }
+
+    .sb-section-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--txt-1);
+    }
+
+    .sb-section-sub {
+        font-size: 12px;
+        color: var(--txt-3);
+    }
+
+    /* ── Assignee Cards ──────────────────────────────────────────── */
+    .sb-assignee-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px;
+        padding: 16px;
+    }
+
+    .sb-assignee-card {
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 14px 16px;
+        background: var(--surface);
+        transition: box-shadow 0.15s, border-color 0.15s;
+    }
+    .sb-assignee-card:hover {
+        box-shadow: var(--sh-sm);
+        border-color: #d1d5db;
+    }
+
+    .sb-ac-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .sb-ac-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+        flex-shrink: 0;
+        letter-spacing: 0.5px;
+    }
+
+    .sb-ac-head-info { min-width: 0; }
+
+    .sb-ac-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--txt-1);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .sb-ac-pct-label {
+        font-size: 11px;
+        color: var(--txt-3);
+        margin-top: 1px;
+    }
+
+    .sb-ac-progress {
+        height: 4px;
+        background: var(--border);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-bottom: 10px;
+    }
+
+    .sb-ac-progress-fill {
+        height: 100%;
+        background: var(--success);
+        border-radius: 2px;
+        transition: width 0.3s;
+    }
+
+    .sb-ac-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 10px;
+    }
+
+    .ac-chip {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .ac-chip-red   { background: #fee2e2; color: #b91c1c; }
+    .ac-chip-amber { background: #fef3c7; color: #92400e; }
+    .ac-chip-blue  { background: #dbeafe; color: #1e40af; }
+    .ac-chip-green { background: #dcfce7; color: #15803d; }
+    .ac-chip-gray  { background: #f3f4f6; color: #4b5563; }
+
+    .sb-ac-time {
+        display: flex;
+        gap: 14px;
+        font-size: 12px;
+        color: var(--txt-2);
+        font-weight: 600;
+    }
+
+    .sb-ac-time-lbl {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--txt-4);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        margin-right: 2px;
+    }
+
+    /* ── Main Table ──────────────────────────────────────────────── */
+    .sb-table-wrap { overflow-x: auto; }
+
+    .sb-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .sb-th {
+        padding: 9px 10px;
+        text-align: left;
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        background: var(--surface-2);
+        border-bottom: 2px solid var(--border);
+        white-space: nowrap;
+    }
+
+    .sb-th-pri      { width: 28px; text-align: center; }
+    .sb-th-key      { width: 90px; }
+    .sb-th-title    { min-width: 220px; max-width: 320px; }
+    .sb-th-assignee { width: 120px; }
+    .sb-th-status   { width: 110px; }
+    .sb-th-due      { width: 130px; }
+    .sb-th-forecast { width: 110px; }
+    .sb-th-est      { width: 80px; text-align: right; }
+    .sb-th-pct      { width: 90px; text-align: center; }
+    .sb-th-activity { width: 130px; }
+    .sb-th-expand   { width: 60px; text-align: center; }
+
+    .sb-td {
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: middle;
+        color: var(--txt-2);
+    }
+
+    .sb-row:hover .sb-td { background: #f8fafc; }
+    .sb-row-expanded .sb-td { background: #eff6ff; }
+
+    .sb-td-key { font-family: monospace; font-size: 12px; }
+    .sb-td-title { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sb-td-assignee { font-size: 12px; }
+    .sb-td-est { text-align: right; font-size: 12px; color: var(--txt-3); white-space: nowrap; }
+    .sb-td-pct { text-align: center; }
+    .sb-td-activity { font-size: 12px; color: var(--txt-2); white-space: nowrap; }
+    .sb-td-stale { font-size: 12px; background: #fee2e2 !important; color: #991b1b; white-space: nowrap; }
+    .sb-td-expand { text-align: center; }
+
+    .sb-sprint-time { color: var(--primary); font-weight: 600; }
+
+    .sb-key-link {
+        color: var(--primary);
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 12px;
+    }
+    .sb-key-link:hover { text-decoration: underline; }
+
+    .sb-never { color: var(--txt-4); font-style: italic; }
+    .sb-no-due { color: var(--txt-4); }
+
+    /* ── Priority dot ────────────────────────────────────────────── */
+    .sb-td-pri { text-align: center; }
+
+    .sb-pri-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+
+    .pri-critical { background: #dc2626; }
+    .pri-high     { background: #f97316; }
+    .pri-medium   { background: #eab308; }
+    .pri-low      { background: #22c55e; }
+    .pri-lowest   { background: #94a3b8; }
+
+    /* ── Due date cell ───────────────────────────────────────────── */
+    .sb-due-date  { font-size: 12px; font-weight: 600; color: var(--txt-1); display: block; }
+    .sb-due-delta { font-size: 11px; display: block; margin-top: 1px; }
+
+    .sb-delta-red   { color: var(--danger); font-weight: 600; }
+    .sb-delta-amber { color: var(--warning); font-weight: 600; }
+    .sb-delta-green { color: var(--success); }
+
+    .sb-due-overdue { background: #fff1f2 !important; }
+    .sb-due-at-risk { background: #fffbeb !important; }
+
+    /* ── Forecast badge ──────────────────────────────────────────── */
+    .sb-forecast-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .fc-done    { background: #dcfce7; color: #15803d; }
+    .fc-meet    { background: #dbeafe; color: #1d4ed8; }
+    .fc-miss    { background: #fee2e2; color: #b91c1c; }
+    .fc-blocked { background: #f3f4f6; color: #374151; }
+    .fc-noest   { background: #fef9c3; color: #854d0e; }
+    .fc-nodue   { background: #f3f4f6; color: #6b7280; }
+
+    /* ── % Bar ───────────────────────────────────────────────────── */
+    .sb-pct-bar-wrap {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .sb-pct-bar {
+        display: inline-block;
+        height: 5px;
+        background: var(--primary);
+        border-radius: 3px;
+        min-width: 2px;
+        max-width: 50px;
+    }
+
+    .sb-pct-label { font-size: 11px; color: var(--txt-3); }
+
+    /* ── Expand button ───────────────────────────────────────────── */
+    .sb-expand-btn { font-size: 11px; padding: 2px 6px; }
+
+    /* ── Worklog section ─────────────────────────────────────────── */
+    .sb-worklog-row .sb-worklog-cell {
+        padding: 0;
+        background: #f8fafc;
+        border-bottom: 2px solid var(--primary);
+    }
+
+    .sb-worklog-wrap { padding: 12px 24px 14px; }
+
+    .sb-worklog-header {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--txt-2);
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .sb-wl-sprint-note {
+        background: #dbeafe;
+        color: #1d4ed8;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .sb-wl-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+    }
+
+    .sb-wl-table th {
+        padding: 5px 10px;
+        background: #e2e8f0;
+        text-align: left;
+        font-weight: 600;
+        color: var(--txt-3);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    .sb-wl-table td {
+        padding: 5px 10px;
+        border-bottom: 1px solid #e2e8f0;
+        color: var(--txt-2);
+    }
+
+    .sb-wl-in-sprint { background: #eff6ff; }
+    .sb-wl-time  { font-weight: 600; white-space: nowrap; }
+    .sb-wl-comment { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--txt-3); }
+    .sb-wl-sprint-flag { text-align: center; color: var(--primary); font-weight: 700; }
+
+    /* ── Empty states ────────────────────────────────────────────── */
+    .sb-empty-state {
+        text-align: center;
+        padding: 48px 24px;
+        color: var(--txt-3);
+        font-size: 14px;
+    }
+
+    .sb-empty {
+        text-align: center;
+        padding: 24px;
+        color: var(--txt-3);
+        font-style: italic;
+    }
+
+    /* ── Tabs ────────────────────────────────────────────────────── */
+    .sb-tabs {
+        display: flex;
+        border-bottom: 2px solid var(--border);
+        gap: 0;
+        background: var(--surface);
+        border-radius: var(--r-md) var(--r-md) 0 0;
+        border: 1px solid var(--border);
+        border-bottom: 2px solid var(--border);
+        padding: 0 4px;
+    }
+
+    .sb-tab {
+        padding: 10px 20px;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: inherit;
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--txt-3);
+        cursor: pointer;
+        margin-bottom: -2px;
+        transition: color .15s, border-color .15s;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .sb-tab:hover { color: var(--txt-1); }
+    .sb-tab-active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
+    .sb-tab-badge {
+        background: var(--danger);
+        color: #fff;
+        border-radius: 10px;
+        padding: 1px 7px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .sb-tab-badge-neutral { background: var(--txt-4); }
+
+    /* ── Calendar ────────────────────────────────────────────────── */
+    .sb-cal-root        { padding: 16px; }
+    .sb-cal-header      { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .sb-cal-month-label { font-size: 15px; font-weight: 700; color: var(--txt-1); min-width: 155px; text-align: center; }
+    .sb-cal-nav         { font-size: 22px; font-weight: 400; line-height: 1; padding: 2px 12px !important; }
+    .sb-cal-badge       { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary-border); border-radius: 12px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-left: 4px; }
+    .sb-cal-empty-month { font-size: 12px; color: var(--txt-3); margin-left: 4px; }
+    .sb-cal-grid-wrap   { overflow-x: auto; }
+
+    .sb-cal-table       { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 700px; }
+    .sb-cal-th          { padding: 7px 4px; text-align: center; font-size: 11px; font-weight: 700; color: var(--txt-3); text-transform: uppercase; letter-spacing: .05em; border-bottom: 2px solid var(--border); background: var(--surface-2); }
+    .sb-cal-cell        { vertical-align: top; height: 120px; border: 1px solid var(--border); padding: 6px 5px 4px; background: var(--surface); }
+    .sb-cal-blank       { background: #f7f7f9; }
+    .sb-cal-weekend     { background: #fafafa; }
+    .sb-cal-today       { background: #eff6ff !important; outline: 2px solid var(--primary); outline-offset: -2px; }
+    .sb-cal-daynum      { font-size: 11px; font-weight: 600; color: var(--txt-3); margin-bottom: 5px; }
+    .sb-cal-daynum-today {
+        display: inline-flex; align-items: center; justify-content: center;
+        background: var(--primary); color: #fff;
+        width: 20px; height: 20px; border-radius: 50%; font-size: 11px;
+    }
+
+    .sb-cal-chip {
+        display: flex;
+        flex-direction: column;
+        padding: 2px 5px 3px;
+        border-radius: 4px;
+        margin-bottom: 3px;
+        font-size: 10.5px;
+        border-left: 3px solid transparent;
+        overflow: hidden;
+        cursor: pointer;
+        text-decoration: none;
+    }
+    .sb-cal-chip:hover { filter: brightness(0.93); text-decoration: none; }
+    .sb-cal-chip-key { font-weight: 700; font-size: 10px; white-space: nowrap; }
+    .sb-cal-chip-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+
+    .sb-cal-chip-done          { background: #dcfce7; border-left-color: #16a34a; color: #14532d; opacity: .65; }
+    .sb-cal-chip-indeterminate { background: #dbeafe; border-left-color: var(--primary); color: #1e3a8a; }
+    .sb-cal-chip-new           { background: #fef9c3; border-left-color: #eab308; color: #713f12; }
+
+    /* ── KPI colour helpers (kept for table cells) ───────────────── */
+    .kpi-green  { color: var(--success); }
+    .kpi-amber  { color: var(--warning); }
+    .kpi-red    { color: var(--danger); }
+    .kpi-blue   { color: var(--primary); }
+    .kpi-neutral { color: var(--txt-2); }
+
+    /* ── Status chips ────────────────────────────────────────────── */
+    .rpt-status-chip {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .status-dev-ready   { background: #e0f2fe; color: #0369a1; }
+    .status-in-progress { background: #fef3c7; color: #b45309; }
+    .status-in-review   { background: #ede9fe; color: #6d28d9; }
+    .status-qa-ready    { background: #f0fdf4; color: #166534; }
+    .status-done        { background: #f0fdf4; color: #047857; }
+    .status-on-hold     { background: #fdf4ff; color: #7e22ce; border: 1px solid #e9d5ff; }
+    .status-default     { background: #e5e7eb; color: #374151; }
+</style>

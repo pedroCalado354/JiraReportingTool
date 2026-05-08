@@ -33,4 +33,9 @@ public interface IJiraService
     /// Used by the Excel export to resolve epic names when LoadedEpics is empty.
     /// </summary>
     Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys);
+
+    /// <summary>
+    /// Fetches highest-priority open bugs for the Rentway Pro project that have been open for more than 7 days.
+    /// </summary>
+    Task<SprintReport> GetPriorityBugsAsync();
 }
