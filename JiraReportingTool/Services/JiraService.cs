@@ -47,7 +47,12 @@ public class JiraService : IJiraService
             var body = JsonSerializer.Serialize(bodyDict);
             using var content = new StringContent(body, Encoding.UTF8, "application/json");
             var response = await _httpClient.PostAsync($"{_baseUrl}/rest/api/3/search/jql", content);
-            response.EnsureSuccessStatusCode();
+            if (!response.IsSuccessStatusCode)
+            {
+                var errorBody = await response.Content.ReadAsStringAsync();
+                throw new HttpRequestException(
+                    $"Jira API {(int)response.StatusCode}: {errorBody}", null, response.StatusCode);
+            }
             var pageJson = await response.Content.ReadAsStringAsync();
 
             using var doc = JsonDocument.Parse(pageJson);
@@ -510,15 +515,60 @@ public class JiraService : IJiraService
         }
     }
 
+    // Fetches QA rejection counts for each issue via individual GET calls (changelog not available in POST search)
+    private async Task FetchQaRejectionCountsAsync(List<SprintIssue> issues)
+    {
+        if (issues.Count == 0) return;
+
+        const int batchSize = 10;
+        for (int i = 0; i < issues.Count; i += batchSize)
+        {
+            var batch = issues.Skip(i).Take(batchSize).ToList();
+            await Task.WhenAll(batch.Select(async issue =>
+            {
+                try
+                {
+                    var response = await _httpClient.GetAsync(
+                        $"{_baseUrl}/rest/api/3/issue/{Uri.EscapeDataString(issue.Key)}?expand=changelog&fields=key");
+                    if (!response.IsSuccessStatusCode) return;
+
+                    var json = await response.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(json);
+                    if (!doc.RootElement.TryGetProperty("changelog", out var changelog) ||
+                        !changelog.TryGetProperty("histories", out var histories) ||
+                        histories.ValueKind != JsonValueKind.Array) return;
+
+                    foreach (var history in histories.EnumerateArray())
+                    {
+                        if (!history.TryGetProperty("items", out var histItems)) continue;
+                        foreach (var change in histItems.EnumerateArray())
+                        {
+                            if (change.TryGetProperty("field", out var fieldEl) &&
+                                fieldEl.GetString() == "status" &&
+                                change.TryGetProperty("toString", out var toStatus) &&
+                                toStatus.GetString()?.Equals("QA REJECTED", StringComparison.OrdinalIgnoreCase) == true)
+                            {
+                                issue.QaRejectedCount++;
+                            }
+                        }
+                    }
+                }
+                catch { /* ignore individual failures */ }
+            }));
+        }
+    }
+
     // Fetches ALL issues for an epic regardless of sprint — used by Quality Metrics drill-down
     public async Task<SprintReport> GetAllEpicIssuesAsync(string epicKey)
     {
         var jql = Uri.EscapeDataString(
-            $"issueType not in subTaskIssueTypes() AND issueType != Epic AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
+            $"issueType != Epic AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
         const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate";
-        var json = await FetchAllPagesAsync(jql, fields, includeChangelog: true);
+        // POST /rest/api/3/search/jql does not support expand=changelog in the body; fetch changelogs separately below
+        var json = await FetchAllPagesAsync(jql, fields);
         var (report, truncated) = ParseSprintReport(json, "");
         await FetchMissingWorklogsAsync(report, truncated);
+        await FetchQaRejectionCountsAsync(report.Issues);
 
         var epicNames = await FetchEpicNamesAsync([epicKey]);
         foreach (var issue in report.Issues)

@@ -67,7 +67,7 @@
         <!-- ═══════════════════ STATS STRIP ═══════════════════ -->
         <div class="sb-metrics">
             <div class="sb-metric sb-metric-neutral">
-                <div class="sb-metric-val">@TotalCount</div>
+                <div class="sb-metric-val">@TotalCount @if (IsFiltered) { <span class="sb-metric-pct">of @_bugs.Count</span> }</div>
                 <div class="sb-metric-lbl">Total Bugs</div>
             </div>
             <div class="sb-metric sb-metric-green">
@@ -78,6 +78,15 @@
                 <div class="sb-metric-val">@InProgressCount</div>
                 <div class="sb-metric-lbl">In Progress</div>
             </div>
+            <div class="sb-metric @(OnHoldCount > 0 ? "sb-metric-amber" : "sb-metric-neutral")">
+                <div class="sb-metric-val">@OnHoldCount</div>
+                <div class="sb-metric-lbl">On Hold</div>
+            </div>
+            <div class="sb-metric @(StaleCount > 0 ? "sb-metric-amber" : "sb-metric-neutral")">
+                <div class="sb-metric-val">@StaleCount</div>
+                <div class="sb-metric-lbl">Stale</div>
+            </div>
+            <div class="sb-metric-divider"></div>
             <div class="sb-metric @(OverdueCount > 0 ? "sb-metric-red" : "sb-metric-neutral")">
                 <div class="sb-metric-val">@OverdueCount</div>
                 <div class="sb-metric-lbl">Overdue</div>
@@ -85,6 +94,10 @@
             <div class="sb-metric @(AtRiskCount > 0 ? "sb-metric-amber" : "sb-metric-neutral")">
                 <div class="sb-metric-val">@AtRiskCount</div>
                 <div class="sb-metric-lbl">At Risk</div>
+            </div>
+            <div class="sb-metric sb-metric-green">
+                <div class="sb-metric-val">@OnTrackCount</div>
+                <div class="sb-metric-lbl">On Track</div>
             </div>
             <div class="sb-metric @(NoDueDateCount > 0 ? "sb-metric-amber" : "sb-metric-neutral")">
                 <div class="sb-metric-val">@NoDueDateCount</div>
@@ -99,7 +112,22 @@
                 <div class="sb-metric-val sb-metric-val-sm">@FormatSeconds(TotalLoggedSeconds)</div>
                 <div class="sb-metric-lbl">Total Logged</div>
             </div>
+            <div class="sb-metric sb-metric-time">
+                <div class="sb-metric-val sb-metric-val-sm">@FormatSeconds(TotalRemainingSeconds)</div>
+                <div class="sb-metric-lbl">Remaining</div>
+            </div>
+            <div class="sb-metric sb-metric-neutral">
+                <div class="sb-metric-val sb-metric-val-sm">@($"{AvgOpenAgeDays:0}")<span class="sb-metric-lbl-inline">d</span></div>
+                <div class="sb-metric-lbl">Avg Age (open)</div>
+            </div>
         </div>
+        @if (IsFiltered)
+        {
+            <div class="sb-filter-active-bar">
+                <span>Showing @TotalCount of @_bugs.Count bugs</span>
+                <button class="sb-btn sb-btn-ghost" style="padding:2px 10px;font-size:11px" @onclick="ClearFilters">Clear filters</button>
+            </div>
+        }
 
         <!-- ═══════════════════ FILTER BAR ═══════════════════ -->
         <div class="sb-filters-panel">
@@ -146,7 +174,7 @@
             <div class="sb-section-header" @onclick="() => _showAssigneeSummary = !_showAssigneeSummary">
                 <span class="sb-section-toggle">@(_showAssigneeSummary ? "▾" : "▸")</span>
                 <span class="sb-section-title">Assignee Summary</span>
-                <span class="sb-section-sub">@AllAssignees.Count() members · sprint: @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</span>
+                <span class="sb-section-sub">@AssigneeSummarySubtitle</span>
             </div>
             @if (_showAssigneeSummary)
             {
@@ -195,6 +223,14 @@
             <button class="sb-tab @(_activeTab == "priority" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "priority"'>
                 Priority
                 @if (_priorityBugs.Count > 0) { <span class="sb-tab-badge">@_priorityBugs.Count</span> }
+            </button>
+            <button class="sb-tab @(_activeTab == "workload" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "workload"'>
+                Workload
+            </button>
+            <button class="sb-tab @(_activeTab == "age" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "age"'>
+                Age
+                @{ var oldCount = FilteredBugs.Count(b => !IsDone(b) && GetDaysOpen(b) >= 90); }
+                @if (oldCount > 0) { <span class="sb-tab-badge">@oldCount old</span> }
             </button>
         </div>
 
@@ -483,6 +519,153 @@
         </div>
         } <!-- end priority tab -->
 
+        <!-- ═══════════════════ WORKLOAD TAB ═══════════════════ -->
+        @if (_activeTab == "workload")
+        {
+        <div class="sb-section">
+            <div class="sb-section-header" style="cursor:default">
+                <span class="sb-section-title">Team Workload</span>
+                <span class="sb-section-sub">Per-assignee breakdown · @WorkloadRows.Count() members</span>
+            </div>
+            <div class="sb-table-wrap">
+                <table class="sb-table">
+                    <thead>
+                        <tr>
+                            <th class="sb-th" style="width:36px"></th>
+                            <th class="sb-th sortable @SIWL("name")" @onclick='() => SortWL("name")'>Assignee</th>
+                            <th class="sb-th sb-th-est sortable @SIWL("open")" @onclick='() => SortWL("open")'>Open</th>
+                            <th class="sb-th sb-th-est sortable @SIWL("done")" @onclick='() => SortWL("done")'>Done</th>
+                            <th class="sb-th sb-th-est sortable @SIWL("overdue")" @onclick='() => SortWL("overdue")'>Overdue</th>
+                            <th class="sb-th sb-th-est sortable @SIWL("onhold")" @onclick='() => SortWL("onhold")'>On Hold</th>
+                            <th class="sb-th sb-th-est sortable @SIWL("sprint")" @onclick='() => SortWL("sprint")'>Sprint Hrs</th>
+                            <th class="sb-th sb-th-est sortable @SIWL("total")" @onclick='() => SortWL("total")'>Total Hrs</th>
+                            <th class="sb-th sb-th-est sortable @SIWL("rem")" @onclick='() => SortWL("rem")'>Remaining</th>
+                            <th class="sb-th sb-th-est sortable @SIWL("age")" @onclick='() => SortWL("age")'>Avg Age</th>
+                            <th class="sb-th sortable @SIWL("pct")" style="min-width:120px" @onclick='() => SortWL("pct")'>Progress</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in WorkloadRows)
+                        {
+                            var pct = row.Total > 0 ? row.Done * 100 / row.Total : 0;
+                            <tr class="sb-row">
+                                <td class="sb-td">
+                                    <div class="sb-ac-avatar" style="background:@GetAvatarColor(row.Name);width:28px;height:28px;font-size:10px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:700;flex-shrink:0">@GetInitials(row.Name)</div>
+                                </td>
+                                <td class="sb-td" style="font-weight:600;font-size:13px;color:var(--txt-1)">@row.Name</td>
+                                <td class="sb-td sb-td-est @(row.Open > 5 ? "kpi-red" : row.Open > 3 ? "kpi-amber" : "")">@row.Open</td>
+                                <td class="sb-td sb-td-est kpi-green">@row.Done</td>
+                                <td class="sb-td sb-td-est @(row.Overdue > 0 ? "kpi-red" : "")">@(row.Overdue > 0 ? row.Overdue.ToString() : "—")</td>
+                                <td class="sb-td sb-td-est @(row.OnHold > 0 ? "kpi-amber" : "")">@(row.OnHold > 0 ? row.OnHold.ToString() : "—")</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(row.SprintSeconds)</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(row.TotalSeconds)</td>
+                                <td class="sb-td sb-td-est @(row.RemainingSeconds > 0 ? "kpi-blue" : "")">@(row.RemainingSeconds > 0 ? FormatSeconds(row.RemainingSeconds) : "—")</td>
+                                <td class="sb-td sb-td-est @(row.AvgAge > 60 ? "kpi-red" : row.AvgAge > 30 ? "kpi-amber" : "")">@($"{row.AvgAge:0}")d</td>
+                                <td class="sb-td">
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <div style="flex:1;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;min-width:80px">
+                                            <div style="height:100%;background:var(--success);border-radius:3px;width:@pct%"></div>
+                                        </div>
+                                        <span style="font-size:11px;color:var(--txt-3);white-space:nowrap">@pct%</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        } <!-- end workload tab -->
+
+        <!-- ═══════════════════ AGE TAB ═══════════════════ -->
+        @if (_activeTab == "age")
+        {
+            var openBugs  = FilteredBugs.Where(b => !IsDone(b)).ToList();
+            var ageFresh  = openBugs.Count(b => GetDaysOpen(b) <  7);
+            var ageRecent = openBugs.Count(b => GetDaysOpen(b) >= 7  && GetDaysOpen(b) < 30);
+            var ageAging  = openBugs.Count(b => GetDaysOpen(b) >= 30 && GetDaysOpen(b) < 90);
+            var ageOld    = openBugs.Count(b => GetDaysOpen(b) >= 90);
+
+            <div class="sb-age-buckets">
+                <div class="sb-age-bucket sb-age-fresh">
+                    <div class="sb-age-bucket-val">@ageFresh</div>
+                    <div class="sb-age-bucket-lbl">Fresh</div>
+                    <div class="sb-age-bucket-range">&lt; 7 days</div>
+                </div>
+                <div class="sb-age-bucket sb-age-recent">
+                    <div class="sb-age-bucket-val">@ageRecent</div>
+                    <div class="sb-age-bucket-lbl">Recent</div>
+                    <div class="sb-age-bucket-range">7 – 30 days</div>
+                </div>
+                <div class="sb-age-bucket sb-age-aging">
+                    <div class="sb-age-bucket-val">@ageAging</div>
+                    <div class="sb-age-bucket-lbl">Aging</div>
+                    <div class="sb-age-bucket-range">30 – 90 days</div>
+                </div>
+                <div class="sb-age-bucket @(ageOld > 0 ? "sb-age-old-alert" : "sb-age-old")">
+                    <div class="sb-age-bucket-val">@ageOld</div>
+                    <div class="sb-age-bucket-lbl">Old</div>
+                    <div class="sb-age-bucket-range">&gt; 90 days</div>
+                </div>
+            </div>
+
+            <div class="sb-section">
+                <div class="sb-table-wrap">
+                    <table class="sb-table">
+                        <thead>
+                            <tr>
+                                <th class="sb-th sb-th-pri sortable @SIAge("pri")" @onclick='() => SortAge("pri")' title="Priority">P</th>
+                                <th class="sb-th sb-th-key sortable @SIAge("key")" @onclick='() => SortAge("key")'>Key</th>
+                                <th class="sb-th sb-th-title sortable @SIAge("title")" @onclick='() => SortAge("title")'>Title</th>
+                                <th class="sb-th sb-th-assignee sortable @SIAge("assignee")" @onclick='() => SortAge("assignee")'>Assignee</th>
+                                <th class="sb-th sb-th-status sortable @SIAge("status")" @onclick='() => SortAge("status")'>Status</th>
+                                <th class="sb-th sb-th-est sortable @SIAge("age")" @onclick='() => SortAge("age")'>Age</th>
+                                <th class="sb-th sb-th-due sortable @SIAge("due")" @onclick='() => SortAge("due")'>Due Date</th>
+                                <th class="sb-th sb-th-est sortable @SIAge("logged")" @onclick='() => SortAge("logged")'>Logged</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var bug in SortedAgeBugs)
+                            {
+                                var days   = GetDaysOpen(bug);
+                                var health = GetHealth(bug);
+                                var ageCls = days >= 90 ? "sb-age-badge-old" : days >= 30 ? "sb-age-badge-aging" : days >= 7 ? "sb-age-badge-recent" : "sb-age-badge-fresh";
+                                <tr class="sb-row">
+                                    <td class="sb-td sb-td-pri">
+                                        <span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span>
+                                    </td>
+                                    <td class="sb-td sb-td-key">
+                                        <a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a>
+                                    </td>
+                                    <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                    <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                    <td class="sb-td sb-td-status">
+                                        <span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span>
+                                    </td>
+                                    <td class="sb-td sb-td-est">
+                                        <span class="sb-age-badge @ageCls">@days d</span>
+                                    </td>
+                                    <td class="sb-td sb-td-due @GetDueCellClass(health)">
+                                        @if (bug.DueDate.HasValue)
+                                        {
+                                            <span class="sb-due-date">@bug.DueDate.Value.ToString("dd MMM")</span>
+                                            <span class="sb-due-delta @GetDueDeltaClass(health)">@GetDueDelta(bug)</span>
+                                        }
+                                        else { <span class="sb-no-due">—</span> }
+                                    </td>
+                                    <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                                </tr>
+                            }
+                            @if (!SortedAgeBugs.Any())
+                            {
+                                <tr><td colspan="8" class="sb-empty">No open bugs.</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        } <!-- end age tab -->
+
     }
     else if (!_loading && !string.IsNullOrEmpty(_loadedEpicKey))
     {
@@ -525,6 +708,18 @@
     private bool   _sortAscPri = true;
     private void SortPri(string col) { if (_sortColPri == col) _sortAscPri = !_sortAscPri; else { _sortColPri = col; _sortAscPri = true; } }
     private string SIPri(string col) => _sortColPri == col ? (_sortAscPri ? "sort-asc" : "sort-desc") : "";
+
+    // ── Workload sort state ───────────────────────────────────────────────────
+    private string _sortColWL = "";
+    private bool   _sortAscWL = true;
+    private void SortWL(string col) { if (_sortColWL == col) _sortAscWL = !_sortAscWL; else { _sortColWL = col; _sortAscWL = true; } }
+    private string SIWL(string col) => _sortColWL == col ? (_sortAscWL ? "sort-asc" : "sort-desc") : "";
+
+    // ── Age sort state ────────────────────────────────────────────────────────
+    private string _sortColAge = "age";
+    private bool   _sortAscAge = false; // oldest first by default
+    private void SortAge(string col) { if (_sortColAge == col) _sortAscAge = !_sortAscAge; else { _sortColAge = col; _sortAscAge = true; } }
+    private string SIAge(string col) => _sortColAge == col ? (_sortAscAge ? "sort-asc" : "sort-desc") : "";
 
     // ── Calendar state ────────────────────────────────────────────────────────
     private int _calYear  = DateTime.Today.Year;
@@ -601,20 +796,43 @@
     private static int GetDaysOpen(SprintIssue b) =>
         b.Created.HasValue ? (int)(DateTime.Today - b.Created.Value.Date).TotalDays : 0;
 
-    // ── Stats ──────────────────────────────────────────────────────────────────
-    private int    TotalCount       => _bugs.Count;
-    private int    DoneCount        => _bugs.Count(b => GetHealth(b) == "done");
-    private int    DonePct          => TotalCount > 0 ? DoneCount * 100 / TotalCount : 0;
-    private int    InProgressCount  => _bugs.Count(b => IsInProgress(b));
-    private int    OverdueCount     => _bugs.Count(b => GetHealth(b) == "overdue");
-    private int    AtRiskCount      => _bugs.Count(b => GetHealth(b) == "at-risk");
-    private int    NoDueDateCount   => _bugs.Count(b => GetHealth(b) == "no-due-date");
-    private int    TotalSprintSeconds => _bugs.Sum(b => GetSprintTimeSeconds(b));
-    private int    TotalLoggedSeconds => _bugs.Sum(b => b.TimeSpentSeconds);
+    // ── Stats (all derived from FilteredBugs → react to active filters) ────────
+    private int    TotalCount           => FilteredBugs.Count();
+    private int    DoneCount            => FilteredBugs.Count(b => GetHealth(b) == "done");
+    private int    DonePct              => TotalCount > 0 ? DoneCount * 100 / TotalCount : 0;
+    private int    InProgressCount      => FilteredBugs.Count(b => IsInProgress(b));
+    private int    OverdueCount         => FilteredBugs.Count(b => GetHealth(b) == "overdue");
+    private int    AtRiskCount          => FilteredBugs.Count(b => GetHealth(b) == "at-risk");
+    private int    OnTrackCount         => FilteredBugs.Count(b => GetHealth(b) == "on-track");
+    private int    NoDueDateCount       => FilteredBugs.Count(b => GetHealth(b) == "no-due-date");
+    private int    OnHoldCount          => FilteredBugs.Count(b => string.Equals(b.Status, "on hold", StringComparison.OrdinalIgnoreCase));
+    private int    StaleCount           => FilteredBugs.Count(b => IsStale(b));
+    private int    TotalSprintSeconds   => FilteredBugs.Sum(b => GetSprintTimeSeconds(b));
+    private int    TotalLoggedSeconds   => FilteredBugs.Sum(b => b.TimeSpentSeconds);
+    private int    TotalRemainingSeconds => FilteredBugs.Where(b => !IsDone(b)).Sum(b => b.RemainingEstimateSeconds);
+    private double AvgOpenAgeDays
+    {
+        get
+        {
+            var open = FilteredBugs.Where(b => !IsDone(b) && b.Created.HasValue).ToList();
+            return open.Count == 0 ? 0 : open.Average(b => (DateTime.Today - b.Created!.Value.Date).TotalDays);
+        }
+    }
 
     // ── Assignee Summary ───────────────────────────────────────────────────────
+    private string AssigneeSummarySubtitle
+    {
+        get
+        {
+            var filtered = FilteredBugs.Select(b => b.Assignee ?? "Unassigned").Distinct().Count();
+            var total    = AllAssignees.Count();
+            var members  = filtered == total ? $"{total} members" : $"{filtered} of {total} members";
+            return $"{members} · sprint: {_sprintStart:dd MMM} – {_sprintEnd:dd MMM}";
+        }
+    }
+
     private IEnumerable<AssigneeSummary> AssigneeSummaries =>
-        _bugs.GroupBy(b => b.Assignee ?? "Unassigned")
+        FilteredBugs.GroupBy(b => b.Assignee ?? "Unassigned")
              .Select(g => new AssigneeSummary
              {
                  Name        = g.Key,
@@ -630,6 +848,82 @@
              .OrderByDescending(a => a.Overdue)
              .ThenByDescending(a => a.AtRisk)
              .ThenBy(a => a.Name);
+
+    // ── Workload ───────────────────────────────────────────────────────────────
+    private IEnumerable<WorkloadRow> WorkloadRows
+    {
+        get
+        {
+            var rows = FilteredBugs
+                .GroupBy(b => b.Assignee ?? "Unassigned")
+                .Select(g =>
+                {
+                    var openBugs = g.Where(b => !IsDone(b)).ToList();
+                    var avgAge   = openBugs.Count > 0 && openBugs.Any(b => b.Created.HasValue)
+                        ? openBugs.Where(b => b.Created.HasValue)
+                                   .Average(b => (DateTime.Today - b.Created!.Value.Date).TotalDays)
+                        : 0;
+                    return new WorkloadRow
+                    {
+                        Name             = g.Key,
+                        Total            = g.Count(),
+                        Open             = openBugs.Count,
+                        Done             = g.Count(b => IsDone(b)),
+                        Overdue          = g.Count(b => GetHealth(b) == "overdue"),
+                        OnHold           = g.Count(b => string.Equals(b.Status, "on hold", StringComparison.OrdinalIgnoreCase)),
+                        SprintSeconds    = g.Sum(b => GetSprintTimeSeconds(b)),
+                        TotalSeconds     = g.Sum(b => b.TimeSpentSeconds),
+                        RemainingSeconds = openBugs.Sum(b => b.RemainingEstimateSeconds),
+                        AvgAge           = avgAge
+                    };
+                });
+
+            return _sortColWL switch
+            {
+                "name"    => _sortAscWL ? rows.OrderBy(r => r.Name)                                          : rows.OrderByDescending(r => r.Name),
+                "open"    => _sortAscWL ? rows.OrderBy(r => r.Open)                                          : rows.OrderByDescending(r => r.Open),
+                "done"    => _sortAscWL ? rows.OrderBy(r => r.Done)                                          : rows.OrderByDescending(r => r.Done),
+                "overdue" => _sortAscWL ? rows.OrderBy(r => r.Overdue)                                       : rows.OrderByDescending(r => r.Overdue),
+                "onhold"  => _sortAscWL ? rows.OrderBy(r => r.OnHold)                                        : rows.OrderByDescending(r => r.OnHold),
+                "sprint"  => _sortAscWL ? rows.OrderBy(r => r.SprintSeconds)                                 : rows.OrderByDescending(r => r.SprintSeconds),
+                "total"   => _sortAscWL ? rows.OrderBy(r => r.TotalSeconds)                                  : rows.OrderByDescending(r => r.TotalSeconds),
+                "rem"     => _sortAscWL ? rows.OrderBy(r => r.RemainingSeconds)                              : rows.OrderByDescending(r => r.RemainingSeconds),
+                "age"     => _sortAscWL ? rows.OrderBy(r => r.AvgAge)                                        : rows.OrderByDescending(r => r.AvgAge),
+                "pct"     => _sortAscWL ? rows.OrderBy(r => r.Total > 0 ? r.Done * 100 / r.Total : 0)       : rows.OrderByDescending(r => r.Total > 0 ? r.Done * 100 / r.Total : 0),
+                _         => rows.OrderByDescending(r => r.Open).ThenByDescending(r => r.Overdue)
+            };
+        }
+    }
+
+    private IEnumerable<SprintIssue> SortedAgeBugs
+    {
+        get
+        {
+            var q = FilteredBugs.Where(b => !IsDone(b));
+            return _sortColAge switch
+            {
+                "pri"      => _sortAscAge ? q.OrderBy(b => PriOrder(b))                    : q.OrderByDescending(b => PriOrder(b)),
+                "key"      => _sortAscAge ? q.OrderBy(b => b.Key)                          : q.OrderByDescending(b => b.Key),
+                "title"    => _sortAscAge ? q.OrderBy(b => b.Summary)                      : q.OrderByDescending(b => b.Summary),
+                "assignee" => _sortAscAge ? q.OrderBy(b => b.Assignee)                     : q.OrderByDescending(b => b.Assignee),
+                "status"   => _sortAscAge ? q.OrderBy(b => b.Status)                       : q.OrderByDescending(b => b.Status),
+                "age"      => _sortAscAge ? q.OrderBy(b => GetDaysOpen(b))                 : q.OrderByDescending(b => GetDaysOpen(b)),
+                "due"      => _sortAscAge ? q.OrderBy(b => b.DueDate ?? DateTime.MaxValue) : q.OrderByDescending(b => b.DueDate ?? DateTime.MinValue),
+                "logged"   => _sortAscAge ? q.OrderBy(b => b.TimeSpentSeconds)             : q.OrderByDescending(b => b.TimeSpentSeconds),
+                _          => q.OrderByDescending(b => GetDaysOpen(b))
+            };
+        }
+    }
+
+    // ── Filter helpers ─────────────────────────────────────────────────────────
+    private bool IsFiltered => _selectedAssignees.Count > 0 || _statusFilter != "all" || _healthFilter != "all";
+
+    private void ClearFilters()
+    {
+        _selectedAssignees.Clear();
+        _statusFilter = "all";
+        _healthFilter = "all";
+    }
 
     // ── Load ───────────────────────────────────────────────────────────────────
     private async Task LoadAsync()
@@ -938,15 +1232,29 @@
     // ── Inner types ────────────────────────────────────────────────────────────
     private record AssigneeSummary
     {
-        public string Name        { get; init; } = "";
-        public int    Total       { get; init; }
-        public int    Done        { get; init; }
-        public int    InProgress  { get; init; }
-        public int    Overdue     { get; init; }
-        public int    AtRisk      { get; init; }
-        public int    NoDueDate   { get; init; }
+        public string Name          { get; init; } = "";
+        public int    Total         { get; init; }
+        public int    Done          { get; init; }
+        public int    InProgress    { get; init; }
+        public int    Overdue       { get; init; }
+        public int    AtRisk        { get; init; }
+        public int    NoDueDate     { get; init; }
         public int    SprintSeconds { get; init; }
         public int    TotalSeconds  { get; init; }
+    }
+
+    private record WorkloadRow
+    {
+        public string Name             { get; init; } = "";
+        public int    Total            { get; init; }
+        public int    Open             { get; init; }
+        public int    Done             { get; init; }
+        public int    Overdue          { get; init; }
+        public int    OnHold           { get; init; }
+        public int    SprintSeconds    { get; init; }
+        public int    TotalSeconds     { get; init; }
+        public int    RemainingSeconds { get; init; }
+        public double AvgAge           { get; init; }
     }
 }
 
@@ -1678,6 +1986,55 @@
     .sb-cal-chip-done          { background: #dcfce7; border-left-color: #16a34a; color: #14532d; opacity: .65; }
     .sb-cal-chip-indeterminate { background: #dbeafe; border-left-color: var(--primary); color: #1e3a8a; }
     .sb-cal-chip-new           { background: #fef9c3; border-left-color: #eab308; color: #713f12; }
+
+    /* ── Filter active bar ───────────────────────────────────────── */
+    .sb-filter-active-bar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 16px;
+        background: var(--primary-light);
+        border: 1px solid var(--primary-border);
+        border-radius: var(--r-sm);
+        font-size: 12px;
+        color: var(--primary);
+        font-weight: 500;
+    }
+
+    /* ── Metric label inline ─────────────────────────────────────── */
+    .sb-metric-lbl-inline { font-size: 14px; font-weight: 400; color: var(--txt-3); margin-left: 1px; }
+
+    /* ── Age buckets ─────────────────────────────────────────────── */
+    .sb-age-buckets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .sb-age-bucket  {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 20px;
+        box-shadow: var(--sh-xs);
+        border-left-width: 4px;
+        text-align: center;
+    }
+    .sb-age-bucket-val   { font-size: 36px; font-weight: 700; line-height: 1; }
+    .sb-age-bucket-lbl   { font-size: 13px; font-weight: 700; color: var(--txt-2); margin-top: 4px; }
+    .sb-age-bucket-range { font-size: 11px; color: var(--txt-4); margin-top: 2px; }
+
+    .sb-age-fresh  { border-left-color: var(--success); }
+    .sb-age-fresh  .sb-age-bucket-val { color: var(--success); }
+    .sb-age-recent { border-left-color: var(--primary); }
+    .sb-age-recent .sb-age-bucket-val { color: var(--primary); }
+    .sb-age-aging  { border-left-color: var(--warning); }
+    .sb-age-aging  .sb-age-bucket-val { color: var(--warning); }
+    .sb-age-old    { border-left-color: #9ca3af; }
+    .sb-age-old    .sb-age-bucket-val { color: #6b7280; }
+    .sb-age-old-alert { border-left-color: var(--danger); }
+    .sb-age-old-alert .sb-age-bucket-val { color: var(--danger); }
+
+    .sb-age-badge          { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+    .sb-age-badge-fresh    { background: #dcfce7; color: #15803d; }
+    .sb-age-badge-recent   { background: #dbeafe; color: #1d4ed8; }
+    .sb-age-badge-aging    { background: #fef3c7; color: #92400e; }
+    .sb-age-badge-old      { background: #fee2e2; color: #b91c1c; }
 
     /* ── KPI colour helpers (kept for table cells) ───────────────── */
     .kpi-green  { color: var(--success); }
