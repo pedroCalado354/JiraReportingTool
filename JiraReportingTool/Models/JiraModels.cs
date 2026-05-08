@@ -174,8 +174,10 @@ public class SprintIssue
     public List<string> Labels { get; set; } = new();
     public DateTime? Created { get; set; }
     public DateTime? ResolutionDate { get; set; }
+    public DateTime? DueDate        { get; set; }
 
-    [NotMapped] public bool IsExpanded { get; set; }
+    [NotMapped] public bool IsExpanded      { get; set; }
+    [NotMapped] public int  QaRejectedCount { get; set; }
 
     [NotMapped] public int DaysSinceLastWorklog => Worklogs.Any()
         ? Math.Max(0, (int)(DateTime.Today - Worklogs.Max(w => w.Started).Date).TotalDays)

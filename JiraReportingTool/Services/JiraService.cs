@@ -25,7 +25,7 @@ public class JiraService : IJiraService
 
     // Jira Cloud hard-caps responses at 100 items per request.
     // Uses POST /rest/api/3/search/jql with cursor-based pagination (nextPageToken).
-    private async Task<string> FetchAllPagesAsync(string jql, string fields)
+    private async Task<string> FetchAllPagesAsync(string jql, string fields, bool includeChangelog = false)
     {
         var allIssues = new List<string>();
         var fieldList = fields.Split(',').Select(f => f.Trim()).ToArray();
@@ -39,6 +39,8 @@ public class JiraService : IJiraService
                 ["fields"] = fieldList,
                 ["maxResults"] = 100
             };
+            if (includeChangelog)
+                bodyDict["expand"] = new[] { "changelog" };
             if (nextPageToken != null)
                 bodyDict["nextPageToken"] = nextPageToken;
 
@@ -242,7 +244,7 @@ public class JiraService : IJiraService
     // Shared delivery fetch: paginate → parse → enrich epic names
     private async Task<SprintReport> FetchDeliveryReportAsync(string encodedJql)
     {
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent,created,resolutiondate,labels";
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent,created,resolutiondate,labels,duedate";
 
         var json = await FetchAllPagesAsync(encodedJql, fields);
         var (report, truncated) = ParseSprintReport(json, "");
@@ -368,6 +370,11 @@ public class JiraService : IJiraService
                 DateTime.TryParse(resProp.GetString(), out var resolvedDt))
                 issue.ResolutionDate = resolvedDt;
 
+            // Due date
+            if (fields.TryGetProperty("duedate", out var dueProp) && dueProp.ValueKind != JsonValueKind.Null &&
+                DateTime.TryParse(dueProp.GetString(), out var dueDt))
+                issue.DueDate = dueDt;
+
             // Labels
             if (fields.TryGetProperty("labels", out var labelsEl) && labelsEl.ValueKind == JsonValueKind.Array)
                 issue.Labels = labelsEl.EnumerateArray()
@@ -430,6 +437,27 @@ public class JiraService : IJiraService
                     truncatedKeys.Add(issue.Key);
             }
 
+            // Changelog — count how many times this issue transitioned to "QA REJECTED"
+            if (item.TryGetProperty("changelog", out var changelog) &&
+                changelog.TryGetProperty("histories", out var histories) &&
+                histories.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var history in histories.EnumerateArray())
+                {
+                    if (!history.TryGetProperty("items", out var histItems)) continue;
+                    foreach (var change in histItems.EnumerateArray())
+                    {
+                        if (change.TryGetProperty("field", out var fieldEl) &&
+                            fieldEl.GetString() == "status" &&
+                            change.TryGetProperty("toString", out var toStatus) &&
+                            toStatus.GetString()?.Equals("QA REJECTED", StringComparison.OrdinalIgnoreCase) == true)
+                        {
+                            issue.QaRejectedCount++;
+                        }
+                    }
+                }
+            }
+
             report.Issues.Add(issue);
         }
 
@@ -488,7 +516,7 @@ public class JiraService : IJiraService
         var jql = Uri.EscapeDataString(
             $"issueType not in subTaskIssueTypes() AND issueType != Epic AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
         const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate";
-        var json = await FetchAllPagesAsync(jql, fields);
+        var json = await FetchAllPagesAsync(jql, fields, includeChangelog: true);
         var (report, truncated) = ParseSprintReport(json, "");
         await FetchMissingWorklogsAsync(report, truncated);
 

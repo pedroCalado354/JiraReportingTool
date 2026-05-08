@@ -238,6 +238,13 @@
                 <span class="tdd-tab-badge">@ScopeChangedIssues.Count</span>
             }
         </button>
+        <button class="tdd-tab @(ActiveTab=="calendar" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("calendar")'>
+            Calendar
+            @if (IssuesWithDueDate.Count > 0)
+            {
+                <span class="tdd-tab-badge" style="background:var(--tdd-primary)">@IssuesWithDueDate.Count</span>
+            }
+        </button>
         <button class="tdd-tab @(ActiveTab=="tracking" ? "tdd-tab-active" : "")" @onclick='() => SwitchTab("tracking")'>
             Team Tracking
             @if (Report != null && TrackingNeedsCount > 0)
@@ -1092,6 +1099,85 @@
             }
         }
 
+        <!-- ══ TAB: CALENDAR ═════════════════════════════════════════════════ -->
+        @if (ActiveTab == "calendar")
+        {
+            var firstDay    = new DateTime(_calYear, _calMonth, 1);
+            var daysInMonth = DateTime.DaysInMonth(_calYear, _calMonth);
+            var startOffset = ((int)firstDay.DayOfWeek + 6) % 7; // 0=Mon … 6=Sun
+            var totalCells  = startOffset + daysInMonth;
+            var calRows     = (int)Math.Ceiling(totalCells / 7.0);
+            var isCurMonth  = _calYear == DateTime.Today.Year && _calMonth == DateTime.Today.Month;
+            var issuesByDay = IssuesWithDueDate
+                .Where(i => i.DueDate!.Value.Year == _calYear && i.DueDate.Value.Month == _calMonth)
+                .GroupBy(i => i.DueDate!.Value.Day)
+                .ToDictionary(g => g.Key, g => g.ToList());
+            var monthTotal  = issuesByDay.Values.Sum(l => l.Count);
+
+            <div class="tdd-cal-root">
+
+                <!-- Month nav -->
+                <div class="tdd-cal-header">
+                    <button class="tdd-btn tdd-btn-ghost tdd-cal-nav" @onclick="CalPrevMonth">&#8249;</button>
+                    <span class="tdd-cal-month-label">@firstDay.ToString("MMMM yyyy")</span>
+                    <button class="tdd-btn tdd-btn-ghost tdd-cal-nav" @onclick="CalNextMonth">&#8250;</button>
+                    @if (monthTotal > 0)
+                    {
+                        <span class="tdd-badge tdd-badge-neutral" style="margin-left:8px">@monthTotal issue@(monthTotal == 1 ? "" : "s") due</span>
+                    }
+                    else
+                    {
+                        <span class="tdd-cal-empty-month">No issues with due dates in this month</span>
+                    }
+                </div>
+
+                <!-- Calendar grid -->
+                <div class="tdd-cal-grid-wrap">
+                    <table class="tdd-cal-table">
+                        <thead>
+                            <tr>
+                                @foreach (var dow in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" })
+                                {
+                                    <th class="tdd-cal-th">@dow</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int r = 0; r < calRows; r++)
+                            {
+                                <tr>
+                                    @for (int c = 0; c < 7; c++)
+                                    {
+                                        var idx       = r * 7 + c;
+                                        var dayNum    = idx - startOffset + 1;
+                                        var isValid   = dayNum >= 1 && dayNum <= daysInMonth;
+                                        var isToday   = isValid && isCurMonth && dayNum == DateTime.Today.Day;
+                                        var isWeekend = c >= 5;
+                                        var dayIssues = isValid && issuesByDay.TryGetValue(dayNum, out var di) ? di : [];
+
+                                        <td class="tdd-cal-cell @(!isValid ? "tdd-cal-blank" : "") @(isWeekend ? "tdd-cal-weekend" : "") @(isToday ? "tdd-cal-today" : "")">
+                                            @if (isValid)
+                                            {
+                                                <div class="tdd-cal-daynum @(isToday ? "tdd-cal-daynum-today" : "")">@dayNum</div>
+                                                @foreach (var issue in dayIssues.OrderBy(i => i.StatusCategoryKey).ThenBy(i => i.Key))
+                                                {
+                                                    <div class="tdd-cal-chip tdd-cal-chip-@(issue.StatusCategoryKey)"
+                                                         title="@issue.Key — @issue.Summary&#10;Assignee: @issue.Assignee&#10;Status: @issue.Status">
+                                                        <span class="tdd-cal-chip-key">@issue.Key</span>
+                                                        <span class="tdd-cal-chip-sum">@(issue.Summary.Length > 28 ? issue.Summary[..28] + "…" : issue.Summary)</span>
+                                                    </div>
+                                                }
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
     </div>
 }
 
@@ -1735,6 +1821,32 @@ th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
 .tdd-type-chip-task              { background: #6b7280; }
 .tdd-type-chip-subtask           { background: #9ca3af; }
 .tdd-type-chip-feature           { background: var(--tdd-primary); }
+
+/* ── Calendar tab ──────────────────────────────────────────────────────── */
+.tdd-cal-root        { padding: 4px 0; }
+.tdd-cal-header      { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.tdd-cal-month-label { font-size: 15px; font-weight: 700; color: var(--tdd-text); min-width: 155px; text-align: center; }
+.tdd-cal-nav         { font-size: 22px; font-weight: 400; line-height: 1; padding: 2px 10px; }
+.tdd-cal-empty-month { font-size: 12px; color: var(--tdd-muted); margin-left: 4px; }
+.tdd-cal-grid-wrap   { overflow-x: auto; }
+.tdd-cal-table       { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 700px; }
+.tdd-cal-th          { padding: 7px 4px; text-align: center; font-size: 12px; font-weight: 600; color: var(--tdd-muted); border-bottom: 2px solid var(--tdd-border); background: var(--tdd-surface); }
+.tdd-cal-cell        { vertical-align: top; height: 115px; border: 1px solid var(--tdd-border); padding: 5px 4px 4px; background: var(--tdd-surface); }
+.tdd-cal-blank       { background: #f7f7f9; }
+.tdd-cal-weekend     { background: #f9f9fc; }
+.tdd-cal-today       { background: #eff6ff !important; outline: 2px solid var(--tdd-primary); outline-offset: -2px; }
+.tdd-cal-daynum      { font-size: 11px; font-weight: 600; color: var(--tdd-muted); margin-bottom: 5px; }
+.tdd-cal-daynum-today {
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--tdd-primary); color: #fff;
+    width: 20px; height: 20px; border-radius: 50%; font-size: 11px;
+}
+.tdd-cal-chip        { display: flex; flex-direction: column; padding: 2px 5px 3px; border-radius: 4px; margin-bottom: 3px; font-size: 10.5px; border-left: 3px solid transparent; overflow: hidden; cursor: default; }
+.tdd-cal-chip-key    { font-weight: 700; font-size: 10px; white-space: nowrap; }
+.tdd-cal-chip-sum    { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+.tdd-cal-chip-done          { background: #dcfce7; border-left-color: #16a34a; color: #14532d; opacity: .65; }
+.tdd-cal-chip-indeterminate { background: #dbeafe; border-left-color: var(--tdd-primary); color: #1e3a8a; }
+.tdd-cal-chip-new           { background: #fef9c3; border-left-color: #eab308; color: #713f12; }
 </style>
 
 @code {
@@ -1758,6 +1870,13 @@ th.sort-desc::after{ content: " ▼"; font-size: 10px; opacity: .9; }
     private string ActiveTab = "overview";
     private HashSet<string> ExpandedMembers = [];
     private bool _renderCharts;
+
+    // ── Calendar state ───────────────────────────────────────────────────────
+    private int _calYear  = DateTime.Today.Year;
+    private int _calMonth = DateTime.Today.Month;
+    private void CalPrevMonth() { if (_calMonth == 1) { _calMonth = 12; _calYear--; } else _calMonth--; }
+    private void CalNextMonth() { if (_calMonth == 12) { _calMonth = 1;  _calYear++; } else _calMonth++; }
+    private List<SprintIssue> IssuesWithDueDate => FilteredIssues.Where(i => i.DueDate.HasValue).ToList();
 
     // ── Filters ─────────────────────────────────────────────────────────────
     private string FilterAssignee = "";

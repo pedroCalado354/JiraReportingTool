@@ -483,6 +483,67 @@
                 </div>
             </div>
 
+            <!-- ── QA Rejection by Assignee ──────────────────────────────────────────── -->
+            <div class="qm-section-label">
+                QA Rejection by Assignee
+                <span class="qm-section-note">tickets that passed through "QA REJECTED" status · counts each rejection event separately</span>
+            </div>
+            <div class="qm-card">
+                <div class="qm-table-wrap">
+                    <table class="qm-table">
+                        <thead>
+                            <tr>
+                                <th class="sortable @(SI("Assignee", _sortColQAR, _sortAscQAR))" @onclick='() => SortQAR("Assignee")'>Assignee</th>
+                                <th class="tc sortable @(SI("Total", _sortColQAR, _sortAscQAR))" @onclick='() => SortQAR("Total")' title="All tickets assigned to this person">Total Tickets</th>
+                                <th class="tc sortable @(SI("Rejected", _sortColQAR, _sortAscQAR))" @onclick='() => SortQAR("Rejected")' title="Distinct tickets that hit QA REJECTED at least once">QA Rejected Tickets</th>
+                                <th class="tc sortable @(SI("Events", _sortColQAR, _sortAscQAR))" @onclick='() => SortQAR("Events")' title="Total number of times any ticket was moved to QA REJECTED">Total Rejections</th>
+                                <th class="tc sortable @(SI("Pct", _sortColQAR, _sortAscQAR))" @onclick='() => SortQAR("Pct")' title="QA Rejected Tickets ÷ Total Tickets">% Rejected</th>
+                                <th style="width:130px">Rejection Bar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in QaRejectionByAssignee)
+                            {
+                                <tr>
+                                    <td class="qm-td-name">@r.Assignee</td>
+                                    <td class="tc">@r.TotalTickets</td>
+                                    <td class="tc @(r.RejectedTickets > 0 ? "qm-orange qm-bold" : "qm-muted")">@r.RejectedTickets</td>
+                                    <td class="tc @(r.TotalRejections > r.RejectedTickets ? "qm-red qm-bold" : "qm-muted")">@r.TotalRejections</td>
+                                    <td class="tc">
+                                        <span class="qm-chip @(r.PctRejected > 50 ? "qm-chip-red" : r.PctRejected > 25 ? "qm-chip-orange" : "qm-chip-green")">
+                                            @r.PctRejected.ToString("0.0")%
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <div class="qm-table-bar">
+                                            <div style="width:@Math.Min((int)r.PctRejected,100)%;height:100%;border-radius:3px"
+                                                 class="@(r.PctRejected > 50 ? "qm-fill-red" : r.PctRejected > 25 ? "qm-fill-orange" : "qm-fill-green")"></div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                            @if (!QaRejectionByAssignee.Any())
+                            {
+                                <tr><td colspan="6" class="qm-empty-row">No tickets found with QA REJECTED status transitions.</td></tr>
+                            }
+                        </tbody>
+                        @if (QaRejectionByAssignee.Count > 1)
+                        {
+                            <tfoot>
+                                <tr class="qm-tfoot">
+                                    <td class="qm-td-name">Total</td>
+                                    <td class="tc">@ActiveFilteredIssues.Count</td>
+                                    <td class="tc qm-orange qm-bold">@QaRejectionByAssignee.Sum(r => r.RejectedTickets)</td>
+                                    <td class="tc qm-muted">@QaRejectionByAssignee.Sum(r => r.TotalRejections)</td>
+                                    <td class="tc"></td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        }
+                    </table>
+                </div>
+            </div>
+
             <!-- ── Open Bug Age Analysis ───────────────────────────────────────────── -->
             @if (OpenBugAges.Any())
             {
@@ -642,11 +703,13 @@
     private string _sortColOBA = ""; private bool _sortAscOBA = true;
     private string _sortColBFT = ""; private bool _sortAscBFT = true;
     private string _sortColAB  = ""; private bool _sortAscAB  = true;
+    private string _sortColQAR = ""; private bool _sortAscQAR = true;
 
     private void SortBR (string c) { if (_sortColBR  == c) _sortAscBR  = !_sortAscBR;  else { _sortColBR  = c; _sortAscBR  = true; } }
     private void SortOBA(string c) { if (_sortColOBA == c) _sortAscOBA = !_sortAscOBA; else { _sortColOBA = c; _sortAscOBA = true; } }
     private void SortBFT(string c) { if (_sortColBFT == c) _sortAscBFT = !_sortAscBFT; else { _sortColBFT = c; _sortAscBFT = true; } }
     private void SortAB (string c) { if (_sortColAB  == c) _sortAscAB  = !_sortAscAB;  else { _sortColAB  = c; _sortAscAB  = true; } }
+    private void SortQAR(string c) { if (_sortColQAR == c) _sortAscQAR = !_sortAscQAR; else { _sortColQAR = c; _sortAscQAR = true; } }
 
     private static string SI(string c, string sc, bool sa) => sc == c ? (sa ? "sort-asc" : "sort-desc") : "";
 
@@ -861,6 +924,37 @@
     }
 
     private int HighBugRateCount => AssigneeBugRates.Count(m => m.BugEffortRate > 50);
+
+    // ── QA Rejection by Assignee ──────────────────────────────────────────────
+    private record QaRejectionRow(string Assignee, int TotalTickets, int RejectedTickets, int TotalRejections)
+    {
+        public double PctRejected => TotalTickets == 0 ? 0 : RejectedTickets * 100.0 / TotalTickets;
+    }
+
+    private List<QaRejectionRow> QaRejectionByAssignee
+    {
+        get
+        {
+            var q = ActiveFilteredIssues
+                .GroupBy(i => i.Assignee)
+                .Where(g => g.Any(i => i.QaRejectedCount > 0))
+                .Select(g => new QaRejectionRow(
+                    Assignee:         g.Key,
+                    TotalTickets:     g.Count(),
+                    RejectedTickets:  g.Count(i => i.QaRejectedCount > 0),
+                    TotalRejections:  g.Sum(i => i.QaRejectedCount)));
+
+            return (_sortColQAR switch
+            {
+                "Assignee"    => _sortAscQAR ? q.OrderBy(r => r.Assignee)         : q.OrderByDescending(r => r.Assignee),
+                "Total"       => _sortAscQAR ? q.OrderBy(r => r.TotalTickets)     : q.OrderByDescending(r => r.TotalTickets),
+                "Rejected"    => _sortAscQAR ? q.OrderBy(r => r.RejectedTickets)  : q.OrderByDescending(r => r.RejectedTickets),
+                "Events"      => _sortAscQAR ? q.OrderBy(r => r.TotalRejections)  : q.OrderByDescending(r => r.TotalRejections),
+                "Pct"         => _sortAscQAR ? q.OrderBy(r => r.PctRejected)      : q.OrderByDescending(r => r.PctRejected),
+                _             => q.OrderByDescending(r => r.TotalRejections)
+            }).ToList();
+        }
+    }
 
     // ── Bug priority breakdown ────────────────────────────────────────────────
     private record PriorityBucket(string Priority, int Open, int InProgress, int Resolved);
