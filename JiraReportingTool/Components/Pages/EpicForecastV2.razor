@@ -1,0 +1,561 @@
+@page "/epic-forecast-v2"
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+@using JiraReportingTool.Models
+
+<PageTitle>Epic Forecast — Predictive View</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ═════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon" style="background: linear-gradient(135deg,#0ea5e9 0%,#6366f1 100%); box-shadow: 0 8px 24px rgba(14,165,233,0.30);">
+                <i class="bi bi-graph-up-arrow"></i>
+            </div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Predictive Forecast</span>
+                <h1 class="v2-hero-title">Epic Sprint Forecast</h1>
+                <span class="v2-hero-sub">
+                    @if (Report is not null)
+                    {
+                        <strong>@LoadedEpicKey</strong>
+                        <span> · @(Report.SprintName is { Length: > 0 } sn ? sn : "Sprint") · </span>
+                        <span>@EffectiveDaysRemaining workdays left</span>
+                    }
+                    else
+                    {
+                        <span>Capacity vs commitment · feasibility · what-if · per-assignee burndown</span>
+                    }
+                </span>
+            </div>
+            <div class="v2-hero-spacer"></div>
+            @if (Report is not null)
+            {
+                <div class="v2-hero-actions">
+                    <span class="v2-rag @VerdictRag">@Verdict</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ LOAD CONTROL BAR ════════════════════════════════════════════════ -->
+    <div class="v2-control-bar">
+        <div class="v2-field" style="min-width:140px">
+            <label class="v2-label">Sprint ID</label>
+            <input class="v2-input" placeholder="e.g. 6690"
+                   @bind="SprintId" @onkeyup="HandleSprintKeyUp" />
+        </div>
+
+        <button class="v2-btn v2-btn-ghost" @onclick="LoadSprintEpics"
+                disabled="@(IsLoadingEpics || string.IsNullOrWhiteSpace(SprintId))">
+            @if (IsLoadingEpics) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-arrow-down-circle"></i> }
+            <span>Load sprint</span>
+        </button>
+
+        @if (SprintEpics.Count > 0)
+        {
+            <div class="v2-field" style="min-width:280px">
+                <label class="v2-label">Epic</label>
+                <select class="v2-select" @bind="EpicKey">
+                    <option value="">— select an epic —</option>
+                    @foreach (var ep in SprintEpics)
+                    {
+                        <option value="@ep.Key">@ep.Key — @ep.Name</option>
+                    }
+                </select>
+            </div>
+
+            <div class="v2-field">
+                <label class="v2-label">Hours / day · <strong>@HoursPerDay h</strong></label>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <span class="v2-hint">1h</span>
+                    <input type="range" min="1" max="12" step="0.5" style="width:140px"
+                           @bind="HoursPerDay" @bind:event="oninput" />
+                    <span class="v2-hint">12h</span>
+                </div>
+            </div>
+
+            <button class="v2-btn v2-btn-primary" @onclick="LoadData"
+                    disabled="@(IsLoading || string.IsNullOrWhiteSpace(EpicKey))">
+                @if (IsLoading) { <span class="v2-spin"></span> }
+                else { <i class="bi bi-magic"></i> }
+                <span>Forecast</span>
+            </button>
+        }
+        else if (NoEpicsFound)
+        {
+            <span class="v2-text-muted v2-hint">No epics found in this sprint.</span>
+        }
+    </div>
+
+    @if (ErrorMessage != null)
+    {
+        <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle"></i> @ErrorMessage</div>
+    }
+
+    @if (Report is null && !IsLoading)
+    {
+        <div class="v2-empty">
+            <div class="v2-empty-icon"><i class="bi bi-rocket-takeoff"></i></div>
+            <div class="v2-empty-title">Pick a sprint and epic to forecast</div>
+            <div>You'll get capacity vs commitment, P50/P85 bands and per-member feasibility.</div>
+        </div>
+    }
+
+    @if (Report is not null)
+    {
+        <!-- ═══ MAIN VERDICT GAUGE ══════════════════════════════════════════ -->
+        <div class="v2-gauge">
+            <div class="v2-gauge-score @($"v2-gauge-score-{VerdictBand}")">@($"{ConfidencePct:F0}%")</div>
+            <div class="v2-gauge-mid">
+                <div class="v2-gauge-label">Confidence to land on time</div>
+                <div class="v2-gauge-track">
+                    <div class="v2-gauge-marker" style="left:@ConfidencePct%;border-color:@VerdictMarkerColor"></div>
+                </div>
+                <div class="v2-gauge-desc">@VerdictMessage</div>
+            </div>
+            <div class="v2-gauge-side">
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@($"{TotalRemainingHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Remaining</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val v2-text-success">@($"{CapacityHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Capacity</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(BufferHours >= 0 ? "v2-text-success" : "v2-text-danger")">
+                        @(BufferHours >= 0 ? "+" : "")@($"{BufferHours:F0}h")
+                    </div>
+                    <div class="v2-gauge-side-lbl">@(BufferHours >= 0 ? "Buffer" : "Deficit")</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@TeamMembersCount</div>
+                    <div class="v2-gauge-side-lbl">Members</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ KPI GRID ════════════════════════════════════════════════════ -->
+        <div class="v2-kpi-grid">
+            <div class="v2-kpi v2-kpi-success">
+                <div class="v2-kpi-head"><i class="bi bi-check-circle"></i>Done</div>
+                <div class="v2-kpi-value">@FilteredDoneCount<span class="v2-kpi-of">/ @FilteredIssues.Count</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill v2-bar-fill-success" style="width:@FilteredCompletionPct%"></div>
+                </div>
+                <div class="v2-kpi-sub">@($"{FilteredCompletionPct:F0}%") of issues complete</div>
+            </div>
+
+            <div class="v2-kpi @(IsFeasible ? "v2-kpi-success" : "v2-kpi-danger")">
+                <div class="v2-kpi-head"><i class="bi bi-clipboard-check"></i>Feasibility</div>
+                <div class="v2-kpi-value">@(IsFeasible ? "Yes" : "No")</div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(IsFeasible ? "v2-bar-fill-success" : "v2-bar-fill-danger")"
+                         style="width:@(CapacityHours > 0 ? Math.Min(TotalRemainingHours / CapacityHours * 100, 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@(IsFeasible ? $"{(CapacityHours - TotalRemainingHours):F0}h spare" : $"{(TotalRemainingHours - CapacityHours):F0}h over budget")</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-graph-up"></i>P50 finish (best half)</div>
+                <div class="v2-kpi-value v2-kpi-value-sm">@($"{P50RemainingHours:F0}h")</div>
+                <div class="v2-kpi-sub">vs @($"{CapacityHours:F0}h") cap → @(P50RemainingHours <= CapacityHours ? "fits" : "tight")</div>
+            </div>
+
+            <div class="v2-kpi @(P85RemainingHours <= CapacityHours ? "v2-kpi-warn" : "v2-kpi-danger")">
+                <div class="v2-kpi-head"><i class="bi bi-shield-exclamation"></i>P85 finish (pessimistic)</div>
+                <div class="v2-kpi-value v2-kpi-value-sm">@($"{P85RemainingHours:F0}h")</div>
+                <div class="v2-kpi-sub">vs @($"{CapacityHours:F0}h") cap → @(P85RemainingHours <= CapacityHours ? "still fits" : "slip risk")</div>
+            </div>
+
+            <div class="v2-kpi @(NoEstimateCount > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-question-circle"></i>Unestimated</div>
+                <div class="v2-kpi-value">@NoEstimateCount</div>
+                <div class="v2-kpi-sub">issues without remaining estimate</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Avg load / member</div>
+                <div class="v2-kpi-value v2-kpi-value-sm">@($"{AvgLoadHours:F1}h")</div>
+                <div class="v2-kpi-sub">across @TeamMembersCount member@(TeamMembersCount == 1 ? "" : "s")</div>
+            </div>
+        </div>
+
+        <!-- ═══ WHAT-IF + CAPACITY VISUALIZATION ════════════════════════════ -->
+        <div class="v2-grid-2">
+            <!-- Capacity bar visualization -->
+            <div class="v2-card v2-card-lg">
+                <div class="v2-section-title"><i class="bi bi-bar-chart-fill" style="color:#6366f1"></i>Capacity vs Commitment</div>
+                <div style="position:relative;margin-top:14px;margin-bottom:8px">
+                    @{
+                        var maxScale = Math.Max(CapacityHours, TotalRemainingHours) * 1.10;
+                        if (maxScale <= 0) maxScale = 1;
+                        var capPct  = (int)(CapacityHours / maxScale * 100);
+                        var remPct  = (int)(TotalRemainingHours / maxScale * 100);
+                        var p50Pct  = (int)(P50RemainingHours / maxScale * 100);
+                        var p85Pct  = (int)(P85RemainingHours / maxScale * 100);
+                    }
+                    <!-- Capacity bar -->
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                        <span style="width:90px;font-size:11px;color:var(--v2-ink-3);font-weight:600">Capacity</span>
+                        <div style="flex:1;height:24px;background:#eef0f6;border-radius:6px;position:relative;overflow:hidden">
+                            <div style="position:absolute;inset:0;width:@capPct%;background:var(--v2-success-grad);border-radius:6px"></div>
+                        </div>
+                        <span style="width:80px;text-align:right;font-weight:700">@($"{CapacityHours:F0}h")</span>
+                    </div>
+                    <!-- Remaining bar -->
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                        <span style="width:90px;font-size:11px;color:var(--v2-ink-3);font-weight:600">Committed</span>
+                        <div style="flex:1;height:24px;background:#eef0f6;border-radius:6px;position:relative;overflow:hidden">
+                            <div style="position:absolute;inset:0;width:@remPct%;background:@(IsFeasible ? "var(--v2-brand-grad)" : "var(--v2-danger-grad)");border-radius:6px"></div>
+                            @if (CapacityHours > 0)
+                            {
+                                var capLine = (int)(CapacityHours / maxScale * 100);
+                                <div style="position:absolute;left:@capLine%;top:0;bottom:0;width:2px;background:rgba(15,23,42,0.5)"></div>
+                            }
+                        </div>
+                        <span style="width:80px;text-align:right;font-weight:700;@(IsFeasible ? "" : "color:var(--v2-danger)")">@($"{TotalRemainingHours:F0}h")</span>
+                    </div>
+                    <!-- P50 -->
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                        <span style="width:90px;font-size:11px;color:var(--v2-ink-3);font-weight:600">P50 estimate</span>
+                        <div style="flex:1;height:14px;background:#eef0f6;border-radius:4px;position:relative;overflow:hidden">
+                            <div style="position:absolute;inset:0;width:@p50Pct%;background:#a5b4fc;border-radius:4px"></div>
+                        </div>
+                        <span style="width:80px;text-align:right;font-size:12px">@($"{P50RemainingHours:F0}h")</span>
+                    </div>
+                    <!-- P85 -->
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                        <span style="width:90px;font-size:11px;color:var(--v2-ink-3);font-weight:600">P85 estimate</span>
+                        <div style="flex:1;height:14px;background:#eef0f6;border-radius:4px;position:relative;overflow:hidden">
+                            <div style="position:absolute;inset:0;width:@p85Pct%;background:#fb923c;border-radius:4px"></div>
+                        </div>
+                        <span style="width:80px;text-align:right;font-size:12px">@($"{P85RemainingHours:F0}h")</span>
+                    </div>
+                </div>
+                <div class="v2-divider"></div>
+                <div class="v2-row"><span class="v2-row-label">Members</span><span class="v2-row-value">@TeamMembersCount</span></div>
+                <div class="v2-row"><span class="v2-row-label">Workdays remaining</span><span class="v2-row-value">@EffectiveDaysRemaining d</span></div>
+                <div class="v2-row"><span class="v2-row-label">Hours / day / member</span><span class="v2-row-value">@HoursPerDay h</span></div>
+            </div>
+
+            <!-- What-if -->
+            <div class="v2-card v2-card-lg">
+                <div class="v2-section-title"><i class="bi bi-sliders" style="color:#7c3aed"></i>What-if scenarios</div>
+                <div style="font-size:12px;color:var(--v2-ink-3);margin-bottom:12px">
+                    See how the verdict changes if pace, scope or duration shift.
+                </div>
+                @{
+                    var scenarios = new[]
+                    {
+                        ("Current", 1.0, 1.0, 0),
+                        ("+1 day", 1.0, 1.0, 1),
+                        ("+2 days", 1.0, 1.0, 2),
+                        ("Productivity +20%", 1.0, 1.20, 0),
+                        ("Productivity −20%", 1.0, 0.80, 0),
+                        ("Descope 20%", 0.80, 1.0, 0),
+                    };
+                }
+                <table class="v2-table" style="margin:0">
+                    <thead>
+                        <tr><th>Scenario</th><th class="v2-table-num">Need</th><th class="v2-table-num">Cap</th><th>Verdict</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var s in scenarios)
+                        {
+                            var need = TotalRemainingHours * s.Item2;
+                            var cap = (EffectiveDaysRemaining + s.Item4) * HoursPerDay * TeamMembersCount * s.Item3;
+                            var ok  = need <= cap;
+                            var tight = !ok && need <= cap * 1.15;
+                            <tr>
+                                <td style="font-weight:600">@s.Item1</td>
+                                <td class="v2-table-num">@($"{need:F0}h")</td>
+                                <td class="v2-table-num">@($"{cap:F0}h")</td>
+                                <td>
+                                    <span class="v2-pill @(ok ? "v2-pill-success" : tight ? "v2-pill-warn" : "v2-pill-danger")">
+                                        @(ok ? "Fits" : tight ? "Tight" : "Slips")
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ═══ PER-ASSIGNEE FORECAST ═══════════════════════════════════════ -->
+        <div class="v2-section v2-mt-lg">
+            <div class="v2-section-title">
+                <i class="bi bi-people-fill"></i>Per-Member Forecast
+                <span class="v2-section-note">capacity utilisation across each contributor</span>
+            </div>
+            <div class="v2-grid-3">
+                @{ var idx = 0; }
+                @foreach (var am in AssigneeBreakdown)
+                {
+                    idx++;
+                    var memCapPct = CapacityHours > 0 ? (int)Math.Min(am.RemainingHours / CapacityHours * 100, 100) : 0;
+                    var capOver = am.RemainingHours > CapacityHours;
+                    var status = capOver ? "danger" : am.RemainingHours > CapacityHours * 0.85 ? "warn" : "success";
+                    <div class="v2-risk-card @($"v2-risk-card-{status}")">
+                        <div style="display:flex;align-items:center;gap:10px">
+                            <span class="v2-avatar v2-avatar-lg @($"v2-avatar-grad-{1 + (idx % 5)}")">@Initials(am.Name)</span>
+                            <div style="flex:1;min-width:0">
+                                <div style="font-weight:700;font-size:14px" class="v2-truncate">@am.Name</div>
+                                <div class="v2-hint">@am.Done done · @am.InProgress active · @am.ToDo to do</div>
+                            </div>
+                            <span class="v2-pill @($"v2-pill-{status}")">@(capOver ? "Over" : status == "warn" ? "Tight" : "Fits")</span>
+                        </div>
+                        <div style="margin-top:10px">
+                            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                                <span class="v2-text-muted">Remaining</span>
+                                <span class="v2-row-value @(capOver ? "v2-text-danger" : "")">@($"{am.RemainingHours:F1}h") / @($"{CapacityHours:F0}h")</span>
+                            </div>
+                            <div class="v2-bar v2-tall-bar">
+                                <div class="v2-bar-fill @($"v2-bar-fill-{status}")" style="width:@memCapPct%"></div>
+                            </div>
+                        </div>
+                        @if (capOver)
+                        {
+                            <div style="font-size:11px;color:var(--v2-danger);font-weight:600;margin-top:6px">
+                                +@($"{(am.RemainingHours - CapacityHours):F1}h") over capacity
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- ═══ ISSUE FEASIBILITY TABLE ═════════════════════════════════════ -->
+        <div class="v2-section v2-mt-lg">
+            <div class="v2-section-title"><i class="bi bi-list-check"></i>Issue feasibility</div>
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Summary</th>
+                            <th>Assignee</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th class="v2-table-num">Estimate</th>
+                            <th class="v2-table-num">Logged</th>
+                            <th class="v2-table-num">Remaining</th>
+                            <th>Progress</th>
+                            <th>Feasible</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var i in FilteredIssues
+                            .OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 })
+                            .ThenByDescending(i => i.RemainingEstimateSeconds))
+                        {
+                            var pct = IssuePct(i);
+                            var done = i.StatusCategoryKey == "done";
+                            var noEst = !done && i.RemainingEstimateSeconds == 0 && i.OriginalEstimateSeconds == 0;
+                            var feasible = done || i.RemainingEstimateSeconds == 0
+                                || i.RemainingEstimateSeconds <= CapacityHours * 3600;
+                            <tr class="@(done ? "is-done" : "")">
+                                <td class="v2-table-key">@i.Key</td>
+                                <td class="v2-truncate" style="max-width:280px">@i.Summary</td>
+                                <td>@i.Assignee</td>
+                                <td><span class="v2-chip v2-chip-@(i.IssueType.ToLower())">@i.IssueType</span></td>
+                                <td><span class="v2-pill v2-pill-@(done ? "success" : i.StatusCategoryKey == "indeterminate" ? "brand" : "neutral")">@i.Status</span></td>
+                                <td class="v2-table-num">@(i.OriginalEstimate == "-" ? "—" : i.OriginalEstimate)</td>
+                                <td class="v2-table-num">@(i.TimeSpent == "-" ? "—" : i.TimeSpent)</td>
+                                <td class="v2-table-num">@(done ? "—" : noEst ? "—" : i.RemainingEstimate == "-" ? "—" : i.RemainingEstimate)</td>
+                                <td style="min-width:100px">
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <div class="v2-bar" style="flex:1;height:5px">
+                                            <div class="v2-bar-fill @(pct > 100 ? "v2-bar-fill-danger" : pct == 100 ? "v2-bar-fill-success" : "")"
+                                                 style="width:@Math.Min(pct, 100)%"></div>
+                                        </div>
+                                        <span class="v2-row-value" style="font-size:11px;min-width:32px;text-align:right">@pct%</span>
+                                    </div>
+                                </td>
+                                <td>
+                                    @if (done)
+                                    {
+                                        <span class="v2-pill v2-pill-success"><i class="bi bi-check"></i> Done</span>
+                                    }
+                                    else if (noEst)
+                                    {
+                                        <span class="v2-pill v2-pill-warn">No est.</span>
+                                    }
+                                    else if (!feasible)
+                                    {
+                                        <span class="v2-pill v2-pill-danger">Slip risk</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="v2-pill v2-pill-success">Fits</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    // ── State ────────────────────────────────────────────────────────────────
+    private string EpicKey = "";
+    private string SprintId = "";
+    private double HoursPerDay = 6;
+    private bool IsLoading;
+    private bool IsLoadingEpics;
+    private bool NoEpicsFound;
+    private string? ErrorMessage;
+    private SprintReport? Report;
+    private string LoadedEpicKey = "";
+    private List<EpicSummary> SprintEpics = [];
+    private int EffectiveDaysRemaining;
+
+    // ── Derived ──────────────────────────────────────────────────────────────
+    private List<SprintIssue> FilteredIssues => Report?.Issues
+        .Where(i => !i.Key.Contains("JSSUPPORT", StringComparison.OrdinalIgnoreCase))
+        .ToList() ?? [];
+
+    private int FilteredDoneCount       => FilteredIssues.Count(i => i.StatusCategoryKey == "done");
+    private int FilteredInProgressCount => FilteredIssues.Count(i => i.StatusCategoryKey == "indeterminate");
+    private int FilteredToDoCount       => FilteredIssues.Count(i => i.StatusCategoryKey == "new");
+    private double FilteredCompletionPct => FilteredIssues.Count == 0 ? 0
+        : FilteredDoneCount * 100.0 / FilteredIssues.Count;
+
+    private double TotalRemainingHours => FilteredIssues
+        .Where(i => i.StatusCategoryKey != "done")
+        .Sum(i => i.RemainingEstimateSeconds) / 3600.0;
+
+    private int NoEstimateCount => FilteredIssues
+        .Count(i => i.StatusCategoryKey != "done" && i.RemainingEstimateSeconds == 0 && i.OriginalEstimateSeconds == 0);
+
+    private int TeamMembersCount => Math.Max(1, FilteredIssues
+        .Where(i => i.Assignee != "Unassigned")
+        .Select(i => i.Assignee).Distinct().Count());
+
+    private double CapacityHours => EffectiveDaysRemaining * HoursPerDay * TeamMembersCount;
+
+    private double BufferHours => CapacityHours - TotalRemainingHours;
+    private bool   IsFeasible => TotalRemainingHours <= CapacityHours;
+    private double AvgLoadHours => TeamMembersCount == 0 ? 0 : TotalRemainingHours / TeamMembersCount;
+
+    // P50 / P85 — applies a spread based on historical estimate-vs-actual variance.
+    // Without a historical model, use a conservative spread: 10% / 30%.
+    private double P50RemainingHours => TotalRemainingHours * 1.05;
+    private double P85RemainingHours => TotalRemainingHours * 1.30;
+
+    // Confidence — sigmoid of the ratio capacity/remaining
+    private double ConfidencePct
+    {
+        get
+        {
+            if (TotalRemainingHours <= 0) return 100;
+            var ratio = CapacityHours / Math.Max(0.001, TotalRemainingHours);
+            // Map ratio to confidence: 0.6 -> 0%, 1.0 -> 50%, 1.4+ -> 95%
+            var conf = (ratio - 0.6) / (1.4 - 0.6) * 100;
+            return Math.Clamp(conf, 0, 100);
+        }
+    }
+
+    private string Verdict => ConfidencePct switch
+    {
+        >= 75 => "On Track",
+        >= 50 => "Tight",
+        >= 25 => "At Risk",
+        _     => "Over Budget"
+    };
+
+    private string VerdictBand => ConfidencePct >= 75 ? "success"
+        : ConfidencePct >= 50 ? "warn" : "danger";
+
+    private string VerdictRag => ConfidencePct >= 75 ? "v2-rag-g"
+        : ConfidencePct >= 50 ? "v2-rag-a" : "v2-rag-r";
+
+    private string VerdictMarkerColor => VerdictBand switch
+    {
+        "success" => "#059669",
+        "warn"    => "#d97706",
+        _         => "#dc2626"
+    };
+
+    private string VerdictMessage => ConfidencePct switch
+    {
+        >= 90 => "Plenty of buffer at current pace — sprint commitments are well-covered.",
+        >= 75 => "On track — capacity comfortably covers remaining work.",
+        >= 50 => "Tight — small buffer; watch slippage on individual issues.",
+        >= 25 => "At risk — remaining work exceeds capacity at typical pace.",
+        _     => "Over budget — descope or extend to land safely."
+    };
+
+    // ── Per-assignee breakdown ───────────────────────────────────────────────
+    private record AssigneeMetrics(string Name, double RemainingHours, int Done, int InProgress, int ToDo);
+
+    private List<AssigneeMetrics> AssigneeBreakdown => FilteredIssues
+        .GroupBy(i => i.Assignee)
+        .Select(g => new AssigneeMetrics(
+            g.Key,
+            g.Where(i => i.StatusCategoryKey != "done").Sum(i => i.RemainingEstimateSeconds) / 3600.0,
+            g.Count(i => i.StatusCategoryKey == "done"),
+            g.Count(i => i.StatusCategoryKey == "indeterminate"),
+            g.Count(i => i.StatusCategoryKey == "new")))
+        .OrderByDescending(a => a.RemainingHours)
+        .ToList();
+
+    // ── Loading ──────────────────────────────────────────────────────────────
+    private async Task LoadSprintEpics()
+    {
+        if (!int.TryParse(SprintId.Trim(), out var sprintId)) return;
+        IsLoadingEpics = true; NoEpicsFound = false;
+        SprintEpics = []; EpicKey = ""; Report = null; ErrorMessage = null;
+        try
+        {
+            SprintEpics = await JiraService.GetEpicsInSprintAsync(sprintId);
+            NoEpicsFound = SprintEpics.Count == 0;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load sprint: {ex.Message}"; }
+        finally { IsLoadingEpics = false; }
+    }
+
+    private async Task LoadData()
+    {
+        if (string.IsNullOrWhiteSpace(EpicKey) || !int.TryParse(SprintId.Trim(), out var sprintId)) return;
+        IsLoading = true; ErrorMessage = null; Report = null;
+        try
+        {
+            LoadedEpicKey = EpicKey.Trim().ToUpper();
+            Report = await JiraService.GetEpicSprintForecastAsync(LoadedEpicKey, sprintId);
+            EffectiveDaysRemaining = Report.DaysRemaining;
+            if (Report.TotalIssues == 0)
+                ErrorMessage = $"No issues found for epic {LoadedEpicKey} in sprint {sprintId}.";
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    private async Task HandleSprintKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadSprintEpics();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    private static int IssuePct(SprintIssue i)
+    {
+        if (i.StatusCategoryKey == "done") return 100;
+        if (i.OriginalEstimateSeconds == 0) return 0;
+        return (int)((double)i.TimeSpentSeconds / i.OriginalEstimateSeconds * 100);
+    }
+
+    private static string Initials(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name.Length >= 2 ? name[..2].ToUpper() : name.ToUpper();
+    }
+}

@@ -1,0 +1,689 @@
+@page "/epic-progress-v2"
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+@using JiraReportingTool.Models
+
+<PageTitle>Epic Progress — Executive View</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ═════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon" style="background: linear-gradient(135deg,#7c3aed 0%,#ec4899 100%); box-shadow: 0 8px 24px rgba(124,58,237,0.30);">
+                <i class="bi bi-collection-fill"></i>
+            </div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Epic Progress</span>
+                <h1 class="v2-hero-title">@(EpicData?.Summary is { Length: > 0 } s ? s : "Epic Progress")</h1>
+                <span class="v2-hero-sub">
+                    @if (EpicData is not null)
+                    {
+                        <strong>@EpicData.Key</strong>
+                        <span> · @EpicData.Status · </span>
+                        <span>@(string.IsNullOrEmpty(EpicData.Assignee) ? "Unassigned" : EpicData.Assignee)</span>
+                        @if (Metrics?.Sprint is not null)
+                        {
+                            <span> · Sprint scope: <strong>@Metrics.Sprint.SprintName</strong></span>
+                        }
+                    }
+                    else
+                    {
+                        <span>Executive epic snapshot · delivery · effort · quality · projection</span>
+                    }
+                </span>
+            </div>
+            <div class="v2-hero-spacer"></div>
+            @if (Metrics is not null)
+            {
+                <div class="v2-hero-actions">
+                    <span class="v2-rag @RagClass">@RagText</span>
+                    <span class="v2-pill v2-pill-brand"><i class="bi bi-percent"></i> @($"{Metrics.Delivery.CompletionPct:F0}%")</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ LOAD CONTROL BAR ════════════════════════════════════════════════ -->
+    <div class="v2-control-bar">
+        <div class="v2-field" style="min-width:200px">
+            <label class="v2-label">Epic Key</label>
+            <input class="v2-input" placeholder="e.g. JM-15977"
+                   @bind="EpicKeyInput" @bind:event="oninput" @onkeypress="OnEpicKeyPress" />
+        </div>
+
+        <button class="v2-btn v2-btn-primary" @onclick="LoadEpicAsync" disabled="@IsLoading">
+            @if (IsLoadingEpic) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-search"></i> }
+            <span>Load Epic</span>
+        </button>
+
+        <div class="v2-field" style="min-width:140px">
+            <label class="v2-label">Sprint Filter (optional)</label>
+            <input class="v2-input v2-input-sm" type="number" placeholder="Sprint ID"
+                   @bind="SprintIdInput" @bind:event="oninput"
+                   disabled="@(EpicData is null)" />
+        </div>
+
+        <button class="v2-btn v2-btn-ghost" @onclick="ApplySprintFilterAsync"
+                disabled="@(EpicData is null || IsLoadingSprint || string.IsNullOrWhiteSpace(SprintIdInput))">
+            @if (IsLoadingSprint) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-funnel"></i> }
+            <span>Apply</span>
+        </button>
+
+        @if (Metrics?.Sprint is not null)
+        {
+            <button class="v2-btn v2-btn-ghost" @onclick="ClearSprintFilter">
+                <i class="bi bi-x"></i> Clear sprint filter
+            </button>
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(InfoMessage))
+    {
+        <div class="v2-alert v2-alert-info"><i class="bi bi-info-circle"></i> @InfoMessage</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle"></i> @ErrorMessage</div>
+    }
+    @if (IsLoading)
+    {
+        <div class="v2-card" style="display:flex;align-items:center;gap:10px">
+            <span class="v2-spin" style="border-color:rgba(99,102,241,0.20);border-top-color:var(--v2-brand)"></span>
+            <span class="v2-text-muted">Loading epic data from Jira…</span>
+        </div>
+    }
+
+    @if (Metrics is null && !IsLoading)
+    {
+        <div class="v2-empty">
+            <div class="v2-empty-icon"><i class="bi bi-search"></i></div>
+            <div class="v2-empty-title">Enter an epic key to begin</div>
+            <div>You'll get an executive snapshot — delivery health, effort burn, quality and forecast.</div>
+        </div>
+    }
+
+    @if (Metrics is not null)
+    {
+        var m = Metrics;
+
+        <!-- ═══ HEALTH GAUGE ════════════════════════════════════════════════ -->
+        <div class="v2-gauge">
+            <div class="v2-gauge-score @($"v2-gauge-score-{HealthBand}")">@HealthScore</div>
+            <div class="v2-gauge-mid">
+                <div class="v2-gauge-label">Epic Health Score</div>
+                <div class="v2-gauge-track">
+                    <div class="v2-gauge-marker" style="left:@HealthScore%;border-color:@HealthMarkerColor"></div>
+                </div>
+                <div class="v2-gauge-desc">@HealthMessage</div>
+            </div>
+            <div class="v2-gauge-side">
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@m.Delivery.Total</div>
+                    <div class="v2-gauge-side-lbl">Total tasks</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val v2-text-success">@m.Delivery.Done</div>
+                    <div class="v2-gauge-side-lbl">Done</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@EpicProgressCalculator.FormatSeconds(m.Effort.SpentSec)</div>
+                    <div class="v2-gauge-side-lbl">Logged</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(m.Effort.EffortPct > 100 ? "v2-text-danger" : "")">@($"{m.Effort.EffortPct:F0}%")</div>
+                    <div class="v2-gauge-side-lbl">Effort %</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ KPI GRID ════════════════════════════════════════════════════ -->
+        <div class="v2-kpi-grid">
+            <div class="v2-kpi @CompletionKpiClass">
+                <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Completion</div>
+                <div class="v2-kpi-value">@($"{m.Delivery.CompletionPct:F0}%")</div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill v2-bar-fill-success" style="width:@Math.Min(m.Delivery.CompletionPct, 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@m.Delivery.Done of @m.Delivery.Total tasks done</div>
+            </div>
+
+            <div class="v2-kpi @EffortKpiClass">
+                <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Effort burn</div>
+                <div class="v2-kpi-value @(m.Effort.EffortPct > 110 ? "v2-text-danger" : "")">@($"{m.Effort.EffortPct:F0}%")</div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(m.Effort.EffortPct > 110 ? "v2-bar-fill-danger" : m.Effort.EffortPct > 90 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@Math.Min(m.Effort.EffortPct, 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@EpicProgressCalculator.FormatSeconds(m.Effort.SpentSec) of @EpicProgressCalculator.FormatSeconds(m.Effort.TotalEstimateSec)</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-clock"></i>Remaining</div>
+                <div class="v2-kpi-value">@EpicProgressCalculator.FormatSeconds(m.Effort.RemainingEstSec)</div>
+                <div class="v2-kpi-sub">@(m.Delivery.InProgress + m.Delivery.ToDo) tasks remaining</div>
+            </div>
+
+            <div class="v2-kpi @(m.Quality.OpenBugs > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-bug"></i>Quality</div>
+                <div class="v2-kpi-value">@m.Quality.OpenBugs<span class="v2-kpi-of">/ @m.Quality.TotalBugs bugs</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill v2-bar-fill-warn" style="width:@Math.Min(m.Quality.BugRatio, 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@($"{m.Quality.BugRatio:F1}%") bug share · @($"{m.Quality.BugOverhead:F0}%") overhead</div>
+            </div>
+
+            <div class="v2-kpi @(ForecastClass)">
+                <div class="v2-kpi-head"><i class="bi bi-flag"></i>Projection</div>
+                <div class="v2-kpi-value v2-kpi-value-sm">@ProjectedEndLabel</div>
+                <div class="v2-kpi-sub">@ProjectionMessage</div>
+            </div>
+
+            <div class="v2-kpi @(m.Risk.StaleInProgress + m.Risk.Unestimated > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-shield-exclamation"></i>Risk signals</div>
+                <div class="v2-kpi-value">@(m.Risk.StaleInProgress + m.Risk.Unestimated + m.Risk.Overlogged + m.Risk.Unassigned)</div>
+                <div class="v2-kpi-sub">@m.Risk.StaleInProgress stale · @m.Risk.Unestimated unestimated</div>
+            </div>
+        </div>
+
+        <!-- ═══ DETAIL GRID — Delivery, Effort, Quality, Risk ═══════════════ -->
+        <div class="v2-grid-2">
+            <!-- Delivery panel -->
+            <div class="v2-card v2-card-lg">
+                <div class="v2-section-title"><i class="bi bi-box-seam" style="color:#6366f1"></i>Delivery</div>
+                <div style="display:flex;gap:18px;align-items:center">
+                    <div class="v2-donut v2-donut-lg" style="--p:@((int)m.Delivery.CompletionPct);--c1:#6366f1">
+                        <span>@((int)m.Delivery.CompletionPct)%</span>
+                    </div>
+                    <div style="flex:1">
+                        <div class="v2-bar-stack v2-tall-bar">
+                            <span style="width:@(SafePct(m.Delivery.Done, m.Delivery.Total))%; background:var(--v2-success-grad)" title="Done"></span>
+                            <span style="width:@(SafePct(m.Delivery.InProgress, m.Delivery.Total))%; background:var(--v2-brand-grad)" title="In Progress"></span>
+                            <span style="width:@(SafePct(m.Delivery.ToDo, m.Delivery.Total))%; background:linear-gradient(90deg,#94a3b8,#64748b)" title="To Do"></span>
+                        </div>
+                        <div style="display:flex;gap:14px;margin-top:8px;font-size:11px;color:var(--v2-ink-3)">
+                            <span><span class="v2-dot v2-dot-success"></span> Done @m.Delivery.Done</span>
+                            <span><span class="v2-dot v2-dot-brand"></span> Active @m.Delivery.InProgress</span>
+                            <span><span class="v2-dot v2-dot-neutral"></span> To do @m.Delivery.ToDo</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="v2-divider"></div>
+                <div class="v2-row"><span class="v2-row-label">Total work items</span><span class="v2-row-value">@m.Delivery.Total</span></div>
+                <div class="v2-row"><span class="v2-row-label">Tasks vs Bugs</span><span class="v2-row-value">@m.Delivery.TotalTasks tasks · @m.Delivery.TotalBugs bugs</span></div>
+                <div class="v2-row"><span class="v2-row-label">Active</span><span class="v2-row-value">@m.Delivery.InProgress</span></div>
+                @if (m.Sprint is not null)
+                {
+                    <div class="v2-divider"></div>
+                    <div style="font-size:11px;font-weight:700;color:var(--v2-brand);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:6px">Sprint scope</div>
+                    <div class="v2-row"><span class="v2-row-label">Sprint tasks</span><span class="v2-row-value">@m.Sprint.Total</span></div>
+                    <div class="v2-row"><span class="v2-row-label">Sprint done</span><span class="v2-row-value">@m.Sprint.Done (@($"{m.Sprint.CompletionPct:F0}%"))</span></div>
+                    <div class="v2-row"><span class="v2-row-label">Epic contribution</span><span class="v2-row-value">@($"{m.Sprint.EpicContributionPct:F0}%") of total</span></div>
+                }
+            </div>
+
+            <!-- Effort panel -->
+            <div class="v2-card v2-card-lg">
+                <div class="v2-section-title"><i class="bi bi-stopwatch" style="color:#10b981"></i>Effort</div>
+                <div class="v2-stat-row">
+                    <span class="v2-num-lg @(m.Effort.EffortPct > 110 ? "v2-text-danger" : "")">@($"{m.Effort.EffortPct:F0}%")</span>
+                    <span class="v2-num-suffix">logged vs estimate</span>
+                </div>
+                <div class="v2-bar v2-tall-bar" style="margin:10px 0 16px">
+                    <div class="v2-bar-fill @(m.Effort.EffortPct > 110 ? "v2-bar-fill-danger" : m.Effort.EffortPct > 90 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@Math.Min(m.Effort.EffortPct, 100)%"></div>
+                </div>
+                <div class="v2-row"><span class="v2-row-label">Estimated</span><span class="v2-row-value">@EpicProgressCalculator.FormatSeconds(m.Effort.TotalEstimateSec)</span></div>
+                <div class="v2-row"><span class="v2-row-label">Logged</span><span class="v2-row-value">@EpicProgressCalculator.FormatSeconds(m.Effort.SpentSec)</span></div>
+                <div class="v2-row"><span class="v2-row-label">Remaining</span><span class="v2-row-value">@EpicProgressCalculator.FormatSeconds(m.Effort.RemainingEstSec)</span></div>
+                <div class="v2-row"><span class="v2-row-label">Variance</span>
+                    <span class="v2-row-value @(m.Effort.EffortPct > 100 ? "v2-text-danger" : "")">
+                        @(m.Effort.EffortPct > 100 ? $"+{m.Effort.EffortPct - 100:F0}%" : $"{m.Effort.EffortPct - 100:F0}%")
+                    </span>
+                </div>
+            </div>
+
+            <!-- Quality panel -->
+            <div class="v2-card v2-card-lg">
+                <div class="v2-section-title"><i class="bi bi-bug-fill" style="color:#ef4444"></i>Quality</div>
+                <div class="v2-grid-2" style="margin-bottom:14px">
+                    <div class="v2-risk-card @(m.Quality.OpenBugs > 0 ? "v2-risk-card-warn" : "v2-risk-card-success")">
+                        <div class="v2-risk-num">@m.Quality.OpenBugs</div>
+                        <div class="v2-risk-lbl">Open bugs</div>
+                    </div>
+                    <div class="v2-risk-card @(m.Quality.BugOverhead > 30 ? "v2-risk-card-danger" : m.Quality.BugOverhead > 15 ? "v2-risk-card-warn" : "v2-risk-card-success")">
+                        <div class="v2-risk-num">@($"{m.Quality.BugOverhead:F0}%")</div>
+                        <div class="v2-risk-lbl">Bug overhead</div>
+                    </div>
+                </div>
+                <div class="v2-row"><span class="v2-row-label">Total bugs</span><span class="v2-row-value">@m.Quality.TotalBugs</span></div>
+                <div class="v2-row"><span class="v2-row-label">Bug fix rate</span><span class="v2-row-value">@($"{m.Quality.BugFixRate:F0}%")</span></div>
+                <div class="v2-row"><span class="v2-row-label">Avg fix time</span><span class="v2-row-value">@EpicProgressCalculator.FormatSeconds(m.Quality.AvgBugFixTimeSec)</span></div>
+                <div class="v2-row"><span class="v2-row-label">Stale bugs</span><span class="v2-row-value @(m.Quality.StaleBugs > 0 ? "v2-text-warn" : "")">@m.Quality.StaleBugs</span></div>
+                <div class="v2-row"><span class="v2-row-label">Bug ratio</span><span class="v2-row-value">@($"{m.Quality.BugRatio:F1}%") of all work</span></div>
+            </div>
+
+            <!-- Risk panel -->
+            <div class="v2-card v2-card-lg">
+                <div class="v2-section-title"><i class="bi bi-cone-striped" style="color:#f59e0b"></i>Risk Signals</div>
+                <div class="v2-grid-2">
+                    <div class="v2-risk-card @(m.Risk.StaleInProgress > 0 ? "v2-risk-card-warn" : "v2-risk-card-success")">
+                        <div class="v2-risk-num">@m.Risk.StaleInProgress</div>
+                        <div class="v2-risk-lbl">Stale (no log 2d+)</div>
+                    </div>
+                    <div class="v2-risk-card @(m.Risk.Unestimated > 0 ? "v2-risk-card-warn" : "v2-risk-card-success")">
+                        <div class="v2-risk-num">@m.Risk.Unestimated</div>
+                        <div class="v2-risk-lbl">Unestimated</div>
+                    </div>
+                    <div class="v2-risk-card @(m.Risk.Overlogged > 0 ? "v2-risk-card-warn" : "v2-risk-card-success")">
+                        <div class="v2-risk-num">@m.Risk.Overlogged</div>
+                        <div class="v2-risk-lbl">Overlogged</div>
+                    </div>
+                    <div class="v2-risk-card @(m.Risk.Unassigned > 0 ? "v2-risk-card-warn" : "v2-risk-card-success")">
+                        <div class="v2-risk-num">@m.Risk.Unassigned</div>
+                        <div class="v2-risk-lbl">Unassigned</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ CONTRIBUTOR LEADERBOARD ═════════════════════════════════════ -->
+        @if (m.AssigneeBreakdown.Count > 0)
+        {
+            <div class="v2-section v2-mt-lg">
+                <div class="v2-section-title">
+                    <i class="bi bi-people-fill"></i>Contributor Breakdown
+                    <span class="v2-section-note">tasks assigned across the epic</span>
+                </div>
+                <div class="v2-table-wrap">
+                    <table class="v2-table">
+                        <thead>
+                            <tr>
+                                <th style="width:30px">#</th>
+                                <th class="@SI("Name", _sortCB, _ascCB)" @onclick='() => SortCB("Name")'>Contributor</th>
+                                <th class="v2-table-num @SI("Total", _sortCB, _ascCB)" @onclick='() => SortCB("Total")'>Total</th>
+                                <th class="v2-table-num @SI("Done", _sortCB, _ascCB)" @onclick='() => SortCB("Done")'>Done</th>
+                                <th class="v2-table-num @SI("Active", _sortCB, _ascCB)" @onclick='() => SortCB("Active")'>Active</th>
+                                <th class="v2-table-num @SI("ToDo", _sortCB, _ascCB)" @onclick='() => SortCB("ToDo")'>To Do</th>
+                                <th class="@SI("Pct", _sortCB, _ascCB)" @onclick='() => SortCB("Pct")'>Completion</th>
+                                <th class="@SI("Share", _sortCB, _ascCB)" @onclick='() => SortCB("Share")'>Epic share</th>
+                                <th class="v2-table-num @SI("Log", _sortCB, _ascCB)" @onclick='() => SortCB("Log")'>Logged</th>
+                                <th class="v2-table-num @SI("Rem", _sortCB, _ascCB)" @onclick='() => SortCB("Rem")'>Remaining</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ var rank = 1; }
+                            @foreach (var row in ApplySortCB(m.AssigneeBreakdown))
+                            {
+                                <tr>
+                                    <td style="color:var(--v2-ink-4);font-weight:700">@rank</td>
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:8px">
+                                            <span class="v2-avatar @($"v2-avatar-grad-{1 + (rank % 5)}")">@Initials(row.Assignee)</span>
+                                            <span style="font-weight:600">@row.Assignee</span>
+                                        </div>
+                                    </td>
+                                    <td class="v2-table-num">@row.Total</td>
+                                    <td class="v2-table-num"><strong style="color:var(--v2-success)">@row.Done</strong></td>
+                                    <td class="v2-table-num">@row.InProgress</td>
+                                    <td class="v2-table-num">@row.ToDo</td>
+                                    <td style="min-width:130px">
+                                        <div style="display:flex;align-items:center;gap:6px">
+                                            <div class="v2-bar" style="flex:1;height:6px">
+                                                <div class="v2-bar-fill v2-bar-fill-success" style="width:@row.CompletionPct%"></div>
+                                            </div>
+                                            <span class="v2-row-value" style="font-size:11px">@($"{row.CompletionPct:F0}%")</span>
+                                        </div>
+                                    </td>
+                                    <td style="min-width:120px">
+                                        <div style="display:flex;align-items:center;gap:6px">
+                                            <div class="v2-bar" style="flex:1;height:6px">
+                                                <div class="v2-bar-fill" style="width:@row.EpicSharePct%"></div>
+                                            </div>
+                                            <span class="v2-row-value" style="font-size:11px">@($"{row.EpicSharePct:F0}%")</span>
+                                        </div>
+                                    </td>
+                                    <td class="v2-table-num">
+                                        @(row.TotalSpentSec > 0 ? EpicProgressCalculator.FormatSeconds(row.TotalSpentSec) : "—")
+                                    </td>
+                                    <td class="v2-table-num">
+                                        @(row.TotalRemainingEstimateSec > 0 ? EpicProgressCalculator.FormatSeconds(row.TotalRemainingEstimateSec) : "—")
+                                    </td>
+                                </tr>
+                                rank++;
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        <!-- ═══ ISSUES TABLE ════════════════════════════════════════════════ -->
+        <div class="v2-section v2-mt-lg">
+            <div class="v2-section-title">
+                <i class="bi bi-list-ul"></i>All issues
+                <span class="v2-section-note">@FilteredIssues.Count of @(EpicData?.Issues.Count ?? 0)</span>
+            </div>
+
+            <div class="v2-filter-bar">
+                <div class="v2-filter-group">
+                    <span class="v2-label">Status</span>
+                    <select class="v2-select v2-input-sm" @bind="FilterStatus">
+                        <option value="">All</option>
+                        <option value="indeterminate">In Progress</option>
+                        <option value="done">Done</option>
+                        <option value="new">To Do</option>
+                    </select>
+                </div>
+                <div class="v2-filter-sep"></div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Type</span>
+                    <select class="v2-select v2-input-sm" @bind="FilterType">
+                        <option value="">All</option>
+                        @foreach (var t in TypeOptions) { <option value="@t">@t</option> }
+                    </select>
+                </div>
+                <div class="v2-filter-sep"></div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Assignee</span>
+                    <select class="v2-select v2-input-sm" @bind="FilterAssignee">
+                        <option value="">All</option>
+                        @foreach (var a in AssigneeOptions) { <option value="@a">@a</option> }
+                    </select>
+                </div>
+                <span class="v2-filter-count">@FilteredIssues.Count items</span>
+            </div>
+
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th class="@SI("Key", _sortIS, _ascIS)" @onclick='() => SortIS("Key")'>Key</th>
+                            <th class="@SI("Summary", _sortIS, _ascIS)" @onclick='() => SortIS("Summary")'>Summary</th>
+                            <th class="@SI("Type", _sortIS, _ascIS)" @onclick='() => SortIS("Type")'>Type</th>
+                            <th class="@SI("Status", _sortIS, _ascIS)" @onclick='() => SortIS("Status")'>Status</th>
+                            <th class="@SI("Assignee", _sortIS, _ascIS)" @onclick='() => SortIS("Assignee")'>Assignee</th>
+                            <th class="v2-table-num @SI("Est", _sortIS, _ascIS)" @onclick='() => SortIS("Est")'>Estimate</th>
+                            <th class="v2-table-num @SI("Log", _sortIS, _ascIS)" @onclick='() => SortIS("Log")'>Logged</th>
+                            <th class="v2-table-num @SI("Rem", _sortIS, _ascIS)" @onclick='() => SortIS("Rem")'>Remaining</th>
+                            <th class="@SI("Pct", _sortIS, _ascIS)" @onclick='() => SortIS("Pct")'>Progress</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var i in ApplySortIS(FilteredIssues))
+                        {
+                            var pct = IssuePct(i);
+                            <tr class="@(i.StatusCategoryKey == "done" ? "is-done" : "")">
+                                <td class="v2-table-key">@i.Key</td>
+                                <td class="v2-truncate" style="max-width:340px">@i.Summary</td>
+                                <td><span class="v2-chip v2-chip-@(i.IssueType.ToLower())">@i.IssueType</span></td>
+                                <td><span class="v2-pill v2-pill-@StatusPillClass(i.StatusCategoryKey)">@i.Status</span></td>
+                                <td>@i.Assignee</td>
+                                <td class="v2-table-num">@(i.OriginalEstimate == "-" ? "—" : i.OriginalEstimate)</td>
+                                <td class="v2-table-num">@(i.TimeSpent == "-" ? "—" : i.TimeSpent)</td>
+                                <td class="v2-table-num">@(i.RemainingEstimate == "-" ? "—" : i.RemainingEstimate)</td>
+                                <td style="min-width:110px">
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <div class="v2-bar" style="flex:1;height:5px">
+                                            <div class="v2-bar-fill @(pct > 100 ? "v2-bar-fill-danger" : pct == 100 ? "v2-bar-fill-success" : "")"
+                                                 style="width:@Math.Min(pct, 100)%"></div>
+                                        </div>
+                                        <span class="v2-row-value" style="font-size:11px;min-width:32px;text-align:right">@pct%</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    // ── State ────────────────────────────────────────────────────────────────
+    private string EpicKeyInput  = "";
+    private string SprintIdInput = "";
+    private bool   IsLoadingEpic;
+    private bool   IsLoadingSprint;
+    private bool   IsLoading => IsLoadingEpic || IsLoadingSprint;
+    private string? InfoMessage;
+    private string? ErrorMessage;
+    private JiraEpicReport? EpicData;
+    private SprintReport?   SprintData;
+    private EpicProgressResult? Metrics;
+
+    // Filters for issue list
+    private string FilterStatus   = "";
+    private string FilterType     = "";
+    private string FilterAssignee = "";
+
+    private List<SprintIssue> FilteredIssues => (EpicData?.Issues ?? new())
+        .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.StatusCategoryKey == FilterStatus)
+        .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
+        .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee)
+        .ToList();
+
+    private IEnumerable<string> TypeOptions => (EpicData?.Issues ?? new())
+        .Select(i => i.IssueType).Where(t => !string.IsNullOrEmpty(t)).Distinct().OrderBy(t => t);
+
+    private IEnumerable<string> AssigneeOptions => (EpicData?.Issues ?? new())
+        .Select(i => i.Assignee).Where(a => !string.IsNullOrEmpty(a)).Distinct().OrderBy(a => a);
+
+    // ── Health score (composite) ─────────────────────────────────────────────
+    private int HealthScore
+    {
+        get
+        {
+            if (Metrics is null) return 0;
+            var m = Metrics;
+            var delivery = m.Delivery.CompletionPct / 100.0;                                     // 40%
+            var effort   = m.Effort.EffortPct == 0 ? 1.0 : Math.Clamp(1 - Math.Max(0, (m.Effort.EffortPct - 100) / 100.0), 0, 1); // 25%
+            var risk     = 1 - Math.Min(1.0, (m.Risk.StaleInProgress + m.Risk.Unestimated + m.Risk.Overlogged) / (double)Math.Max(1, m.Delivery.Total)); // 20%
+            var quality  = 1 - Math.Min(1.0, m.Quality.OpenBugs / (double)Math.Max(1, m.Delivery.Total));                          // 15%
+            return Math.Clamp((int)Math.Round(delivery * 40 + effort * 25 + risk * 20 + quality * 15), 0, 100);
+        }
+    }
+
+    private string HealthBand => HealthScore >= 75 ? "success" : HealthScore >= 50 ? "warn" : "danger";
+
+    private string HealthMarkerColor => HealthBand switch
+    {
+        "success" => "#059669",
+        "warn"    => "#d97706",
+        _         => "#dc2626"
+    };
+
+    private string HealthMessage => HealthScore switch
+    {
+        >= 85 => "Epic is in excellent shape — high completion, controlled effort, low risk.",
+        >= 75 => "Healthy epic — minor risks but trajectory is solid.",
+        >= 60 => "On track but watch the bug load and effort burn.",
+        >= 40 => "At risk — significant blockers or budget overrun.",
+        _     => "Critical — multiple metrics signal the epic needs intervention."
+    };
+
+    private string RagClass => HealthScore >= 75 ? "v2-rag-g" : HealthScore >= 50 ? "v2-rag-a" : "v2-rag-r";
+    private string RagText  => HealthScore >= 75 ? "On Track" : HealthScore >= 50 ? "At Risk" : "Behind";
+
+    private string CompletionKpiClass => Metrics?.Delivery.CompletionPct >= 75 ? "v2-kpi-success"
+        : Metrics?.Delivery.CompletionPct >= 40 ? "v2-kpi-warn" : "v2-kpi-danger";
+
+    private string EffortKpiClass => Metrics?.Effort.EffortPct > 110 ? "v2-kpi-danger"
+        : Metrics?.Effort.EffortPct > 90 ? "v2-kpi-warn" : "v2-kpi-success";
+
+    // ── Forecast (project end date based on current pace) ────────────────────
+    private string ProjectedEndLabel
+    {
+        get
+        {
+            if (Metrics is null || EpicData is null) return "—";
+            var (date, _) = ProjectEnd();
+            return date is null ? "Unknown" : date.Value.ToString("MMM d, yyyy");
+        }
+    }
+
+    private string ProjectionMessage
+    {
+        get
+        {
+            if (Metrics is null || EpicData is null) return "";
+            var (date, daysLeft) = ProjectEnd();
+            if (date is null) return "Insufficient worklog history to forecast";
+            if (daysLeft <= 0) return "Already past projected completion date";
+            return $"~{daysLeft} working days remaining at current pace";
+        }
+    }
+
+    private string ForecastClass
+    {
+        get
+        {
+            if (Metrics is null || EpicData is null) return "v2-kpi-neutral";
+            var (date, _) = ProjectEnd();
+            if (date is null) return "v2-kpi-neutral";
+            return "v2-kpi-success";
+        }
+    }
+
+    private (DateTime? Date, int DaysLeft) ProjectEnd()
+    {
+        if (EpicData is null) return (null, 0);
+        var allLogs = EpicData.Issues.SelectMany(i => i.Worklogs).ToList();
+        if (allLogs.Count == 0) return (null, 0);
+        var first = allLogs.Min(w => w.Started.Date);
+        var last  = allLogs.Max(w => w.Started.Date);
+        var elapsedDays = Math.Max(1, (last - first).Days + 1);
+        var doneCount = EpicData.Issues.Count(i => i.StatusCategoryKey == "done");
+        if (doneCount == 0) return (null, 0);
+        var remaining = EpicData.Issues.Count - doneCount;
+        var ratePerDay = doneCount / (double)elapsedDays;
+        if (ratePerDay <= 0) return (null, 0);
+        var daysLeft = (int)Math.Ceiling(remaining / ratePerDay);
+        var date = DateTime.Today.AddDays(daysLeft);
+        // skip weekends approximately
+        var workDaysLeft = (int)Math.Ceiling(daysLeft * 5.0 / 7.0);
+        return (date, workDaysLeft);
+    }
+
+    // ── Loading ──────────────────────────────────────────────────────────────
+    private async Task LoadEpicAsync()
+    {
+        if (string.IsNullOrWhiteSpace(EpicKeyInput)) return;
+        IsLoadingEpic = true; ErrorMessage = null; InfoMessage = null;
+        Metrics = null; SprintData = null; SprintIdInput = "";
+        try
+        {
+            EpicData = await JiraService.GetEpicReportAsync(EpicKeyInput.Trim().ToUpper());
+            if (EpicData is null || EpicData.Issues.Count == 0)
+            {
+                ErrorMessage = $"Epic {EpicKeyInput} not found or has no issues.";
+                EpicData = null;
+                return;
+            }
+            Metrics = EpicProgressCalculator.Compute(EpicData);
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load epic: {ex.Message}"; }
+        finally { IsLoadingEpic = false; }
+    }
+
+    private async Task ApplySprintFilterAsync()
+    {
+        if (EpicData is null || !int.TryParse(SprintIdInput.Trim(), out var sprintId)) return;
+        IsLoadingSprint = true; ErrorMessage = null; InfoMessage = null;
+        try
+        {
+            SprintData = await JiraService.GetEpicSprintForecastAsync(EpicData.Key, sprintId);
+            if (SprintData.Issues.Count == 0)
+            {
+                InfoMessage = $"Epic {EpicData.Key} has no issues in sprint {sprintId}.";
+                Metrics = EpicProgressCalculator.Compute(EpicData);
+            }
+            else
+            {
+                Metrics = EpicProgressCalculator.Compute(EpicData, SprintData);
+            }
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to apply sprint filter: {ex.Message}"; }
+        finally { IsLoadingSprint = false; }
+    }
+
+    private void ClearSprintFilter()
+    {
+        SprintData = null; SprintIdInput = "";
+        if (EpicData is not null) Metrics = EpicProgressCalculator.Compute(EpicData);
+    }
+
+    private async Task OnEpicKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadEpicAsync();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    private static int IssuePct(SprintIssue i)
+    {
+        if (i.StatusCategoryKey == "done") return 100;
+        if (i.OriginalEstimateSeconds == 0) return 0;
+        return (int)((double)i.TimeSpentSeconds / i.OriginalEstimateSeconds * 100);
+    }
+
+    private static int SafePct(int part, int total) => total == 0 ? 0 : (int)(part * 100.0 / total);
+
+    private static string Initials(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name.Length >= 2 ? name[..2].ToUpper() : name.ToUpper();
+    }
+
+    private static string StatusPillClass(string statusCategoryKey) => statusCategoryKey switch
+    {
+        "done"          => "success",
+        "indeterminate" => "brand",
+        _               => "neutral"
+    };
+
+    // ── Sorting ──────────────────────────────────────────────────────────────
+    private static string SI(string col, string sortCol, bool asc) =>
+        sortCol == col ? (asc ? "v2-sortable v2-sort-asc" : "v2-sortable v2-sort-desc") : "v2-sortable";
+
+    // Contributor leaderboard
+    private string _sortCB = ""; private bool _ascCB = false;
+    private void SortCB(string c) { if (_sortCB == c) _ascCB = !_ascCB; else { _sortCB = c; _ascCB = false; } }
+
+    private IEnumerable<TaskAssigneeRow> ApplySortCB(IEnumerable<TaskAssigneeRow> src) => _sortCB switch
+    {
+        "Name"   => _ascCB ? src.OrderBy(r => r.Assignee)              : src.OrderByDescending(r => r.Assignee),
+        "Total"  => _ascCB ? src.OrderBy(r => r.Total)                 : src.OrderByDescending(r => r.Total),
+        "Done"   => _ascCB ? src.OrderBy(r => r.Done)                  : src.OrderByDescending(r => r.Done),
+        "Active" => _ascCB ? src.OrderBy(r => r.InProgress)            : src.OrderByDescending(r => r.InProgress),
+        "ToDo"   => _ascCB ? src.OrderBy(r => r.ToDo)                  : src.OrderByDescending(r => r.ToDo),
+        "Pct"    => _ascCB ? src.OrderBy(r => r.CompletionPct)         : src.OrderByDescending(r => r.CompletionPct),
+        "Share"  => _ascCB ? src.OrderBy(r => r.EpicSharePct)          : src.OrderByDescending(r => r.EpicSharePct),
+        "Log"    => _ascCB ? src.OrderBy(r => r.TotalSpentSec)         : src.OrderByDescending(r => r.TotalSpentSec),
+        "Rem"    => _ascCB ? src.OrderBy(r => r.TotalRemainingEstimateSec) : src.OrderByDescending(r => r.TotalRemainingEstimateSec),
+        _        => src,
+    };
+
+    // Issues table
+    private string _sortIS = ""; private bool _ascIS = true;
+    private void SortIS(string c) { if (_sortIS == c) _ascIS = !_ascIS; else { _sortIS = c; _ascIS = true; } }
+
+    private IEnumerable<SprintIssue> ApplySortIS(IEnumerable<SprintIssue> src) => _sortIS switch
+    {
+        "Key"      => _ascIS ? src.OrderBy(i => i.Key)                       : src.OrderByDescending(i => i.Key),
+        "Summary"  => _ascIS ? src.OrderBy(i => i.Summary)                   : src.OrderByDescending(i => i.Summary),
+        "Type"     => _ascIS ? src.OrderBy(i => i.IssueType)                 : src.OrderByDescending(i => i.IssueType),
+        "Status"   => _ascIS ? src.OrderBy(i => i.Status)                    : src.OrderByDescending(i => i.Status),
+        "Assignee" => _ascIS ? src.OrderBy(i => i.Assignee)                  : src.OrderByDescending(i => i.Assignee),
+        "Est"      => _ascIS ? src.OrderBy(i => i.OriginalEstimateSeconds)   : src.OrderByDescending(i => i.OriginalEstimateSeconds),
+        "Log"      => _ascIS ? src.OrderBy(i => i.TimeSpentSeconds)          : src.OrderByDescending(i => i.TimeSpentSeconds),
+        "Rem"      => _ascIS ? src.OrderBy(i => i.RemainingEstimateSeconds)  : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "Pct"      => _ascIS ? src.OrderBy(i => IssuePct(i))                 : src.OrderByDescending(i => IssuePct(i)),
+        _          => src.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 })
+                         .ThenByDescending(i => i.RemainingEstimateSeconds),
+    };
+}

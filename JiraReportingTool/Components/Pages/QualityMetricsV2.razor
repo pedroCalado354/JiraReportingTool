@@ -1,0 +1,735 @@
+@page "/quality-metrics-v2"
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+@using JiraReportingTool.Models
+
+<PageTitle>Quality Metrics — Executive View</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ═════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon" style="background: linear-gradient(135deg,#ef4444 0%,#f59e0b 100%); box-shadow: 0 8px 24px rgba(239,68,68,0.30);">
+                <i class="bi bi-shield-check"></i>
+            </div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Quality Engineering</span>
+                <h1 class="v2-hero-title">Quality Metrics</h1>
+                <span class="v2-hero-sub">
+                    @if (ScopeReport is not null)
+                    {
+                        <strong>@ScopeLabel</strong>
+                        <span> · @TotalIssues issues · @TotalBugs bugs</span>
+                    }
+                    else
+                    {
+                        <span>Bug rate · MTTR · QA rejection · effort distribution · team health</span>
+                    }
+                </span>
+            </div>
+            <div class="v2-hero-spacer"></div>
+            @if (ScopeReport is not null)
+            {
+                <div class="v2-hero-actions">
+                    <span class="v2-rag @QualityRagClass">@QualityRagText</span>
+                    <span class="v2-pill v2-pill-brand"><i class="bi bi-bug"></i> @TotalBugs bugs</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ LOAD CONTROL BAR ════════════════════════════════════════════════ -->
+    <div class="v2-control-bar">
+        <div class="v2-field" style="min-width:240px">
+            <label class="v2-label">Jira Saved Filter</label>
+            <select class="v2-select" @bind="SelectedFilterId"
+                    disabled="@(FiltersLoading || !string.IsNullOrEmpty(SprintId) || !string.IsNullOrEmpty(EpicKeyInput))">
+                <option value="">— select a filter —</option>
+                @foreach (var f in MyFilters)
+                {
+                    <option value="@f.Id" title="@f.Jql">@f.Name</option>
+                }
+            </select>
+        </div>
+
+        <div class="v2-or">or</div>
+
+        <div class="v2-field" style="min-width:120px">
+            <label class="v2-label">Sprint ID</label>
+            <input class="v2-input" placeholder="e.g. 6690"
+                   @bind="SprintId" @onkeyup="HandleKeyUp"
+                   disabled="@(!string.IsNullOrEmpty(SelectedFilterId) || !string.IsNullOrEmpty(EpicKeyInput))" />
+        </div>
+
+        <div class="v2-or">or</div>
+
+        <div class="v2-field" style="min-width:140px">
+            <label class="v2-label">Epic Key</label>
+            <input class="v2-input" placeholder="e.g. JM-15977"
+                   @bind="EpicKeyInput" @onkeyup="HandleKeyUp"
+                   disabled="@(!string.IsNullOrEmpty(SprintId) || !string.IsNullOrEmpty(SelectedFilterId))" />
+        </div>
+
+        <button class="v2-btn v2-btn-primary" @onclick="LoadData"
+                disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId) && string.IsNullOrEmpty(EpicKeyInput)))">
+            @if (IsLoading) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-shield-check"></i> }
+            <span>Load quality data</span>
+        </button>
+    </div>
+
+    @if (!string.IsNullOrEmpty(ErrorMessage))
+    {
+        <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle"></i> @ErrorMessage</div>
+    }
+
+    @if (ScopeReport is null && !IsLoading)
+    {
+        <div class="v2-empty">
+            <div class="v2-empty-icon"><i class="bi bi-shield-shaded"></i></div>
+            <div class="v2-empty-title">Pick a scope to assess quality</div>
+            <div>Quality score, bug aging, MTTR and rejection trends will appear here.</div>
+        </div>
+    }
+
+    @if (ScopeReport is not null)
+    {
+        <!-- ═══ QUALITY HEALTH GAUGE ════════════════════════════════════════ -->
+        <div class="v2-gauge">
+            <div class="v2-gauge-score @($"v2-gauge-score-{QualityBand}")">@QualityScore</div>
+            <div class="v2-gauge-mid">
+                <div class="v2-gauge-label">Quality Health Score</div>
+                <div class="v2-gauge-track">
+                    <div class="v2-gauge-marker" style="left:@QualityScore%;border-color:@QualityMarkerColor"></div>
+                </div>
+                <div class="v2-gauge-desc">@QualityMessage</div>
+            </div>
+            <div class="v2-gauge-side">
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(BugRate > 25 ? "v2-text-danger" : BugRate > 10 ? "v2-text-warn" : "v2-text-success")">
+                        @($"{BugRate:F1}%")
+                    </div>
+                    <div class="v2-gauge-side-lbl">Bug rate</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@OpenBugs</div>
+                    <div class="v2-gauge-side-lbl">Open bugs</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@FormatHours(AvgFixHours)</div>
+                    <div class="v2-gauge-side-lbl">Avg fix</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(BugEffortShare > 30 ? "v2-text-danger" : "")">@($"{BugEffortShare:F0}%")</div>
+                    <div class="v2-gauge-side-lbl">Bug effort</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ KPI GRID ════════════════════════════════════════════════════ -->
+        <div class="v2-kpi-grid">
+            <div class="v2-kpi @(TotalBugs == 0 ? "v2-kpi-success" : "v2-kpi-warn")">
+                <div class="v2-kpi-head"><i class="bi bi-bug-fill"></i>Total bugs</div>
+                <div class="v2-kpi-value">@TotalBugs</div>
+                <div class="v2-kpi-sub">@OpenBugs open · @ResolvedBugs resolved</div>
+            </div>
+
+            <div class="v2-kpi @(BugRate > 25 ? "v2-kpi-danger" : BugRate > 10 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-percent"></i>Bug rate</div>
+                <div class="v2-kpi-value">@($"{BugRate:F1}%")</div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(BugRate > 25 ? "v2-bar-fill-danger" : BugRate > 10 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@Math.Min(BugRate, 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@TotalBugs of @TotalIssues items</div>
+            </div>
+
+            <div class="v2-kpi @(CriticalOpenBugs > 0 ? "v2-kpi-danger" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-exclamation-octagon"></i>Critical open</div>
+                <div class="v2-kpi-value">@CriticalOpenBugs</div>
+                <div class="v2-kpi-sub">@HighOpenBugs high priority · @LowOpenBugs low</div>
+            </div>
+
+            <div class="v2-kpi @(MttrHours > 24 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>MTTR (logged time)</div>
+                <div class="v2-kpi-value">@FormatHours(AvgFixHours)</div>
+                <div class="v2-kpi-sub">across @ResolvedBugs resolved bugs</div>
+            </div>
+
+            <div class="v2-kpi @(QaRejectedBugs > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-x-octagon"></i>QA rejections</div>
+                <div class="v2-kpi-value">@QaRejectionsTotal<span class="v2-kpi-of">/ @QaRejectedBugs bugs</span></div>
+                <div class="v2-kpi-sub">@($"{QaRejectionRate:F1}%") of bugs rejected</div>
+            </div>
+
+            <div class="v2-kpi @(StaleOpenBugs > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-hourglass"></i>Stale bugs</div>
+                <div class="v2-kpi-value">@StaleOpenBugs</div>
+                <div class="v2-kpi-sub">no worklog in 2+ days</div>
+            </div>
+
+            <div class="v2-kpi @(BugEffortShare > 30 ? "v2-kpi-danger" : BugEffortShare > 15 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Effort on bugs</div>
+                <div class="v2-kpi-value">@($"{BugEffortShare:F0}%")</div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(BugEffortShare > 30 ? "v2-bar-fill-danger" : BugEffortShare > 15 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@Math.Min(BugEffortShare, 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@FormatHours(BugLoggedHours) on bugs · @FormatHours(NonBugLoggedHours) on tasks</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-bullseye"></i>Defect age (avg)</div>
+                <div class="v2-kpi-value">@AvgBugAgeDays<span class="v2-kpi-of">days</span></div>
+                <div class="v2-kpi-sub">@OldestBugDays day-old oldest open bug</div>
+            </div>
+        </div>
+
+        <!-- ═══ TABS ════════════════════════════════════════════════════════ -->
+        <div class="v2-section">
+            <div class="v2-tabs">
+                <button class="v2-tab @(ActiveTab=="overview" ? "is-active" : "")" @onclick='() => ActiveTab="overview"'>
+                    <i class="bi bi-grid-1x2"></i>Overview
+                </button>
+                <button class="v2-tab @(ActiveTab=="bugs" ? "is-active" : "")" @onclick='() => ActiveTab="bugs"'>
+                    <i class="bi bi-bug"></i>Bugs
+                    @if (OpenBugs > 0) { <span class="v2-tab-badge">@OpenBugs</span> }
+                </button>
+                <button class="v2-tab @(ActiveTab=="aging" ? "is-active" : "")" @onclick='() => ActiveTab="aging"'>
+                    <i class="bi bi-hourglass-split"></i>Aging
+                </button>
+                <button class="v2-tab @(ActiveTab=="people" ? "is-active" : "")" @onclick='() => ActiveTab="people"'>
+                    <i class="bi bi-people"></i>By person
+                </button>
+                <button class="v2-tab @(ActiveTab=="epics" ? "is-active" : "")" @onclick='() => ActiveTab="epics"'>
+                    <i class="bi bi-collection"></i>By epic
+                </button>
+            </div>
+        </div>
+
+        @if (ActiveTab == "overview")
+        {
+            <div class="v2-grid-2">
+                <!-- Severity distribution donut + bars -->
+                <div class="v2-card v2-card-lg">
+                    <div class="v2-section-title"><i class="bi bi-bar-chart-line" style="color:#ef4444"></i>Bug priority distribution</div>
+                    @{
+                        var prios = new[] { "Highest", "Critical", "High", "Medium", "Low", "Lowest" };
+                        var byPrio = prios
+                            .Select(p => new { Prio = p, Open = OpenBugList.Count(b => b.Priority == p), Total = AllBugs.Count(b => b.Priority == p) })
+                            .Where(x => x.Total > 0)
+                            .ToList();
+                        var maxTotal = byPrio.Select(x => x.Total).DefaultIfEmpty(1).Max();
+                    }
+                    @foreach (var p in byPrio)
+                    {
+                        var fillClass = p.Prio is "Highest" or "Critical" ? "v2-bar-fill-danger"
+                            : p.Prio == "High" ? "v2-bar-fill-warn"
+                            : p.Prio == "Medium" ? "" : "v2-bar-fill-neutral";
+                        <div style="margin-bottom:12px">
+                            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                                <span>
+                                    <span class="v2-chip v2-chip-pri-@p.Prio.ToLower()" style="margin-right:6px">@p.Prio</span>
+                                    <span class="v2-text-muted">@p.Open open / @p.Total total</span>
+                                </span>
+                                <span class="v2-row-value">@(p.Total > 0 ? (p.Open * 100 / p.Total) : 0)% open</span>
+                            </div>
+                            <div class="v2-bar v2-tall-bar">
+                                <div class="v2-bar-fill @fillClass" style="width:@(p.Total * 100 / maxTotal)%"></div>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <!-- MTTR distribution -->
+                <div class="v2-card v2-card-lg">
+                    <div class="v2-section-title"><i class="bi bi-stopwatch-fill" style="color:#10b981"></i>Time-to-fix distribution</div>
+                    @{
+                        var mttrBuckets = new[] { ("<2h", 0d, 2d), ("2–6h", 2d, 6d), ("6–12h", 6d, 12d), ("12–24h", 12d, 24d), ("1–3d", 24d, 72d), (">3d", 72d, double.MaxValue) };
+                        var resolvedHours = ResolvedBugList
+                            .Where(b => b.TimeSpentSeconds > 0)
+                            .Select(b => b.TimeSpentSeconds / 3600.0)
+                            .ToList();
+                        var maxBucket = mttrBuckets.Select(b => resolvedHours.Count(h => h >= b.Item2 && h < b.Item3)).DefaultIfEmpty(1).Max();
+                        if (maxBucket == 0) maxBucket = 1;
+                    }
+                    @if (resolvedHours.Count == 0)
+                    {
+                        <div class="v2-text-muted" style="padding:30px 0;text-align:center">No resolved bugs in scope yet.</div>
+                    }
+                    else
+                    {
+                        @foreach (var b in mttrBuckets)
+                        {
+                            var count = resolvedHours.Count(h => h >= b.Item2 && h < b.Item3);
+                            var fillClass = b.Item1 is "<2h" or "2–6h" ? "v2-bar-fill-success"
+                                : b.Item1 is "6–12h" or "12–24h" ? ""
+                                : "v2-bar-fill-warn";
+                            <div style="margin-bottom:10px">
+                                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                                    <span style="font-weight:600">@b.Item1</span>
+                                    <span class="v2-text-muted">@count bugs</span>
+                                </div>
+                                <div class="v2-bar v2-tall-bar">
+                                    <div class="v2-bar-fill @fillClass" style="width:@(count * 100 / maxBucket)%"></div>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+
+            <!-- Status breakdown + Type ratio -->
+            <div class="v2-grid-2 v2-mt-lg">
+                <div class="v2-card v2-card-lg">
+                    <div class="v2-section-title"><i class="bi bi-pie-chart"></i>Bug status breakdown</div>
+                    <div class="v2-bar-stack v2-tall-bar" style="height:20px">
+                        <span style="width:@(SafePct(ResolvedBugs, TotalBugs))%; background:var(--v2-success-grad)" title="Resolved @ResolvedBugs"></span>
+                        <span style="width:@(SafePct(InProgressBugs, TotalBugs))%; background:var(--v2-brand-grad)" title="In progress @InProgressBugs"></span>
+                        <span style="width:@(SafePct(NewBugs, TotalBugs))%; background: linear-gradient(90deg,#fbbf24,#f59e0b)" title="To do @NewBugs"></span>
+                    </div>
+                    <div style="display:flex;gap:14px;margin-top:10px;font-size:12px">
+                        <span><span class="v2-dot v2-dot-success"></span> Resolved <strong>@ResolvedBugs</strong></span>
+                        <span><span class="v2-dot v2-dot-brand"></span> In progress <strong>@InProgressBugs</strong></span>
+                        <span><span class="v2-dot v2-dot-warn"></span> To do <strong>@NewBugs</strong></span>
+                    </div>
+                    <div class="v2-divider"></div>
+                    <div class="v2-row"><span class="v2-row-label">Bug fix rate</span><span class="v2-row-value">@($"{BugFixRate:F1}%")</span></div>
+                    <div class="v2-row"><span class="v2-row-label">Unassigned bugs</span><span class="v2-row-value @(UnassignedBugs > 0 ? "v2-text-warn" : "")">@UnassignedBugs</span></div>
+                    <div class="v2-row"><span class="v2-row-label">Unestimated bugs</span><span class="v2-row-value @(UnestimatedBugs > 0 ? "v2-text-warn" : "")">@UnestimatedBugs</span></div>
+                </div>
+
+                <div class="v2-card v2-card-lg">
+                    <div class="v2-section-title"><i class="bi bi-shield-fill-check"></i>QA Rejection insights</div>
+                    <div class="v2-stat-row">
+                        <span class="v2-num-lg @(QaRejectionRate > 30 ? "v2-text-danger" : QaRejectionRate > 10 ? "v2-text-warn" : "v2-text-success")">
+                            @($"{QaRejectionRate:F1}%")
+                        </span>
+                        <span class="v2-num-suffix">of bugs rejected at least once</span>
+                    </div>
+                    <div class="v2-bar v2-tall-bar" style="margin:10px 0 16px">
+                        <div class="v2-bar-fill @(QaRejectionRate > 30 ? "v2-bar-fill-danger" : QaRejectionRate > 10 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                             style="width:@Math.Min(QaRejectionRate, 100)%"></div>
+                    </div>
+                    <div class="v2-row"><span class="v2-row-label">Total rejections logged</span><span class="v2-row-value">@QaRejectionsTotal</span></div>
+                    <div class="v2-row"><span class="v2-row-label">Bugs with rejections</span><span class="v2-row-value">@QaRejectedBugs of @TotalBugs</span></div>
+                    <div class="v2-row"><span class="v2-row-label">Avg rejections / bug</span><span class="v2-row-value">@($"{(QaRejectedBugs == 0 ? 0 : (double)QaRejectionsTotal / QaRejectedBugs):F1}")</span></div>
+                </div>
+            </div>
+        }
+        else if (ActiveTab == "bugs")
+        {
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Summary</th>
+                            <th>Priority</th>
+                            <th>Status</th>
+                            <th>Assignee</th>
+                            <th>Epic</th>
+                            <th class="v2-table-num">Days open</th>
+                            <th class="v2-table-num">Logged</th>
+                            <th class="v2-table-num">QA rej.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var b in AllBugs.OrderBy(x => StatusOrder(x.StatusCategoryKey))
+                                                 .ThenByDescending(x => PriorityOrder(x.Priority))
+                                                 .ThenByDescending(x => DaysOpen(x)))
+                        {
+                            <tr class="@(b.StatusCategoryKey == "done" ? "is-done" : "")">
+                                <td class="v2-table-key">@b.Key</td>
+                                <td class="v2-truncate" style="max-width:340px">@b.Summary</td>
+                                <td><span class="v2-chip v2-chip-pri-@b.Priority.ToLower()">@b.Priority</span></td>
+                                <td><span class="v2-pill v2-pill-@(b.StatusCategoryKey == "done" ? "success" : b.StatusCategoryKey == "indeterminate" ? "brand" : "warn")">@b.Status</span></td>
+                                <td>@b.Assignee</td>
+                                <td class="v2-truncate" style="max-width:160px"><span class="v2-text-muted">@(string.IsNullOrEmpty(b.EpicName) ? b.EpicKey : b.EpicName)</span></td>
+                                <td class="v2-table-num">@(b.StatusCategoryKey == "done" ? "—" : DaysOpen(b).ToString())</td>
+                                <td class="v2-table-num">@(b.TimeSpentSeconds > 0 ? FormatHours(b.TimeSpentSeconds / 3600.0) : "—")</td>
+                                <td class="v2-table-num @(b.QaRejectedCount > 0 ? "v2-text-warn" : "")">@(b.QaRejectedCount > 0 ? b.QaRejectedCount.ToString() : "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (ActiveTab == "aging")
+        {
+            <div class="v2-grid-2">
+                <div class="v2-card v2-card-lg">
+                    <div class="v2-section-title"><i class="bi bi-calendar-week"></i>Open bug age distribution</div>
+                    @{
+                        var ageBuckets = new[] { ("<1d", 0, 1), ("1-3d", 1, 3), ("3-7d", 3, 7), ("1-2w", 7, 14), ("2-4w", 14, 28), ("1m+", 28, int.MaxValue) };
+                        var maxAge = ageBuckets.Select(b => OpenBugList.Count(x => DaysOpen(x) >= b.Item2 && DaysOpen(x) < b.Item3)).DefaultIfEmpty(1).Max();
+                        if (maxAge == 0) maxAge = 1;
+                    }
+                    @if (OpenBugList.Count == 0)
+                    {
+                        <div class="v2-text-muted" style="padding:30px 0;text-align:center">No open bugs — quality is in great shape.</div>
+                    }
+                    else
+                    {
+                        @foreach (var b in ageBuckets)
+                        {
+                            var count = OpenBugList.Count(x => DaysOpen(x) >= b.Item2 && DaysOpen(x) < b.Item3);
+                            var fillClass = b.Item1 == "<1d" || b.Item1 == "1-3d" ? "v2-bar-fill-success"
+                                : b.Item1 == "3-7d" ? ""
+                                : b.Item1 == "1-2w" ? "v2-bar-fill-warn"
+                                : "v2-bar-fill-danger";
+                            <div style="margin-bottom:10px">
+                                <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                                    <span style="font-weight:600">@b.Item1</span>
+                                    <span class="v2-text-muted">@count bug@(count == 1 ? "" : "s")</span>
+                                </div>
+                                <div class="v2-bar v2-tall-bar">
+                                    <div class="v2-bar-fill @fillClass" style="width:@(count * 100 / maxAge)%"></div>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                <div class="v2-card v2-card-lg">
+                    <div class="v2-section-title"><i class="bi bi-fire"></i>Oldest open bugs</div>
+                    @if (OpenBugList.Count == 0)
+                    {
+                        <div class="v2-text-muted" style="padding:30px 0;text-align:center">No open bugs.</div>
+                    }
+                    else
+                    {
+                        <table class="v2-table" style="margin:0">
+                            <thead>
+                                <tr><th>Key</th><th>Summary</th><th class="v2-table-num">Age</th></tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var b in OpenBugList.OrderByDescending(x => DaysOpen(x)).Take(8))
+                                {
+                                    var age = DaysOpen(b);
+                                    <tr>
+                                        <td class="v2-table-key">@b.Key</td>
+                                        <td class="v2-truncate" style="max-width:240px">@b.Summary</td>
+                                        <td class="v2-table-num @(age > 14 ? "v2-text-danger" : age > 7 ? "v2-text-warn" : "")">@age d</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+            </div>
+        }
+        else if (ActiveTab == "people")
+        {
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th>Person</th>
+                            <th class="v2-table-num">Bugs</th>
+                            <th class="v2-table-num">Open</th>
+                            <th class="v2-table-num">Resolved</th>
+                            <th>Bug rate</th>
+                            <th class="v2-table-num">Effort on bugs</th>
+                            <th>Bug effort share</th>
+                            <th class="v2-table-num">QA rej.</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @{
+                            var rows = AllIssues
+                                .Where(i => !string.IsNullOrEmpty(i.Assignee) && i.Assignee != "Unassigned")
+                                .GroupBy(i => i.Assignee)
+                                .Select(g =>
+                                {
+                                    var bugs = g.Where(IsBug).ToList();
+                                    var totalSec = g.Sum(x => x.TimeSpentSeconds);
+                                    var bugSec = bugs.Sum(x => x.TimeSpentSeconds);
+                                    return new
+                                    {
+                                        Name = g.Key,
+                                        BugCount = bugs.Count,
+                                        Open = bugs.Count(b => b.StatusCategoryKey != "done"),
+                                        Resolved = bugs.Count(b => b.StatusCategoryKey == "done"),
+                                        TotalTasks = g.Count(),
+                                        BugRate = g.Count() == 0 ? 0 : bugs.Count * 100.0 / g.Count(),
+                                        BugSec = bugSec,
+                                        TotalSec = totalSec,
+                                        BugShare = totalSec == 0 ? 0 : bugSec * 100.0 / totalSec,
+                                        QaRej = bugs.Sum(b => b.QaRejectedCount)
+                                    };
+                                })
+                                .Where(r => r.BugCount > 0)
+                                .OrderByDescending(r => r.BugCount)
+                                .ToList();
+                        }
+                        @foreach (var r in rows)
+                        {
+                            <tr>
+                                <td>
+                                    <div style="display:flex;align-items:center;gap:8px">
+                                        <span class="v2-avatar v2-avatar-grad-2">@Initials(r.Name)</span>
+                                        <span style="font-weight:600">@r.Name</span>
+                                    </div>
+                                </td>
+                                <td class="v2-table-num">@r.BugCount</td>
+                                <td class="v2-table-num @(r.Open > 0 ? "v2-text-warn" : "")">@r.Open</td>
+                                <td class="v2-table-num"><strong style="color:var(--v2-success)">@r.Resolved</strong></td>
+                                <td style="min-width:140px">
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <div class="v2-bar" style="flex:1;height:6px">
+                                            <div class="v2-bar-fill @(r.BugRate > 50 ? "v2-bar-fill-danger" : r.BugRate > 25 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                                                 style="width:@Math.Min(r.BugRate, 100)%"></div>
+                                        </div>
+                                        <span class="v2-row-value" style="font-size:11px">@($"{r.BugRate:F0}%")</span>
+                                    </div>
+                                </td>
+                                <td class="v2-table-num">@FormatHours(r.BugSec / 3600.0)</td>
+                                <td style="min-width:140px">
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <div class="v2-bar" style="flex:1;height:6px">
+                                            <div class="v2-bar-fill v2-bar-fill-warn" style="width:@Math.Min(r.BugShare, 100)%"></div>
+                                        </div>
+                                        <span class="v2-row-value" style="font-size:11px">@($"{r.BugShare:F0}%")</span>
+                                    </div>
+                                </td>
+                                <td class="v2-table-num @(r.QaRej > 0 ? "v2-text-warn" : "")">@(r.QaRej > 0 ? r.QaRej.ToString() : "—")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+        else if (ActiveTab == "epics")
+        {
+            <div class="v2-grid-2">
+                @foreach (var e in EpicQualityRows.OrderByDescending(r => r.BugRate))
+                {
+                    <div class="v2-card">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px">
+                            <div style="min-width:0">
+                                <div style="font-weight:700;font-size:14px" class="v2-truncate">@(string.IsNullOrEmpty(e.Name) || e.Name == "No Epic" ? e.Key : e.Name)</div>
+                                <div class="v2-hint">@e.Key</div>
+                            </div>
+                            <span class="v2-pill @(e.BugRate > 50 ? "v2-pill-danger" : e.BugRate > 25 ? "v2-pill-warn" : "v2-pill-success")">@($"{e.BugRate:F0}%") bugs</span>
+                        </div>
+                        <div class="v2-bar v2-tall-bar">
+                            <div class="v2-bar-fill @(e.BugRate > 50 ? "v2-bar-fill-danger" : e.BugRate > 25 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                                 style="width:@Math.Min(e.BugRate, 100)%"></div>
+                        </div>
+                        <div class="v2-divider"></div>
+                        <div class="v2-row"><span class="v2-row-label">Bugs</span><span class="v2-row-value">@e.BugCount of @e.Total items</span></div>
+                        <div class="v2-row"><span class="v2-row-label">Open bugs</span><span class="v2-row-value @(e.OpenBugs > 0 ? "v2-text-warn" : "")">@e.OpenBugs</span></div>
+                        <div class="v2-row"><span class="v2-row-label">Time on bugs</span><span class="v2-row-value">@FormatHours(e.BugLoggedHours)</span></div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@code {
+    // ── State ────────────────────────────────────────────────────────────────
+    private string SprintId = "";
+    private string SelectedFilterId = "";
+    private string EpicKeyInput = "";
+    private bool   IsLoading;
+    private bool   FiltersLoading = true;
+    private string? ErrorMessage;
+    private SprintReport? ScopeReport;
+    private string ScopeLabel = "";
+    private List<JiraFilter> MyFilters = [];
+    private string ActiveTab = "overview";
+
+    private string SelectedFilterJql =>
+        MyFilters.FirstOrDefault(f => f.Id == SelectedFilterId)?.Jql ?? "";
+
+    // ── Lifecycle ────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        try { MyFilters = await JiraService.GetMyFiltersAsync(); }
+        finally { FiltersLoading = false; }
+    }
+
+    private async Task LoadData()
+    {
+        IsLoading = true; ErrorMessage = null; ScopeReport = null;
+        try
+        {
+            if (!string.IsNullOrEmpty(SelectedFilterId))
+            {
+                var jql = SelectedFilterJql;
+                if (string.IsNullOrEmpty(jql)) { ErrorMessage = "Selected filter has no JQL."; return; }
+                ScopeReport = await JiraService.GetDeliveryDataByFilterAsync(jql);
+                ScopeLabel = MyFilters.First(f => f.Id == SelectedFilterId).Name;
+            }
+            else if (int.TryParse(SprintId.Trim(), out var id))
+            {
+                ScopeReport = await JiraService.GetDeliveryDataAsync(id);
+                ScopeLabel = ScopeReport.SprintName is { Length: > 0 } sn ? $"Sprint {sn}" : $"Sprint {id}";
+            }
+            else if (!string.IsNullOrEmpty(EpicKeyInput))
+            {
+                var key = EpicKeyInput.Trim().ToUpperInvariant();
+                ScopeReport = await JiraService.GetAllEpicIssuesAsync(key);
+                ScopeLabel = $"Epic {key}";
+            }
+            else { ErrorMessage = "Pick a sprint, filter or epic."; }
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadData();
+    }
+
+    // ── Derived data ─────────────────────────────────────────────────────────
+    private List<SprintIssue> AllIssues => ScopeReport?.Issues
+        .Where(i => !string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase))
+        .ToList() ?? [];
+
+    private bool IsBug(SprintIssue i) => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase);
+    private List<SprintIssue> AllBugs => AllIssues.Where(IsBug).ToList();
+    private List<SprintIssue> OpenBugList => AllBugs.Where(b => b.StatusCategoryKey != "done").ToList();
+    private List<SprintIssue> ResolvedBugList => AllBugs.Where(b => b.StatusCategoryKey == "done").ToList();
+
+    private int TotalIssues => AllIssues.Count;
+    private int TotalBugs => AllBugs.Count;
+    private int OpenBugs => OpenBugList.Count;
+    private int ResolvedBugs => ResolvedBugList.Count;
+    private int InProgressBugs => AllBugs.Count(b => b.StatusCategoryKey == "indeterminate");
+    private int NewBugs => AllBugs.Count(b => b.StatusCategoryKey == "new");
+
+    private int CriticalOpenBugs => OpenBugList.Count(b => b.Priority is "Highest" or "Critical");
+    private int HighOpenBugs => OpenBugList.Count(b => b.Priority == "High");
+    private int LowOpenBugs => OpenBugList.Count(b => b.Priority is "Low" or "Lowest");
+
+    private int UnassignedBugs => AllBugs.Count(b =>
+        string.IsNullOrWhiteSpace(b.Assignee) || b.Assignee.Equals("Unassigned", StringComparison.OrdinalIgnoreCase));
+    private int UnestimatedBugs => AllBugs.Count(b => b.OriginalEstimateSeconds == 0);
+    private int StaleOpenBugs => OpenBugList.Count(b => b.StatusCategoryKey == "indeterminate" && b.DaysSinceLastWorklog >= 2);
+
+    private double BugRate => TotalIssues == 0 ? 0 : TotalBugs * 100.0 / TotalIssues;
+    private double BugFixRate => TotalBugs == 0 ? 0 : ResolvedBugs * 100.0 / TotalBugs;
+
+    private double BugLoggedHours => AllBugs.Sum(b => b.TimeSpentSeconds) / 3600.0;
+    private double NonBugLoggedHours => AllIssues.Where(i => !IsBug(i)).Sum(i => i.TimeSpentSeconds) / 3600.0;
+    private double BugEffortShare => (BugLoggedHours + NonBugLoggedHours) == 0 ? 0
+        : BugLoggedHours / (BugLoggedHours + NonBugLoggedHours) * 100;
+
+    private double AvgFixHours
+    {
+        get
+        {
+            var withTime = ResolvedBugList.Where(b => b.TimeSpentSeconds > 0).ToList();
+            return withTime.Count == 0 ? 0 : withTime.Average(b => b.TimeSpentSeconds / 3600.0);
+        }
+    }
+
+    private double MttrHours => AvgFixHours;
+
+    private int QaRejectionsTotal => AllBugs.Sum(b => b.QaRejectedCount);
+    private int QaRejectedBugs => AllBugs.Count(b => b.QaRejectedCount > 0);
+    private double QaRejectionRate => TotalBugs == 0 ? 0 : QaRejectedBugs * 100.0 / TotalBugs;
+
+    private int AvgBugAgeDays => OpenBugList.Count == 0 ? 0 : (int)Math.Round(OpenBugList.Average(DaysOpen));
+    private int OldestBugDays => OpenBugList.Count == 0 ? 0 : OpenBugList.Max(DaysOpen);
+
+    private int DaysOpen(SprintIssue i)
+    {
+        var start = i.Created ?? DateTime.Today;
+        return Math.Max(0, (int)(DateTime.Today - start.Date).TotalDays);
+    }
+
+    // Quality score (0-100) — composite
+    private int QualityScore
+    {
+        get
+        {
+            if (ScopeReport is null || TotalIssues == 0) return 100;
+            // Lower bug rate is better; lower bug effort is better; higher fix rate is better; lower QA rejection is better
+            var bugRateScore   = Math.Clamp(100 - BugRate * 2, 0, 100);                         // 30%
+            var fixRateScore   = TotalBugs == 0 ? 100 : BugFixRate;                              // 25%
+            var effortScore    = Math.Clamp(100 - BugEffortShare * 2, 0, 100);                   // 25%
+            var rejectionScore = Math.Clamp(100 - QaRejectionRate * 2, 0, 100);                  // 20%
+            var score = bugRateScore * 0.30 + fixRateScore * 0.25 + effortScore * 0.25 + rejectionScore * 0.20;
+            return Math.Clamp((int)Math.Round(score), 0, 100);
+        }
+    }
+
+    private string QualityBand => QualityScore >= 75 ? "success" : QualityScore >= 50 ? "warn" : "danger";
+
+    private string QualityMarkerColor => QualityBand switch
+    {
+        "success" => "#059669",
+        "warn"    => "#d97706",
+        _         => "#dc2626"
+    };
+
+    private string QualityMessage => QualityScore switch
+    {
+        >= 85 => "Excellent quality posture — defect density and rework are minimal.",
+        >= 75 => "Healthy quality — minor signals to monitor but no red flags.",
+        >= 60 => "Acceptable quality — bug load or rework consuming meaningful capacity.",
+        >= 40 => "Quality at risk — high bug rate, slow MTTR or notable QA rework.",
+        _     => "Critical quality issues — escalate and prioritise stabilisation."
+    };
+
+    private string QualityRagClass => QualityScore >= 75 ? "v2-rag-g" : QualityScore >= 50 ? "v2-rag-a" : "v2-rag-r";
+    private string QualityRagText  => QualityScore >= 75 ? "Healthy"  : QualityScore >= 50 ? "Watching"  : "At Risk";
+
+    // ── Epic quality rows ────────────────────────────────────────────────────
+    private record EpicQualityRow(string Key, string Name, int Total, int BugCount, int OpenBugs, double BugRate, double BugLoggedHours);
+
+    private List<EpicQualityRow> EpicQualityRows => AllIssues
+        .GroupBy(i => new { i.EpicKey, i.EpicName })
+        .Select(g => new EpicQualityRow(
+            Key:         string.IsNullOrEmpty(g.Key.EpicKey) ? "—" : g.Key.EpicKey,
+            Name:        string.IsNullOrEmpty(g.Key.EpicName) ? "" : g.Key.EpicName,
+            Total:       g.Count(),
+            BugCount:    g.Count(IsBug),
+            OpenBugs:    g.Count(i => IsBug(i) && i.StatusCategoryKey != "done"),
+            BugRate:     g.Count() == 0 ? 0 : g.Count(IsBug) * 100.0 / g.Count(),
+            BugLoggedHours: g.Where(IsBug).Sum(i => i.TimeSpentSeconds) / 3600.0
+        ))
+        .Where(r => r.BugCount > 0)
+        .ToList();
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    private static int SafePct(int part, int total) => total == 0 ? 0 : (int)(part * 100.0 / total);
+
+    private static int StatusOrder(string s) => s switch
+    {
+        "indeterminate" => 0,
+        "new"           => 1,
+        _               => 2
+    };
+
+    private static int PriorityOrder(string p) => p switch
+    {
+        "Highest" or "Critical" => 5,
+        "High"                  => 4,
+        "Medium"                => 3,
+        "Low"                   => 2,
+        "Lowest"                => 1,
+        _                       => 0
+    };
+
+    private static string FormatHours(double h)
+    {
+        if (h <= 0) return "—";
+        var hh = (int)h; var mm = (int)Math.Round((h - hh) * 60);
+        return mm > 0 ? $"{hh}h {mm}m" : $"{hh}h";
+    }
+
+    private static string Initials(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name.Length >= 2 ? name[..2].ToUpper() : name.ToUpper();
+    }
+}
