@@ -528,11 +528,27 @@
                 @foreach (var ep in EpicRows.OrderByDescending(e => e.InProgress + e.ToDo).ThenByDescending(e => e.Total))
                 {
                     var donePct        = ep.Total > 0 ? ep.Done * 100 / ep.Total : 0;
-                    var bugTotal       = ep.Issues.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase));
-                    var bugOpen        = ep.Issues.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase) && i.StatusCategoryKey != "done");
+                    var taskList       = ep.Issues.Where(i => !string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
+                    var bugList        = ep.Issues.Where(i =>  string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
+                    var bugTotal       = bugList.Count;
+                    var bugOpen        = bugList.Count(i => i.StatusCategoryKey != "done");
                     var staleCnt       = ep.Issues.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);
                     var blockedCnt     = ep.Issues.Count(i => IsBlocked(i));
                     var unestCnt       = ep.Issues.Count(i => i.OriginalEstimateSeconds == 0 && i.StatusCategoryKey != "done");
+
+                    // Per-type breakdown
+                    var taskDone    = taskList.Count(i => i.StatusCategoryKey == "done");
+                    var taskActive  = taskList.Count(i => i.StatusCategoryKey == "indeterminate");
+                    var taskToDo    = taskList.Count(i => i.StatusCategoryKey == "new");
+                    var taskStale   = taskList.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);
+                    var taskUnest   = taskList.Count(i => i.OriginalEstimateSeconds == 0 && i.StatusCategoryKey != "done");
+                    var taskBlocked = taskList.Count(IsBlocked);
+                    var bugDone     = bugList.Count(i => i.StatusCategoryKey == "done");
+                    var bugActive   = bugList.Count(i => i.StatusCategoryKey == "indeterminate");
+                    var bugToDo     = bugList.Count(i => i.StatusCategoryKey == "new");
+                    var bugStale    = bugList.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);
+                    var bugUnest    = bugList.Count(i => i.OriginalEstimateSeconds == 0 && i.StatusCategoryKey != "done");
+                    var bugBlocked  = bugList.Count(IsBlocked);
                     var burnPct        = ep.EstimateHours > 0 ? Math.Min(100, (int)Math.Round(ep.LoggedHours / ep.EstimateHours * 100)) : 0;
                     var overBudget     = ep.EstimateHours > 0 && ep.LoggedHours > ep.EstimateHours;
                     var topAssignees   = ep.Issues.Where(i => !string.IsNullOrWhiteSpace(i.Assignee) && i.Assignee != "Unassigned")
@@ -553,29 +569,57 @@
                                     else { <span class="v2-pill v2-pill-success" style="font-size:10px;padding:1px 6px">Healthy</span> }
                                 </div>
                                 <div class="v2-hint">@ep.Key · @ep.Total task@(ep.Total == 1 ? "" : "s")</div>
-                                <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-                                    <span class="v2-pill v2-pill-success">@ep.Done done</span>
-                                    <span class="v2-pill v2-pill-brand">@ep.InProgress active</span>
-                                    <span class="v2-pill v2-pill-neutral">@ep.ToDo to do</span>
-                                    @if (bugTotal > 0)
-                                    {
-                                        <span class="v2-pill @(bugOpen > 0 ? "v2-pill-danger" : "v2-pill-success")" title="bugs open / total">
-                                            <i class="bi bi-bug" style="margin-right:3px"></i>@bugOpen/@bugTotal
-                                        </span>
-                                    }
-                                    @if (blockedCnt > 0)
-                                    {
-                                        <span class="v2-pill v2-pill-danger" title="blocked tasks"><i class="bi bi-slash-circle" style="margin-right:3px"></i>@blockedCnt blocked</span>
-                                    }
-                                    @if (staleCnt > 0)
-                                    {
-                                        <span class="v2-pill v2-pill-warn" title="active tasks with no log 2d+"><i class="bi bi-hourglass-split" style="margin-right:3px"></i>@staleCnt stale</span>
-                                    }
-                                    @if (unestCnt > 0)
-                                    {
-                                        <span class="v2-pill v2-pill-warn" title="unestimated tasks"><i class="bi bi-question-circle" style="margin-right:3px"></i>@unestCnt unest.</span>
-                                    }
+
+                                <!-- TASKS row -->
+                                <div style="margin-top:10px">
+                                    <div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--v2-ink-3);margin-bottom:4px">
+                                        <i class="bi bi-list-check" style="margin-right:3px"></i>Tasks · @taskList.Count
+                                    </div>
+                                    <div style="display:flex;gap:6px;flex-wrap:wrap">
+                                        <span class="v2-pill v2-pill-success">@taskDone done</span>
+                                        <span class="v2-pill v2-pill-brand">@taskActive active</span>
+                                        <span class="v2-pill v2-pill-neutral">@taskToDo to do</span>
+                                        @if (taskBlocked > 0)
+                                        {
+                                            <span class="v2-pill v2-pill-danger" title="blocked tasks"><i class="bi bi-slash-circle" style="margin-right:3px"></i>@taskBlocked blocked</span>
+                                        }
+                                        @if (taskStale > 0)
+                                        {
+                                            <span class="v2-pill v2-pill-warn" title="active tasks with no log 2d+"><i class="bi bi-hourglass-split" style="margin-right:3px"></i>@taskStale stale</span>
+                                        }
+                                        @if (taskUnest > 0)
+                                        {
+                                            <span class="v2-pill v2-pill-warn" title="unestimated tasks"><i class="bi bi-question-circle" style="margin-right:3px"></i>@taskUnest unest.</span>
+                                        }
+                                    </div>
                                 </div>
+
+                                <!-- BUGS row -->
+                                @if (bugTotal > 0)
+                                {
+                                    <div style="margin-top:8px">
+                                        <div style="font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:var(--v2-danger);margin-bottom:4px">
+                                            <i class="bi bi-bug" style="margin-right:3px"></i>Bugs · @bugTotal @(bugOpen > 0 ? $"({bugOpen} open)" : "")
+                                        </div>
+                                        <div style="display:flex;gap:6px;flex-wrap:wrap">
+                                            <span class="v2-pill v2-pill-success">@bugDone done</span>
+                                            <span class="v2-pill v2-pill-brand">@bugActive active</span>
+                                            <span class="v2-pill v2-pill-neutral">@bugToDo to do</span>
+                                            @if (bugBlocked > 0)
+                                            {
+                                                <span class="v2-pill v2-pill-danger" title="blocked bugs"><i class="bi bi-slash-circle" style="margin-right:3px"></i>@bugBlocked blocked</span>
+                                            }
+                                            @if (bugStale > 0)
+                                            {
+                                                <span class="v2-pill v2-pill-warn" title="active bugs with no log 2d+"><i class="bi bi-hourglass-split" style="margin-right:3px"></i>@bugStale stale</span>
+                                            }
+                                            @if (bugUnest > 0)
+                                            {
+                                                <span class="v2-pill v2-pill-warn" title="unestimated bugs"><i class="bi bi-question-circle" style="margin-right:3px"></i>@bugUnest unest.</span>
+                                            }
+                                        </div>
+                                    </div>
+                                }
                             </div>
                         </div>
 
@@ -969,6 +1013,22 @@
                         {
                             <div class="v2-hint" style="opacity:.7">@_excludedScopeEpics.Count epic(s) excluded</div>
                         }
+                        @if (ScopeActiveIssues.Count > 0)
+                        {
+                            <div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">
+                                @foreach (var tg in ScopeActiveIssues
+                                                        .GroupBy(i => string.IsNullOrEmpty(i.IssueType) ? "Unknown" : i.IssueType)
+                                                        .OrderByDescending(g => g.Count()))
+                                {
+                                    var isBug = string.Equals(tg.Key, "Bug", StringComparison.OrdinalIgnoreCase);
+                                    <span class="v2-pill @(isBug ? "v2-pill-danger" : "v2-pill-neutral")"
+                                          style="font-size:10px;padding:1px 6px"
+                                          title="@tg.Key: @tg.Count() of @ScopeActiveIssues.Count added">
+                                        @tg.Key @tg.Count()
+                                    </span>
+                                }
+                            </div>
+                        }
                     </div>
                     <div class="v2-risk-card">
                         <div class="v2-risk-num">@FmtH(ScopeEstimateSec)</div>
@@ -1010,6 +1070,7 @@
                                         <th class="v2-table-num @SI("Done", _sortSCE, _ascSCE)" @onclick='() => SortSCE("Done")'>Done</th>
                                         <th class="v2-table-num @SI("Est", _sortSCE, _ascSCE)" @onclick='() => SortSCE("Est")'>Estimate</th>
                                         <th class="v2-table-num @SI("Log", _sortSCE, _ascSCE)" @onclick='() => SortSCE("Log")'>Logged</th>
+                                        <th class="@SI("Added", _sortSCE, _ascSCE)" @onclick='() => SortSCE("Added")'>Added On</th>
                                         <th>Status Mix</th>
                                         <th>Type Mix</th>
                                     </tr>
@@ -1033,6 +1094,30 @@
                                             </td>
                                             <td class="v2-table-num v2-hint">@FmtH(epic.EstSec)</td>
                                             <td class="v2-table-num v2-hint">@FmtH(epic.LoggedSec)</td>
+                                            <td class="v2-hint" style="white-space:nowrap">
+                                                @{
+                                                    var addedDates = epic.Issues.Where(i => i.Created.HasValue).Select(i => i.Created!.Value.Date).ToList();
+                                                }
+                                                @if (addedDates.Count == 0)
+                                                {
+                                                    <span>—</span>
+                                                }
+                                                else
+                                                {
+                                                    var first = addedDates.Min();
+                                                    var last  = addedDates.Max();
+                                                    if (first == last)
+                                                    {
+                                                        <span title="All @epic.Count task(s) added on @first.ToString("dd MMM yyyy")">@first.ToString("dd MMM")</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span title="First: @first.ToString("dd MMM yyyy") · Last: @last.ToString("dd MMM yyyy")">
+                                                            @first.ToString("dd MMM") → @last.ToString("dd MMM")
+                                                        </span>
+                                                    }
+                                                }
+                                            </td>
                                             <td>
                                                 @foreach (var sg in epic.Issues.GroupBy(i => i.Status).OrderByDescending(g => g.Count()))
                                                 {
@@ -2107,6 +2192,9 @@
         "Done"  => _ascSCE ? src.OrderBy(e => e.Done)      : src.OrderByDescending(e => e.Done),
         "Est"   => _ascSCE ? src.OrderBy(e => e.EstSec)    : src.OrderByDescending(e => e.EstSec),
         "Log"   => _ascSCE ? src.OrderBy(e => e.LoggedSec) : src.OrderByDescending(e => e.LoggedSec),
+        "Added" => _ascSCE
+            ? src.OrderBy(e => e.Issues.Where(i => i.Created.HasValue).Select(i => i.Created!.Value).DefaultIfEmpty(DateTime.MaxValue).Min())
+            : src.OrderByDescending(e => e.Issues.Where(i => i.Created.HasValue).Select(i => i.Created!.Value).DefaultIfEmpty(DateTime.MinValue).Max()),
         _       => src.OrderByDescending(e => e.Count),
     };
 

@@ -96,10 +96,13 @@
     @if (ScopeReport is not null)
     {
         <!-- ═══ QUALITY HEALTH GAUGE ════════════════════════════════════════ -->
-        <div class="v2-gauge">
+        <div class="v2-gauge qm-gauge-clickable" @onclick='() => ShowScoreBreakdown = true' title="Click to see how this score is calculated">
             <div class="v2-gauge-score @($"v2-gauge-score-{QualityBand}")">@QualityScore</div>
             <div class="v2-gauge-mid">
-                <div class="v2-gauge-label">Quality Health Score</div>
+                <div class="v2-gauge-label">
+                    Quality Health Score
+                    <i class="bi bi-info-circle" style="font-size:11px;opacity:.6;margin-left:4px"></i>
+                </div>
                 <div class="v2-gauge-track">
                     <div class="v2-gauge-marker" style="left:@QualityScore%;border-color:@QualityMarkerColor"></div>
                 </div>
@@ -126,6 +129,88 @@
                 </div>
             </div>
         </div>
+
+        <!-- ═══ SCORE BREAKDOWN MODAL ════════════════════════════════════════ -->
+        @if (ShowScoreBreakdown)
+        {
+            <div class="qm-modal-backdrop" @onclick='() => ShowScoreBreakdown = false'>
+                <div class="qm-modal" @onclick:stopPropagation="true">
+                    <div class="qm-modal-head">
+                        <div>
+                            <div class="qm-modal-eyebrow">Quality Health Score</div>
+                            <div class="qm-modal-title">
+                                <span class="@($"v2-text-{QualityBand}")" style="font-size:32px;font-weight:800">@QualityScore</span>
+                                <span style="font-size:14px;color:var(--v2-ink-3);font-weight:500"> / 100 · @QualityRagText</span>
+                            </div>
+                        </div>
+                        <button class="qm-modal-close" @onclick='() => ShowScoreBreakdown = false' title="Close" aria-label="Close">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </div>
+                    <div class="qm-modal-body">
+                        <p class="qm-modal-desc">Composite of three signals. Each is scored 0–100 and weighted, then summed.</p>
+                        <div class="v2-table-wrap" style="margin-bottom:0">
+                            <table class="v2-table">
+                                <thead>
+                                    <tr>
+                                        <th>Factor</th>
+                                        <th class="v2-table-num">Weight</th>
+                                        <th class="v2-table-num">Current</th>
+                                        <th class="v2-table-num">Score</th>
+                                        <th class="v2-table-num">Contribution</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>
+                                            <strong>Bug effort share</strong>
+                                            <div class="v2-hint">Time logged on bugs ÷ total logged · 0% → 100, 50%+ → 0</div>
+                                        </td>
+                                        <td class="v2-table-num"><strong>40%</strong></td>
+                                        <td class="v2-table-num">@($"{BugEffortShare:F1}%")</td>
+                                        <td class="v2-table-num">@($"{EffortScore:F0}")</td>
+                                        <td class="v2-table-num"><strong>@($"{EffortScore * 0.40:F1}")</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <strong>Open bugs (% of scope)</strong>
+                                            <div class="v2-hint">@OpenBugs open ÷ @TotalIssues issues · 0% → 100, 33%+ → 0</div>
+                                        </td>
+                                        <td class="v2-table-num"><strong>35%</strong></td>
+                                        <td class="v2-table-num">@($"{OpenBugRatePct:F1}%")</td>
+                                        <td class="v2-table-num">@($"{OpenBugsScore:F0}")</td>
+                                        <td class="v2-table-num"><strong>@($"{OpenBugsScore * 0.35:F1}")</strong></td>
+                                    </tr>
+                                    <tr>
+                                        <td>
+                                            <strong>Avg fix time</strong>
+                                            <div class="v2-hint">MTTR across @ResolvedBugs resolved bug@(ResolvedBugs == 1 ? "" : "s") · 0h → 100, 72h+ → 0 · no data → neutral</div>
+                                        </td>
+                                        <td class="v2-table-num"><strong>25%</strong></td>
+                                        <td class="v2-table-num">@FormatHours(AvgFixHours)</td>
+                                        <td class="v2-table-num">@($"{AvgFixScore:F0}")</td>
+                                        <td class="v2-table-num"><strong>@($"{AvgFixScore * 0.25:F1}")</strong></td>
+                                    </tr>
+                                </tbody>
+                                <tfoot>
+                                    <tr style="font-weight:700;background:var(--v2-surface-2)">
+                                        <td>Total</td>
+                                        <td class="v2-table-num">100%</td>
+                                        <td></td>
+                                        <td></td>
+                                        <td class="v2-table-num"><span class="@($"v2-text-{QualityBand}")">@QualityScore</span></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                        <div class="qm-modal-note">
+                            <i class="bi bi-lightbulb" style="color:#f59e0b"></i>
+                            @QualityMessage
+                        </div>
+                    </div>
+                </div>
+            </div>
+        }
 
         <!-- ═══ KPI GRID ════════════════════════════════════════════════════ -->
         <div class="v2-kpi-grid">
@@ -200,7 +285,7 @@
                     <i class="bi bi-hourglass-split"></i>Aging
                 </button>
                 <button class="v2-tab @(ActiveTab=="people" ? "is-active" : "")" @onclick='() => ActiveTab="people"'>
-                    <i class="bi bi-people"></i>By person
+                    <i class="bi bi-people"></i>By Team Member
                 </button>
                 <button class="v2-tab @(ActiveTab=="epics" ? "is-active" : "")" @onclick='() => ActiveTab="epics"'>
                     <i class="bi bi-collection"></i>By epic
@@ -500,6 +585,147 @@
                     </tbody>
                 </table>
             </div>
+
+            <!-- ═══ BUG EFFORT BY TEAM MEMBER ══════════════════════════════════ -->
+            <div class="v2-section-title v2-mt-lg">
+                <i class="bi bi-clock-history" style="color:#ef4444"></i>Bug Effort by Team Member
+                <span class="v2-hint" style="margin-left:8px;font-weight:400">hours logged on bugs ÷ total hours logged · includes every member who worked on a bug, regardless of current assignment</span>
+            </div>
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th>Assignee</th>
+                            <th class="v2-table-num" title="Distinct issues the member logged time on">Issues Worked</th>
+                            <th class="v2-table-num" title="Distinct bugs the member logged time on">Bugs Worked</th>
+                            <th class="v2-table-num" title="Hours logged on bug issues">Bug Hrs</th>
+                            <th class="v2-table-num" title="Bug hours ÷ total logged hours">Bug Effort</th>
+                            <th class="v2-table-num">Avg Fix Time</th>
+                            <th class="v2-table-num">Stale Bugs</th>
+                            <th style="width:130px">Effort Bar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!AssigneeBugRates.Any())
+                        {
+                            <tr><td colspan="8" style="text-align:center;padding:20px" class="v2-text-muted">No logged hours found in scope.</td></tr>
+                        }
+                        @foreach (var m in AssigneeBugRates)
+                        {
+                            var stale = AllBugs.Count(b => b.Assignee == m.Assignee && b.StatusCategoryKey != "done" && b.DaysSinceLastWorklog >= 5);
+                            <tr>
+                                <td>
+                                    <div style="display:flex;align-items:center;gap:8px">
+                                        <span class="v2-avatar v2-avatar-grad-2">@Initials(m.Assignee)</span>
+                                        <span style="font-weight:600">@m.Assignee</span>
+                                    </div>
+                                </td>
+                                <td class="v2-table-num">@m.IssuesWorked</td>
+                                <td class="v2-table-num @(m.BugsWorked > 0 ? "v2-text-danger" : "v2-text-muted")"><strong>@m.BugsWorked</strong></td>
+                                <td class="v2-table-num v2-text-muted">@FormatHours(m.BugHours)</td>
+                                <td class="v2-table-num">
+                                    <span class="v2-row-value @(m.BugEffortRate > 50 ? "v2-text-danger" : m.BugEffortRate > 25 ? "v2-text-warn" : "v2-text-success")"
+                                          title="@FormatHours(m.BugHours) bugs / @FormatHours(m.TotalHours) total">
+                                        @($"{m.BugEffortRate:F1}%")
+                                    </span>
+                                </td>
+                                <td class="v2-table-num v2-text-muted">@(m.AvgFixHours < 0 ? "—" : FormatFixTime(m.AvgFixHours))</td>
+                                <td class="v2-table-num @(stale > 0 ? "v2-text-warn" : "v2-text-muted")">@(stale > 0 ? stale.ToString() : "—")</td>
+                                <td>
+                                    <div class="v2-bar" style="height:6px">
+                                        <div class="v2-bar-fill @(m.BugEffortRate > 50 ? "v2-bar-fill-danger" : m.BugEffortRate > 25 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                                             style="width:@Math.Min(m.BugEffortRate, 100)%"></div>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    @if (AssigneeBugRates.Count > 1)
+                    {
+                        <tfoot>
+                            <tr style="font-weight:700;background:var(--v2-surface-2)">
+                                <td>Total</td>
+                                <td class="v2-table-num">@AllIssues.Count</td>
+                                <td class="v2-table-num v2-text-danger">@TotalBugs</td>
+                                <td class="v2-table-num v2-text-muted">@FormatHours(BugLoggedHours)</td>
+                                <td class="v2-table-num">
+                                    <span class="@(BugEffortShare > 50 ? "v2-text-danger" : BugEffortShare > 25 ? "v2-text-warn" : "v2-text-success")"
+                                          title="Overall: @FormatHours(BugLoggedHours) bugs / @FormatHours(BugLoggedHours + NonBugLoggedHours) total">
+                                        @($"{BugEffortShare:F1}%")
+                                    </span>
+                                </td>
+                                <td class="v2-table-num v2-text-muted">@(AvgFixHours <= 0 ? "—" : FormatFixTime(AvgFixHours))</td>
+                                <td class="v2-table-num v2-text-muted">@(StaleOpenBugs > 0 ? StaleOpenBugs.ToString() : "—")</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    }
+                </table>
+            </div>
+
+            <!-- ═══ QA REJECTION BY TEAM MEMBER ════════════════════════════════ -->
+            <div class="v2-section-title v2-mt-lg">
+                <i class="bi bi-shield-fill-exclamation" style="color:#f59e0b"></i>QA Rejection by Team Member
+                <span class="v2-hint" style="margin-left:8px;font-weight:400">tickets that passed through "QA REJECTED" status · counts each rejection event separately</span>
+            </div>
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th>Assignee</th>
+                            <th class="v2-table-num" title="All tickets assigned to this person">Total Tickets</th>
+                            <th class="v2-table-num" title="Distinct tickets that hit QA REJECTED at least once">QA Rejected Tickets</th>
+                            <th class="v2-table-num" title="Total number of times any ticket was moved to QA REJECTED">Total Rejections</th>
+                            <th class="v2-table-num" title="QA Rejected Tickets ÷ Total Tickets">% Rejected</th>
+                            <th style="width:130px">Rejection Bar</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!QaRejectionByAssignee.Any())
+                        {
+                            <tr><td colspan="6" style="text-align:center;padding:20px" class="v2-text-muted">No tickets found with QA REJECTED status transitions.</td></tr>
+                        }
+                        @foreach (var r in QaRejectionByAssignee)
+                        {
+                            <tr>
+                                <td>
+                                    <div style="display:flex;align-items:center;gap:8px">
+                                        <span class="v2-avatar v2-avatar-grad-2">@Initials(r.Assignee)</span>
+                                        <span style="font-weight:600">@r.Assignee</span>
+                                    </div>
+                                </td>
+                                <td class="v2-table-num">@r.TotalTickets</td>
+                                <td class="v2-table-num @(r.RejectedTickets > 0 ? "v2-text-warn" : "v2-text-muted")"><strong>@r.RejectedTickets</strong></td>
+                                <td class="v2-table-num @(r.TotalRejections > r.RejectedTickets ? "v2-text-danger" : "v2-text-muted")"><strong>@r.TotalRejections</strong></td>
+                                <td class="v2-table-num">
+                                    <span class="v2-row-value @(r.PctRejected > 50 ? "v2-text-danger" : r.PctRejected > 25 ? "v2-text-warn" : "v2-text-success")">
+                                        @($"{r.PctRejected:F1}%")
+                                    </span>
+                                </td>
+                                <td>
+                                    <div class="v2-bar" style="height:6px">
+                                        <div class="v2-bar-fill @(r.PctRejected > 50 ? "v2-bar-fill-danger" : r.PctRejected > 25 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                                             style="width:@Math.Min(r.PctRejected, 100)%"></div>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                    @if (QaRejectionByAssignee.Count > 1)
+                    {
+                        <tfoot>
+                            <tr style="font-weight:700;background:var(--v2-surface-2)">
+                                <td>Total</td>
+                                <td class="v2-table-num">@AllIssues.Count</td>
+                                <td class="v2-table-num v2-text-warn">@QaRejectionByAssignee.Sum(r => r.RejectedTickets)</td>
+                                <td class="v2-table-num v2-text-muted">@QaRejectionByAssignee.Sum(r => r.TotalRejections)</td>
+                                <td></td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    }
+                </table>
+            </div>
         }
         else if (ActiveTab == "epics")
         {
@@ -541,6 +767,7 @@
     private string ScopeLabel = "";
     private List<JiraFilter> MyFilters = [];
     private string ActiveTab = "overview";
+    private bool   ShowScoreBreakdown;
 
     private string SelectedFilterJql =>
         MyFilters.FirstOrDefault(f => f.Id == SelectedFilterId)?.Jql ?? "";
@@ -554,6 +781,7 @@
 
     private async Task LoadData()
     {
+        if (IsLoading) return;
         IsLoading = true; ErrorMessage = null; ScopeReport = null;
         try
         {
@@ -644,18 +872,21 @@
         return Math.Max(0, (int)(DateTime.Today - start.Date).TotalDays);
     }
 
-    // Quality score (0-100) — composite
+    // Quality score (0-100) — composite of Bug Effort (40%) + Open Bugs (35%) + Avg Fix (25%)
+    private double OpenBugRatePct => TotalIssues == 0 ? 0 : OpenBugs * 100.0 / TotalIssues;
+
+    // Sub-scores (0–100). Higher is better.
+    private double EffortScore   => Math.Clamp(100 - BugEffortShare * 2, 0, 100);            // 0% → 100, 50% → 0
+    private double OpenBugsScore => Math.Clamp(100 - OpenBugRatePct * 3, 0, 100);            // 0% → 100, 33% → 0
+    private double AvgFixScore   => ResolvedBugs == 0 ? 100                                  // no data → neutral
+                                    : Math.Clamp(100 - AvgFixHours * 1.4, 0, 100);           // 0h → 100, ~72h → 0
+
     private int QualityScore
     {
         get
         {
             if (ScopeReport is null || TotalIssues == 0) return 100;
-            // Lower bug rate is better; lower bug effort is better; higher fix rate is better; lower QA rejection is better
-            var bugRateScore   = Math.Clamp(100 - BugRate * 2, 0, 100);                         // 30%
-            var fixRateScore   = TotalBugs == 0 ? 100 : BugFixRate;                              // 25%
-            var effortScore    = Math.Clamp(100 - BugEffortShare * 2, 0, 100);                   // 25%
-            var rejectionScore = Math.Clamp(100 - QaRejectionRate * 2, 0, 100);                  // 20%
-            var score = bugRateScore * 0.30 + fixRateScore * 0.25 + effortScore * 0.25 + rejectionScore * 0.20;
+            var score = EffortScore * 0.40 + OpenBugsScore * 0.35 + AvgFixScore * 0.25;
             return Math.Clamp((int)Math.Round(score), 0, 100);
         }
     }
@@ -732,4 +963,133 @@
         return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
             : name.Length >= 2 ? name[..2].ToUpper() : name.ToUpper();
     }
+
+    private static double WorkingHours(DateTime from, DateTime to)
+    {
+        if (to.Date <= from.Date) return 0;
+        int days = 0;
+        var d = from.Date.AddDays(1);
+        while (d <= to.Date)
+        {
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday) days++;
+            d = d.AddDays(1);
+        }
+        return days * 6.0;
+    }
+
+    private static string FormatFixTime(double h) =>
+        h < 0 ? "N/A" : h == 0 ? "<6h" : $"{(int)h}h";
+
+    // ── Bug effort by team member (sourced from worklogs) ────────────────────
+    private record AssigneeBugMetric(string Assignee, int IssuesWorked, int BugsWorked,
+        double BugHours, double TotalHours, double BugEffortRate, double AvgFixHours);
+
+    private List<AssigneeBugMetric> AssigneeBugRates
+    {
+        get
+        {
+            var all = AllIssues;
+            return all
+                .SelectMany(i => i.Worklogs
+                    .Where(w => !string.IsNullOrEmpty(w.Author))
+                    .Select(w => (Author: w.Author, IssueKey: i.Key, IsBugIssue: IsBug(i), Hours: w.TimeSpentSeconds / 3600.0)))
+                .GroupBy(x => x.Author)
+                .Select(g =>
+                {
+                    var bugHrs   = g.Where(x => x.IsBugIssue).Sum(x => x.Hours);
+                    var totalHrs = g.Sum(x => x.Hours);
+                    var resolvedBugs = all
+                        .Where(i => IsBug(i) && i.StatusCategoryKey == "done" && i.Assignee == g.Key
+                                 && i.ResolutionDate.HasValue && i.Created.HasValue)
+                        .ToList();
+                    return new AssigneeBugMetric(
+                        g.Key,
+                        g.Select(x => x.IssueKey).Distinct().Count(),
+                        g.Where(x => x.IsBugIssue).Select(x => x.IssueKey).Distinct().Count(),
+                        bugHrs,
+                        totalHrs,
+                        totalHrs == 0 ? 0 : bugHrs / totalHrs * 100,
+                        resolvedBugs.Count > 0
+                            ? resolvedBugs.Average(b => WorkingHours(b.Created!.Value, b.ResolutionDate!.Value))
+                            : -1);
+                })
+                .OrderByDescending(m => m.BugEffortRate)
+                .ThenByDescending(m => m.BugHours)
+                .ToList();
+        }
+    }
+
+    // ── QA rejection by team member ──────────────────────────────────────────
+    private record QaRejectionRow(string Assignee, int TotalTickets, int RejectedTickets, int TotalRejections)
+    {
+        public double PctRejected => TotalTickets == 0 ? 0 : RejectedTickets * 100.0 / TotalTickets;
+    }
+
+    private List<QaRejectionRow> QaRejectionByAssignee => AllIssues
+        .Where(i => !string.IsNullOrEmpty(i.Assignee))
+        .GroupBy(i => i.Assignee)
+        .Where(g => g.Any(i => i.QaRejectedCount > 0))
+        .Select(g => new QaRejectionRow(
+            Assignee:         g.Key,
+            TotalTickets:     g.Count(),
+            RejectedTickets:  g.Count(i => i.QaRejectedCount > 0),
+            TotalRejections:  g.Sum(i => i.QaRejectedCount)))
+        .OrderByDescending(r => r.TotalRejections)
+        .ToList();
 }
+
+<style>
+    .qm-gauge-clickable { cursor: pointer; transition: box-shadow .15s ease, transform .15s ease; }
+    .qm-gauge-clickable:hover { box-shadow: 0 6px 22px rgba(0,0,0,0.08); transform: translateY(-1px); }
+
+    .qm-modal-backdrop {
+        position: fixed; inset: 0;
+        background: rgba(15, 23, 42, 0.55);
+        backdrop-filter: blur(2px);
+        display: flex; align-items: center; justify-content: center;
+        z-index: 1000;
+        padding: 24px;
+        animation: qm-fade .12s ease-out;
+    }
+    .qm-modal {
+        background: #fff;
+        border-radius: 14px;
+        box-shadow: 0 24px 60px rgba(15, 23, 42, 0.32);
+        max-width: 780px; width: 100%;
+        max-height: calc(100vh - 48px);
+        overflow: auto;
+        animation: qm-pop .14s ease-out;
+    }
+    .qm-modal-head {
+        display: flex; align-items: flex-start; justify-content: space-between;
+        padding: 20px 24px 12px;
+        border-bottom: 1px solid var(--v2-border);
+    }
+    .qm-modal-eyebrow {
+        font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
+        color: var(--v2-ink-3); margin-bottom: 4px;
+    }
+    .qm-modal-title { font-size: 22px; font-weight: 700; line-height: 1.2; }
+    .qm-modal-close {
+        background: transparent; border: 1px solid var(--v2-border);
+        width: 32px; height: 32px; border-radius: 8px;
+        display: inline-flex; align-items: center; justify-content: center;
+        cursor: pointer; color: var(--v2-ink-2);
+        transition: background .12s, color .12s;
+    }
+    .qm-modal-close:hover { background: var(--v2-surface-2); color: var(--v2-ink-1); }
+    .qm-modal-body { padding: 16px 24px 22px; }
+    .qm-modal-desc { font-size: 13px; color: var(--v2-ink-3); margin: 0 0 14px; }
+    .qm-modal-note {
+        margin-top: 14px;
+        padding: 10px 12px;
+        background: var(--v2-surface-2);
+        border-radius: 8px;
+        font-size: 12px;
+        color: var(--v2-ink-2);
+        display: flex; align-items: flex-start; gap: 8px;
+    }
+
+    @@keyframes qm-fade { from { opacity: 0 } to { opacity: 1 } }
+    @@keyframes qm-pop  { from { opacity: 0; transform: translateY(8px) scale(.98) } to { opacity: 1; transform: none } }
+</style>
