@@ -3099,6 +3099,22 @@ private static decimal ParseJiraDurationToHours(string? input)
             }
 
             // ── Sheet 1: Calendar ────────────────────────────────────────────────
+            // For Jira tasks: show "EPIC-KEY - Epic Summary"
+            // For custom tasks: show category (e.g. "Support Bug", "Review")
+            // Merge consecutive days with the same task set into one cell.
+            string GetEpicLabel(int taskId)
+            {
+                if (_customTasks.TryGetValue(taskId, out var ct)) return ct.Category;
+                var jk = GetJiraKeyForTaskId(taskId);
+                if (jk != null && taskKeyToEpicKey.TryGetValue(jk, out var ek))
+                {
+                    return epicNameMap.TryGetValue(ek, out var en) && !string.IsNullOrWhiteSpace(en)
+                        ? $"{ek} - {en}"
+                        : ek;
+                }
+                return jk ?? $"#{taskId}";
+            }
+
             var cal = wb.Worksheets.Add("Calendar");
             WriteCalendarHeader(cal);
 
@@ -3110,26 +3126,69 @@ private static decimal ParseJiraDurationToHours(string? input)
                 nc.Value = $"{member.Name} ({member.Team})";
                 nc.Style.Font.Bold = true;
 
-                for (int d = 0; d < VisibleDates.Count; d++)
+                int d = 0;
+                while (d < VisibleDates.Count)
                 {
                     var date = VisibleDates[d];
                     var cell = cal.Cell(rowIdx, d + 2);
+
                     if (IsMemberTimeOff(member.Id, date) || IsHoliday(date))
                     {
                         cell.Value = IsHoliday(date) ? "Holiday" : "Time Off";
                         cell.Style.Fill.BackgroundColor = XLColor.LightYellow;
                         cell.Style.Font.Italic = true;
-                        continue;
+                        d++; continue;
                     }
-                    if (IsWeekend(date)) { cell.Style.Fill.BackgroundColor = XLColor.LightGray; continue; }
-                    var dayAllocs = Allocations.Where(a => a.TeamMemberId == member.Id && a.Date == date).ToList();
-                    if (dayAllocs.Count > 0)
+                    if (IsWeekend(date))
                     {
-                        cell.Value = string.Join(" | ", dayAllocs
-                            .GroupBy(a => a.TaskId)
-                            .Select(g => $"{GetTaskShortLabel(g.Key)} ({g.Sum(a => a.HoursAllocated):0.#}h)"));
+                        cell.Style.Fill.BackgroundColor = XLColor.LightGray;
+                        d++; continue;
+                    }
+
+                    var dayAllocs = Allocations.Where(a => a.TeamMemberId == member.Id && a.Date == date).ToList();
+                    if (dayAllocs.Count == 0) { d++; continue; }
+
+                    // Fingerprint = distinct epic labels for this day (sub-tasks under the same epic collapse)
+                    string Fingerprint(IEnumerable<TaskAllocation> allocs) =>
+                        string.Join("§", allocs.Select(a => GetEpicLabel(a.TaskId)).Distinct().OrderBy(s => s));
+
+                    var fp = Fingerprint(dayAllocs);
+
+                    // Find run end: walk forward while next day has the same epic-label set
+                    int endD = d;
+                    while (endD + 1 < VisibleDates.Count)
+                    {
+                        var nextDate = VisibleDates[endD + 1];
+                        if (IsWeekend(nextDate) || IsMemberTimeOff(member.Id, nextDate) || IsHoliday(nextDate)) break;
+                        var nextAllocs = Allocations.Where(a => a.TeamMemberId == member.Id && a.Date == nextDate).ToList();
+                        if (nextAllocs.Count == 0 || Fingerprint(nextAllocs) != fp) break;
+                        endD++;
+                    }
+
+                    // Cell value: distinct epic labels only (no hours)
+                    var runAllocs = Allocations.Where(a => a.TeamMemberId == member.Id
+                                                        && a.Date >= VisibleDates[d]
+                                                        && a.Date <= VisibleDates[endD]).ToList();
+                    cell.Value = string.Join(" | ", runAllocs
+                        .Select(a => GetEpicLabel(a.TaskId))
+                        .Distinct()
+                        .OrderBy(s => s));
+
+                    if (endD > d)
+                    {
+                        var range = cal.Range(rowIdx, d + 2, rowIdx, endD + 2);
+                        range.Merge();
+                        range.Style.Fill.BackgroundColor = XLColor.FromHtml("#DBEAFE");
+                        range.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                        range.Style.Alignment.Vertical   = XLAlignmentVerticalValues.Center;
+                        range.Style.Border.OutsideBorder = XLBorderStyleValues.Thin;
+                        range.Style.Border.OutsideBorderColor = XLColor.FromHtml("#93C5FD");
+                    }
+                    else
+                    {
                         cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#DBEAFE");
                     }
+                    d = endD + 1;
                 }
             }
             cal.Row(1).Height = 30;

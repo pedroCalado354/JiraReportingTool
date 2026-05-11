@@ -524,8 +524,45 @@
         }
         else if (ActiveTab == "epics")
         {
+            <!-- ── Filters ─────────────────────────────────────────────────────── -->
+            <div class="v2-section" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+                <select class="v2-select" style="min-width:240px" @bind="_epicsFilterKey">
+                    <option value="">All Epics</option>
+                    @foreach (var e in EpicRows.OrderBy(e => e.Name))
+                    {
+                        <option value="@e.Key">@(e.Name == "No Epic" ? e.Key : $"{e.Key} — {e.Name}")</option>
+                    }
+                </select>
+                <select class="v2-select" style="min-width:200px" @bind="_epicsFilterMember">
+                    <option value="">All Team Members</option>
+                    @foreach (var m in EpicRows.SelectMany(e => e.Issues)
+                                               .Where(i => !string.IsNullOrWhiteSpace(i.Assignee) && i.Assignee != "Unassigned")
+                                               .Select(i => i.Assignee)
+                                               .Distinct()
+                                               .OrderBy(n => n))
+                    {
+                        <option value="@m">@m</option>
+                    }
+                </select>
+                @if (!string.IsNullOrEmpty(_epicsFilterKey) || !string.IsNullOrEmpty(_epicsFilterMember))
+                {
+                    <button class="v2-btn v2-btn-ghost" @onclick="ClearEpicsFilters">Clear</button>
+                }
+                <span class="v2-hint" style="margin-left:auto">
+                    @FilteredEpicRows.Count of @EpicRows.Count epic@(EpicRows.Count == 1 ? "" : "s")
+                </span>
+            </div>
+
+            @if (!FilteredEpicRows.Any())
+            {
+                <div class="v2-empty">
+                    <div class="v2-empty-icon"><i class="bi bi-funnel"></i></div>
+                    <div class="v2-empty-title">No epics match the current filters</div>
+                    <div>Try clearing them to see all epics.</div>
+                </div>
+            }
             <div class="v2-grid-2">
-                @foreach (var ep in EpicRows.OrderByDescending(e => e.InProgress + e.ToDo).ThenByDescending(e => e.Total))
+                @foreach (var ep in FilteredEpicRows.OrderByDescending(e => e.InProgress + e.ToDo).ThenByDescending(e => e.Total))
                 {
                     var donePct        = ep.Total > 0 ? ep.Done * 100 / ep.Total : 0;
                     var taskList       = ep.Issues.Where(i => !string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
@@ -797,6 +834,85 @@
                     <div class="v2-risk-num">@MemberRows.Count(m => m.HealthBand == "danger")</div>
                     <div class="v2-risk-lbl">Compromised members</div>
                     <div class="v2-hint" style="margin-top:2px">@MemberRows.Count(m => m.HealthBand == "warn") at risk · @MemberRows.Count(m => m.HealthBand == "success") healthy</div>
+                </div>
+            </div>
+
+            <!-- ── Epics Worked per Member chart ─────────────────────────────── -->
+            <div class="v2-section v2-mt-lg">
+                <div class="v2-section-title">
+                    <i class="bi bi-collection" style="color:var(--v2-brand)"></i>Epics Worked by Member
+                    <span class="v2-hint" style="margin-left:8px;font-weight:400">distinct epics each member has at least one task in this sprint</span>
+                </div>
+                <div class="v2-card v2-card-lg">
+                    @{
+                        var epicsByMember = MemberRows
+                            .Select(m => new
+                            {
+                                m.Name,
+                                Epics = m.Tasks
+                                    .Where(t => !string.IsNullOrEmpty(t.EpicKey))
+                                    .GroupBy(t => t.EpicKey)
+                                    .Select(g => new
+                                    {
+                                        Key   = g.Key,
+                                        Name  = g.First().EpicName is { Length: > 0 } en && en != "No Epic" ? en : g.Key,
+                                        Tasks = g.Count(),
+                                        Done  = g.Count(t => t.StatusCategoryKey == "done")
+                                    })
+                                    .OrderByDescending(e => e.Tasks)
+                                    .ToList()
+                            })
+                            .Where(x => x.Epics.Count > 0)
+                            .OrderByDescending(x => x.Epics.Count)
+                            .ThenBy(x => x.Name)
+                            .ToList();
+                        var maxEpics = epicsByMember.Select(x => x.Epics.Count).DefaultIfEmpty(1).Max();
+                        if (maxEpics < 1) maxEpics = 1;
+                    }
+                    @if (!epicsByMember.Any())
+                    {
+                        <div class="v2-text-muted" style="padding:24px 0;text-align:center">
+                            No members with epic-linked tasks in this sprint.
+                        </div>
+                    }
+                    else
+                    {
+                        @foreach (var r in epicsByMember)
+                        {
+                            var tooltip = string.Join(" · ",
+                                r.Epics.Select(e => $"{e.Key} — {e.Name} ({e.Done}/{e.Tasks})"));
+                            var fillClass = r.Epics.Count >= 5 ? "v2-bar-fill-warn"
+                                          : r.Epics.Count >= 3 ? "v2-bar-fill"
+                                          : "v2-bar-fill-success";
+                            <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px" title="@tooltip">
+                                <div style="display:flex;align-items:center;gap:8px;min-width:200px;max-width:200px">
+                                    <span class="v2-avatar v2-avatar-sm @($"v2-avatar-grad-{1 + (Math.Abs(r.Name.GetHashCode()) % 5)}")">@Initials(r.Name)</span>
+                                    <span style="font-weight:600;font-size:13px" class="v2-truncate">@r.Name</span>
+                                </div>
+                                <div class="v2-bar" style="flex:1;height:16px">
+                                    <div class="v2-bar-fill @fillClass" style="width:@((double)r.Epics.Count / maxEpics * 100)%"></div>
+                                </div>
+                                <div style="min-width:90px;text-align:right">
+                                    <strong style="font-size:16px">@r.Epics.Count</strong>
+                                    <span class="v2-hint" style="margin-left:2px">epic@(r.Epics.Count == 1 ? "" : "s")</span>
+                                </div>
+                            </div>
+                            <!-- Epic chips -->
+                            <div style="display:flex;flex-wrap:wrap;gap:4px;margin:-4px 0 14px 212px">
+                                @foreach (var e in r.Epics)
+                                {
+                                    var donePct = e.Tasks > 0 ? (int)Math.Round(e.Done * 100.0 / e.Tasks) : 0;
+                                    var pillClass = donePct == 100 ? "v2-pill-success"
+                                                  : donePct >= 50  ? "v2-pill-brand"
+                                                  : "v2-pill-neutral";
+                                    <span class="v2-pill @pillClass" style="font-size:10px;padding:1px 6px"
+                                          title="@e.Key — @e.Name · @e.Done of @e.Tasks done">
+                                        @(e.Name.Length > 28 ? e.Name[..28] + "…" : e.Name) · @e.Done/@e.Tasks
+                                    </span>
+                                }
+                            </div>
+                        }
+                    }
                 </div>
             </div>
 
@@ -1697,6 +1813,22 @@
     private void ToggleEpic(string key)
     {
         if (!ExpandedEpics.Add(key)) ExpandedEpics.Remove(key);
+    }
+
+    // Epics-tab filters
+    private string _epicsFilterKey    = "";
+    private string _epicsFilterMember = "";
+
+    private List<EpicRow> FilteredEpicRows => EpicRows
+        .Where(e => string.IsNullOrEmpty(_epicsFilterKey) || e.Key == _epicsFilterKey)
+        .Where(e => string.IsNullOrEmpty(_epicsFilterMember)
+                 || e.Issues.Any(i => i.Assignee == _epicsFilterMember))
+        .ToList();
+
+    private void ClearEpicsFilters()
+    {
+        _epicsFilterKey = "";
+        _epicsFilterMember = "";
     }
 
     // Epic projection — based on the epic's burn rate so far + bug arrival rate
