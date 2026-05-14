@@ -1,0 +1,1039 @@
+@page "/working-hours-v2"
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+@inject IJSRuntime JS
+@using JiraReportingTool.Models
+@using ClosedXML.Excel
+
+<PageTitle>Working Hours</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ══════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon"><i class="bi bi-clock-history"></i></div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Sprint Analysis</span>
+                <h1 class="v2-hero-title">Working Hours</h1>
+                <span class="v2-hero-sub">
+                    @if (SprintReports.Count > 0)
+                    {
+                        @string.Join(" · ", SprintReports.Where(r => !string.IsNullOrEmpty(r.SprintName)).Select(r => r.SprintName))
+                    }
+                    else
+                    {
+                        <span>Worklog breakdown across sprints, members and epics</span>
+                    }
+                </span>
+            </div>
+            <div class="v2-hero-spacer"></div>
+            @if (SprintReports.Count > 0)
+            {
+                <div class="v2-hero-actions">
+                    <span class="v2-pill v2-pill-neutral"><i class="bi bi-collection"></i> @SprintReports.Count sprint@(SprintReports.Count == 1 ? "" : "s")</span>
+                    <span class="v2-pill v2-pill-neutral"><i class="bi bi-people"></i> @ActiveMemberCount active</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ CONTROL BAR ════════════════════════════════════════════════════════ -->
+    <div class="v2-control-bar">
+        <div class="v2-field" style="min-width:400px">
+            <label class="v2-label">Sprint ID(s)</label>
+            <input class="v2-input" placeholder="e.g. 6690  or  6690, 6691, 6692"
+                   @bind="SprintIdsInput" @onkeyup="HandleKeyUp" />
+        </div>
+        <button class="v2-btn v2-btn-primary" @onclick="LoadData"
+                disabled="@(IsLoading || string.IsNullOrWhiteSpace(SprintIdsInput))">
+            @if (IsLoading) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-lightning-charge-fill"></i> }
+            <span>Load</span>
+        </button>
+        @if (SprintReports.Count > 0)
+        {
+            <span class="v2-hint" style="margin-left:auto">@FilteredEntryCount log entries · @TotalHours.ToString("F1") h total</span>
+        }
+    </div>
+
+    @if (ErrorMessage != null)
+    {
+        <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle-fill"></i> @ErrorMessage</div>
+    }
+
+    @if (SprintReports.Count == 0 && !IsLoading)
+    {
+        <div class="v2-empty">
+            <div class="v2-empty-icon"><i class="bi bi-clock"></i></div>
+            <div class="v2-empty-title">Enter one or more sprint IDs to begin</div>
+            <div>Load worklog data to see hours by member, day and epic.</div>
+        </div>
+    }
+
+    @if (SprintReports.Count > 0)
+    {
+        <!-- ═══ KPI STRIP ═════════════════════════════════════════════════════ -->
+        <div class="wh2-kpi-row">
+            <div class="wh2-kpi wh2-kpi-accent">
+                <div class="wh2-kpi-label"><i class="bi bi-clock-fill"></i> Total Hours</div>
+                <div class="wh2-kpi-val">@TotalHours.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
+                <div class="wh2-kpi-sub">filtered logs</div>
+            </div>
+            <div class="wh2-kpi">
+                <div class="wh2-kpi-label"><i class="bi bi-people-fill"></i> Members</div>
+                <div class="wh2-kpi-val">@ActiveMemberCount</div>
+                <div class="wh2-kpi-sub">contributors</div>
+            </div>
+            <div class="wh2-kpi">
+                <div class="wh2-kpi-label"><i class="bi bi-journal-text"></i> Log Entries</div>
+                <div class="wh2-kpi-val">@FilteredEntryCount</div>
+                <div class="wh2-kpi-sub">worklog records</div>
+            </div>
+            <div class="wh2-kpi">
+                <div class="wh2-kpi-label"><i class="bi bi-person-lines-fill"></i> Avg / Member</div>
+                <div class="wh2-kpi-val">@AvgHoursPerMember.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
+                <div class="wh2-kpi-sub">mean per contributor</div>
+            </div>
+            <div class="wh2-kpi">
+                <div class="wh2-kpi-label"><i class="bi bi-calendar-day"></i> Avg / Day</div>
+                <div class="wh2-kpi-val">@AvgHoursPerDay.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
+                <div class="wh2-kpi-sub">mean per workday</div>
+            </div>
+            <div class="wh2-kpi">
+                <div class="wh2-kpi-label"><i class="bi bi-graph-up"></i> Peak Day</div>
+                <div class="wh2-kpi-val">@MaxDayHours.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
+                <div class="wh2-kpi-sub">highest single-day</div>
+            </div>
+        </div>
+
+        <!-- ═══ INSIGHT BAR ═══════════════════════════════════════════════════ -->
+        <div class="wh2-insight-bar">
+            <div class="wh2-insight-item">
+                <i class="bi bi-trophy-fill" style="color:#f59e0b"></i>
+                <span class="wh2-insight-label">Top contributor</span>
+                <span class="wh2-insight-val">@TopContributor</span>
+            </div>
+            <div class="wh2-insight-sep"></div>
+            <div class="wh2-insight-item">
+                <i class="bi bi-calendar-week" style="color:var(--v2-brand)"></i>
+                <span class="wh2-insight-label">Busiest weekday</span>
+                <span class="wh2-insight-val">@BusiestWeekday</span>
+            </div>
+            <div class="wh2-insight-sep"></div>
+            <div class="wh2-insight-item">
+                <i class="bi bi-download" style="color:#10b981"></i>
+                <button class="wh2-export-btn" @onclick="ExportToExcel" disabled="@IsExporting">
+                    @if (IsExporting) { <span class="v2-spin" style="width:12px;height:12px"></span> }
+                    Export .xlsx
+                </button>
+            </div>
+        </div>
+
+        <!-- ═══ FILTERS ═══════════════════════════════════════════════════════ -->
+        <div class="v2-card wh2-filter-card">
+            <div class="wh2-filter-grid">
+
+                <!-- Members -->
+                <div class="wh2-filter-col">
+                    <div class="wh2-filter-head">
+                        <span class="wh2-filter-title"><i class="bi bi-people"></i> Members</span>
+                        <div class="wh2-filter-actions">
+                            <button class="wh2-link-btn" @onclick="SelectAllMembers">All</button>
+                            <span class="wh2-dot-sep">·</span>
+                            <button class="wh2-link-btn" @onclick="ClearMembersFilter">None</button>
+                        </div>
+                    </div>
+                    <div class="wh2-chip-list">
+                        @foreach (var author in AllAuthors)
+                        {
+                            var a = author;
+                            <button class="wh2-chip @(SelectedMembers.Contains(a) ? "is-on" : "")"
+                                    @onclick="() => ToggleMember(a, !SelectedMembers.Contains(a))">
+                                @if (SelectedMembers.Contains(a)) { <i class="bi bi-check2"></i> }
+                                @a
+                            </button>
+                        }
+                    </div>
+                    <div class="wh2-filter-count">@SelectedMembers.Count of @AllAuthors.Count selected</div>
+                </div>
+
+                <!-- Epics -->
+                <div class="wh2-filter-col">
+                    <div class="wh2-filter-head">
+                        <span class="wh2-filter-title"><i class="bi bi-collection"></i> Epics</span>
+                        <div class="wh2-filter-actions">
+                            <button class="wh2-link-btn" @onclick="SelectAllEpics">All</button>
+                            <span class="wh2-dot-sep">·</span>
+                            <button class="wh2-link-btn" @onclick="ClearEpicsFilter">None</button>
+                        </div>
+                    </div>
+                    <div class="wh2-chip-list">
+                        @foreach (var (key, name) in AllEpics)
+                        {
+                            var k = key; var n = name;
+                            <button class="wh2-chip wh2-chip-mono @(SelectedEpics.Contains(k) ? "is-on" : "")" title="@n"
+                                    @onclick="() => ToggleEpic(k, !SelectedEpics.Contains(k))">
+                                @if (SelectedEpics.Contains(k)) { <i class="bi bi-check2"></i> }
+                                @k
+                            </button>
+                        }
+                    </div>
+                    <div class="wh2-filter-count">@SelectedEpics.Count of @AllEpics.Count selected</div>
+                </div>
+
+                <!-- Date range -->
+                <div class="wh2-filter-col wh2-filter-col-sm">
+                    <div class="wh2-filter-head">
+                        <span class="wh2-filter-title"><i class="bi bi-calendar-range"></i> Date Range</span>
+                        @if (DateFrom.HasValue || DateTo.HasValue)
+                        {
+                            <button class="wh2-link-btn" @onclick="ClearDates">Clear</button>
+                        }
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:6px">
+                        <input type="date" class="v2-input" style="width:100%" @bind="DateFrom" @bind:after="OnFilterChanged" />
+                        <input type="date" class="v2-input" style="width:100%" @bind="DateTo" @bind:after="OnFilterChanged" />
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ CHARTS ════════════════════════════════════════════════════════ -->
+        <div class="wh2-chart-grid">
+            <div class="v2-card">
+                <div class="v2-section-title"><i class="bi bi-bar-chart-line" style="color:var(--v2-brand)"></i>Hours per Member</div>
+                <div style="height:@(Math.Clamp(AllAuthors.Count * 28, 200, 480))px;position:relative">
+                    <canvas id="chart-hours-member"></canvas>
+                </div>
+            </div>
+            <div class="v2-card">
+                <div class="v2-section-title"><i class="bi bi-calendar-event" style="color:#6366f1"></i>Hours per Day</div>
+                <div style="height:@(Math.Clamp(AllAuthors.Count * 28, 200, 480))px;position:relative">
+                    <canvas id="chart-hours-day"></canvas>
+                </div>
+            </div>
+            <div class="v2-card">
+                <div class="v2-section-title"><i class="bi bi-pie-chart" style="color:#7c3aed"></i>Hours per Epic</div>
+                <div style="height:@(Math.Clamp(AllAuthors.Count * 28, 200, 480))px;position:relative">
+                    <canvas id="chart-hours-epic"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══ WORKLOG BY EPIC ════════════════════════════════════════════════ -->
+        <div>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <div class="v2-section-title" style="margin:0"><i class="bi bi-layers"></i>Worklog Entries by Epic</div>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <span class="v2-hint">@FilteredEntryCount entries · @TotalHours.ToString("F1") h</span>
+                    <button class="wh2-link-btn" style="font-size:11px" @onclick="ExpandAllEpics">Expand all</button>
+                    <span class="wh2-dot-sep">·</span>
+                    <button class="wh2-link-btn" style="font-size:11px" @onclick="CollapseAllEpics">Collapse all</button>
+                </div>
+            </div>
+
+            @if (FilteredEntryCount == 0)
+            {
+                <div class="v2-card" style="text-align:center;padding:32px;color:var(--v2-ink-4)">No worklogs match the current filters.</div>
+            }
+
+            @foreach (var eg in WorklogsByEpic)
+            {
+                var epicKey  = eg.EpicKey;
+                var isOpen   = _wlExpanded.Contains(epicKey);
+                var epicHours = eg.Rows.Sum(r => r.TimeSpentSeconds) / 3600.0;
+                var epicMembers = eg.Rows.Select(r => r.Author).Distinct().OrderBy(a => a).ToList();
+                var hasEpic  = epicKey != "—";
+
+                <div class="wh2-epic-block">
+                    <!-- Header row -->
+                    <button class="wh2-epic-header" @onclick="() => ToggleWlEpic(epicKey)">
+                        <i class="bi @(isOpen ? "bi-chevron-down" : "bi-chevron-right") wh2-chevron"></i>
+
+                        @if (hasEpic)
+                        {
+                            <span class="wh2-epic-key">@epicKey</span>
+                            <span class="wh2-epic-name">@(string.IsNullOrEmpty(eg.EpicName) || eg.EpicName == "No Epic" ? epicKey : eg.EpicName)</span>
+                        }
+                        else
+                        {
+                            <span class="wh2-epic-name" style="color:var(--v2-ink-3);font-style:italic">No Epic</span>
+                        }
+
+                        <div class="wh2-epic-meta">
+                            <span class="wh2-epic-stat"><i class="bi bi-journal-text"></i>@eg.Rows.Count entries</span>
+                            <span class="wh2-epic-stat wh2-epic-hours"><i class="bi bi-clock"></i>@epicHours.ToString("F1") h</span>
+                            <div class="wh2-epic-members">
+                                @foreach (var m in epicMembers.Take(6))
+                                {
+                                    <span class="wh2-avatar" title="@m">@(string.Concat(m.Split(' ').Take(2).Select(p => p.Length > 0 ? p[0].ToString() : "")))</span>
+                                }
+                                @if (epicMembers.Count > 6)
+                                {
+                                    <span class="wh2-avatar wh2-avatar-more">+@(epicMembers.Count - 6)</span>
+                                }
+                            </div>
+                        </div>
+                    </button>
+
+                    <!-- Expanded rows -->
+                    @if (isOpen)
+                    {
+                        <div class="v2-table-wrap wh2-epic-body">
+                            <table class="v2-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Day</th>
+                                        <th>Member</th>
+                                        <th class="v2-table-num">Hours</th>
+                                        <th>Task</th>
+                                        <th>Summary</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var wl in eg.Rows.OrderByDescending(r => r.Date).ThenBy(r => r.Author))
+                                    {
+                                        <tr>
+                                            <td class="v2-hint" style="white-space:nowrap;font-size:12px">@wl.Date.ToString("yyyy-MM-dd")</td>
+                                            <td class="v2-hint" style="white-space:nowrap;font-size:12px">@wl.Date.ToString("ddd")</td>
+                                            <td style="font-weight:600;white-space:nowrap">@wl.Author</td>
+                                            <td class="v2-table-num" style="font-weight:700">@((wl.TimeSpentSeconds / 3600.0).ToString("F2"))</td>
+                                            <td><span class="v2-table-key">@wl.IssueKey</span></td>
+                                            <td class="v2-truncate" style="max-width:340px" title="@wl.IssueSummary">@wl.IssueSummary</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                                <tfoot>
+                                    <tr style="background:var(--v2-surface-2);font-weight:700;border-top:2px solid var(--v2-border)">
+                                        <td colspan="3" style="padding:7px 12px">Epic total</td>
+                                        <td class="v2-table-num" style="padding:7px 12px">@epicHours.ToString("F2")</td>
+                                        <td colspan="2"></td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <!-- ═══ DONE FEATURES TABLE ═══════════════════════════════════════════ -->
+        <div class="v2-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                <div class="v2-section-title" style="margin:0"><i class="bi bi-check2-all"></i>Done Features</div>
+                <span class="v2-hint">@DoneFeatures.Count issues · @DoneTotalSP SP · @DoneTotalHours.ToString("F1") h logged</span>
+            </div>
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th class="@SI2("Key",      _sortColDF, _sortAscDF)" @onclick='() => SortDF("Key")'>Key</th>
+                            <th class="@SI2("Summary",  _sortColDF, _sortAscDF)" @onclick='() => SortDF("Summary")'>Summary</th>
+                            <th class="@SI2("Type",     _sortColDF, _sortAscDF)" @onclick='() => SortDF("Type")'>Type</th>
+                            <th class="@SI2("Assignee", _sortColDF, _sortAscDF)" @onclick='() => SortDF("Assignee")'>Assignee</th>
+                            @if (ShowSprintColDF)
+                            {
+                                <th class="@SI2("Sprint", _sortColDF, _sortAscDF)" @onclick='() => SortDF("Sprint")'>Sprint</th>
+                            }
+                            <th class="@SI2("Epic",     _sortColDF, _sortAscDF)" @onclick='() => SortDF("Epic")'>Epic</th>
+                            <th class="v2-table-num @SI2("SP",    _sortColDF, _sortAscDF)" @onclick='() => SortDF("SP")'>SP</th>
+                            <th class="v2-table-num @SI2("Hours", _sortColDF, _sortAscDF)" @onclick='() => SortDF("Hours")'>Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var r in DoneFeatures)
+                        {
+                            <tr>
+                                <td><span class="v2-table-key">@r.Key</span></td>
+                                <td class="v2-truncate" style="max-width:260px" title="@r.Summary">@r.Summary</td>
+                                <td><span class="v2-chip v2-chip-@r.IssueType.ToLower()">@r.IssueType</span></td>
+                                <td style="white-space:nowrap">@r.Assignee</td>
+                                @if (ShowSprintColDF)
+                                {
+                                    <td class="v2-hint" style="white-space:nowrap;font-size:12px">@r.SprintName</td>
+                                }
+                                <td style="white-space:nowrap;max-width:180px">
+                                    @if (!string.IsNullOrEmpty(r.EpicKey))
+                                    {
+                                        <span style="font-size:11px;font-weight:700;color:var(--v2-brand)">@r.EpicKey</span>
+                                        @if (!string.IsNullOrEmpty(r.EpicName) && r.EpicName != "No Epic")
+                                        {
+                                            <span class="v2-hint" style="margin-left:4px;font-size:11px">@r.EpicName</span>
+                                        }
+                                    }
+                                    else { <span class="v2-hint">—</span> }
+                                </td>
+                                <td class="v2-table-num">@(r.StoryPoints.HasValue ? r.StoryPoints.Value.ToString() : "—")</td>
+                                <td class="v2-table-num" style="font-weight:700">@r.HoursLogged.ToString("F2")</td>
+                            </tr>
+                        }
+                        @if (DoneFeatures.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="@(ShowSprintColDF ? 8 : 7)" style="text-align:center;padding:32px;color:var(--v2-ink-4)">No done features match the current filters.</td>
+                            </tr>
+                        }
+                    </tbody>
+                    @if (DoneFeatures.Count > 0)
+                    {
+                        <tfoot>
+                            <tr style="background:var(--v2-surface-2);font-weight:700;border-top:2px solid var(--v2-border)">
+                                <td colspan="@(ShowSprintColDF ? 6 : 5)" style="padding:8px 12px">Total</td>
+                                <td class="v2-table-num" style="padding:8px 12px">@DoneTotalSP</td>
+                                <td class="v2-table-num" style="padding:8px 12px">@DoneTotalHours.ToString("F2")</td>
+                            </tr>
+                        </tfoot>
+                    }
+                </table>
+            </div>
+        </div>
+    }
+</div>
+
+<style>
+    /* ── KPI strip ─────────────────────────────────────────────────────── */
+    .wh2-kpi-row {
+        display: grid;
+        grid-template-columns: repeat(6, 1fr);
+        gap: 10px;
+    }
+    .wh2-kpi {
+        background: var(--v2-surface);
+        border: 1px solid var(--v2-border);
+        border-radius: 10px;
+        padding: 14px 16px;
+        box-shadow: var(--v2-sh-xs);
+    }
+    .wh2-kpi-accent { border-top: 3px solid #10b981; }
+    .wh2-kpi-label  { font-size: 11px; font-weight: 600; color: var(--v2-ink-3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
+    .wh2-kpi-val    { font-size: 26px; font-weight: 800; color: var(--v2-ink-1); line-height: 1.1; }
+    .wh2-kpi-unit   { font-size: 14px; font-weight: 600; color: var(--v2-ink-3); margin-left: 2px; }
+    .wh2-kpi-sub    { font-size: 11px; color: var(--v2-ink-4); margin-top: 3px; }
+
+    /* ── Insight bar ───────────────────────────────────────────────────── */
+    .wh2-insight-bar {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        background: var(--v2-surface);
+        border: 1px solid var(--v2-border);
+        border-radius: 10px;
+        padding: 10px 20px;
+        box-shadow: var(--v2-sh-xs);
+    }
+    .wh2-insight-item   { display: flex; align-items: center; gap: 8px; padding: 2px 16px; }
+    .wh2-insight-item:first-child { padding-left: 0; }
+    .wh2-insight-label  { font-size: 12px; color: var(--v2-ink-3); }
+    .wh2-insight-val    { font-size: 13px; font-weight: 700; color: var(--v2-ink-1); }
+    .wh2-insight-sep    { width: 1px; height: 22px; background: var(--v2-border); flex-shrink: 0; }
+    .wh2-export-btn {
+        background: none; border: none; cursor: pointer;
+        font-size: 13px; font-weight: 600; color: #15803d;
+        padding: 0; display: flex; align-items: center; gap: 5px;
+    }
+    .wh2-export-btn:hover:not(:disabled) { color: #166534; text-decoration: underline; }
+    .wh2-export-btn:disabled { opacity: .5; cursor: default; }
+
+    /* ── Filter card ───────────────────────────────────────────────────── */
+    .wh2-filter-card    { padding: 16px 20px; }
+    .wh2-filter-grid    { display: grid; grid-template-columns: 1fr 1fr 200px; gap: 24px; align-items: start; }
+    .wh2-filter-col     {}
+    .wh2-filter-col-sm  { min-width: 0; }
+    .wh2-filter-head    { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+    .wh2-filter-title   { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--v2-ink-2); display: flex; align-items: center; gap: 5px; }
+    .wh2-filter-actions { display: flex; align-items: center; gap: 4px; }
+    .wh2-link-btn       { background: none; border: none; cursor: pointer; font-size: 11px; font-weight: 600; color: var(--v2-brand); padding: 0; }
+    .wh2-link-btn:hover { text-decoration: underline; }
+    .wh2-dot-sep        { font-size: 10px; color: var(--v2-ink-4); }
+    .wh2-filter-count   { font-size: 11px; color: var(--v2-ink-4); margin-top: 8px; }
+
+    /* chip list */
+    .wh2-chip-list { display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto; padding: 2px 0 4px; }
+    .wh2-chip {
+        display: inline-flex; align-items: center; gap: 3px;
+        padding: 3px 9px;
+        border-radius: 4px;
+        border: 1px solid var(--v2-border);
+        background: var(--v2-surface);
+        color: var(--v2-ink-2);
+        font-size: 11px; font-weight: 500;
+        cursor: pointer;
+        transition: border-color .1s, background .1s, color .1s;
+        white-space: nowrap;
+        user-select: none;
+    }
+    .wh2-chip:hover             { border-color: #93c5fd; background: #f0f9ff; color: var(--v2-brand); }
+    .wh2-chip.is-on             { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; font-weight: 600; }
+    .wh2-chip.wh2-chip-mono     { font-family: monospace; font-size: 10.5px; }
+
+    /* ── Chart grid ────────────────────────────────────────────────────── */
+    .wh2-chart-grid { display: grid; grid-template-columns: 1fr 1fr 300px; gap: 12px; }
+
+    /* ── Epic accordion ────────────────────────────────────────────────── */
+    .wh2-epic-block {
+        border: 1px solid var(--v2-border);
+        border-radius: 8px;
+        background: var(--v2-surface);
+        margin-bottom: 6px;
+        overflow: hidden;
+        box-shadow: var(--v2-sh-xs);
+    }
+    .wh2-epic-header {
+        width: 100%; display: flex; align-items: center; gap: 10px;
+        padding: 11px 16px;
+        background: none; border: none; cursor: pointer; text-align: left;
+        transition: background .1s;
+    }
+    .wh2-epic-header:hover { background: var(--v2-surface-2); }
+    .wh2-chevron   { font-size: 11px; color: var(--v2-ink-3); flex-shrink: 0; width: 12px; }
+    .wh2-epic-key  {
+        font-family: monospace; font-size: 11px; font-weight: 700;
+        color: var(--v2-brand); background: #eff6ff; border: 1px solid #bfdbfe;
+        border-radius: 3px; padding: 1px 6px; white-space: nowrap; flex-shrink: 0;
+    }
+    .wh2-epic-name { font-size: 13px; font-weight: 600; color: var(--v2-ink-1); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .wh2-epic-meta { display: flex; align-items: center; gap: 14px; flex-shrink: 0; margin-left: auto; }
+    .wh2-epic-stat { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--v2-ink-3); white-space: nowrap; }
+    .wh2-epic-hours { font-weight: 700; color: var(--v2-ink-1); }
+    .wh2-epic-members { display: flex; gap: 3px; }
+    .wh2-avatar {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 22px; height: 22px; border-radius: 50%;
+        background: #e0e7ff; color: #3730a3;
+        font-size: 9px; font-weight: 700; border: 1.5px solid white;
+        flex-shrink: 0;
+    }
+    .wh2-avatar-more { background: var(--v2-surface-2); color: var(--v2-ink-3); }
+    .wh2-epic-body { border-top: 1px solid var(--v2-border); }
+</style>
+
+@code {
+    private string SprintIdsInput = "";
+    private bool IsLoading;
+    private bool IsExporting;
+    private string? ErrorMessage;
+    private bool _renderCharts;
+
+    private string _sortColWH = ""; private bool _sortAscWH = true;
+    private void SortWH(string c) { if (_sortColWH == c) _sortAscWH = !_sortAscWH; else { _sortColWH = c; _sortAscWH = true; } }
+    private string _sortColDF = ""; private bool _sortAscDF = true;
+    private void SortDF(string c) { if (_sortColDF == c) _sortAscDF = !_sortAscDF; else { _sortColDF = c; _sortAscDF = true; } }
+
+    // ── Worklog-by-epic accordion ──────────────────────────────────────────────
+    private HashSet<string> _wlExpanded = [];
+    private void ToggleWlEpic(string key) { if (!_wlExpanded.Remove(key)) _wlExpanded.Add(key); }
+    private void ExpandAllEpics()   { _wlExpanded = new HashSet<string>(WorklogsByEpic.Select(g => g.EpicKey)); }
+    private void CollapseAllEpics() { _wlExpanded.Clear(); }
+
+    private List<(string EpicKey, string EpicName, List<WorklogRow> Rows)> WorklogsByEpic =>
+        FilteredWorklogs
+            .GroupBy(w => string.IsNullOrEmpty(w.EpicKey) ? "—" : w.EpicKey)
+            .Select(g => (
+                EpicKey:  g.Key,
+                EpicName: g.First().EpicName,
+                Rows:     g.ToList()))
+            .OrderByDescending(g => g.Rows.Sum(r => r.TimeSpentSeconds))
+            .ToList();
+
+    private static string SI2(string c, string sc, bool sa) =>
+        sc == c ? (sa ? "v2-sortable v2-sort-asc" : "v2-sortable v2-sort-desc") : "v2-sortable";
+
+    private List<int> ParsedSprintIds = [];
+    private List<SprintReport> SprintReports = [];
+
+    // ── Filters ────────────────────────────────────────────────────────────────
+    private HashSet<string> SelectedMembers = [];
+    private HashSet<string> SelectedEpics   = [];
+    private DateTime? DateFrom;
+    private DateTime? DateTo;
+
+    // ── Derived: source lists ──────────────────────────────────────────────────
+    private List<string> AllAuthors => SprintReports
+        .SelectMany(r => r.Issues)
+        .SelectMany(i => i.Worklogs)
+        .Select(w => w.Author)
+        .Where(a => !string.IsNullOrEmpty(a))
+        .Distinct().Order().ToList();
+
+    private List<(string Key, string Name)> AllEpics => SprintReports
+        .SelectMany(r => r.Issues)
+        .Where(i => !string.IsNullOrEmpty(i.EpicKey))
+        .Select(i => (i.EpicKey, string.IsNullOrEmpty(i.EpicName) || i.EpicName == "No Epic" ? i.EpicKey : i.EpicName))
+        .DistinctBy(e => e.EpicKey)
+        .OrderBy(e => e.EpicKey)
+        .ToList();
+
+    private sealed record WorklogRow(
+        DateTime Date, string Author, int TimeSpentSeconds,
+        string IssueKey, string IssueSummary, string IssueType,
+        string EpicKey, string EpicName);
+
+    private static bool IsFeatureIssue(SprintIssue i) =>
+        !i.IssueType.Contains("Bug",    StringComparison.OrdinalIgnoreCase) &&
+        !i.IssueType.Contains("Defect", StringComparison.OrdinalIgnoreCase) &&
+        !i.IssueType.Contains("Epic",   StringComparison.OrdinalIgnoreCase);
+
+    private sealed record DoneFeatureRow(
+        string Key, string Summary, string IssueType,
+        string Assignee, string EpicKey, string EpicName,
+        int? StoryPoints, double HoursLogged, string SprintName);
+
+    private List<WorklogRow> AllWorklogs => SprintReports
+        .SelectMany(r => r.Issues)
+        .SelectMany(i => i.Worklogs.Select(w => new WorklogRow(
+            w.Started.Date, w.Author, w.TimeSpentSeconds,
+            i.Key, i.Summary, i.IssueType, i.EpicKey, i.EpicName)))
+        .OrderByDescending(w => w.Date).ThenBy(w => w.Author)
+        .ToList();
+
+    private List<WorklogRow> FilteredWorklogs
+    {
+        get
+        {
+            var q = AllWorklogs.Where(w =>
+                !string.IsNullOrEmpty(w.Author) &&
+                (SelectedMembers.Count == 0 || SelectedMembers.Contains(w.Author)) &&
+                (SelectedEpics.Count == 0   || SelectedEpics.Contains(w.EpicKey)) &&
+                (!DateFrom.HasValue || w.Date >= DateFrom.Value.Date) &&
+                (!DateTo.HasValue   || w.Date <= DateTo.Value.Date));
+            return (_sortColWH switch
+            {
+                "Date"    => _sortAscWH ? q.OrderBy(w => w.Date)                : q.OrderByDescending(w => w.Date),
+                "Day"     => _sortAscWH ? q.OrderBy(w => (int)w.Date.DayOfWeek) : q.OrderByDescending(w => (int)w.Date.DayOfWeek),
+                "Member"  => _sortAscWH ? q.OrderBy(w => w.Author)              : q.OrderByDescending(w => w.Author),
+                "Hours"   => _sortAscWH ? q.OrderBy(w => w.TimeSpentSeconds)    : q.OrderByDescending(w => w.TimeSpentSeconds),
+                "Task"    => _sortAscWH ? q.OrderBy(w => w.IssueKey)            : q.OrderByDescending(w => w.IssueKey),
+                "Summary" => _sortAscWH ? q.OrderBy(w => w.IssueSummary)        : q.OrderByDescending(w => w.IssueSummary),
+                "Epic"    => _sortAscWH ? q.OrderBy(w => w.EpicName)            : q.OrderByDescending(w => w.EpicName),
+                _         => q.OrderByDescending(w => w.Date).ThenBy(w => w.Author),
+            }).ToList();
+        }
+    }
+
+    private List<DoneFeatureRow> DoneFeatures
+    {
+        get
+        {
+            var q = SprintReports
+                .SelectMany(r => r.Issues.Select(i => (Issue: i, SprintName: r.SprintName)))
+                .Where(x => x.Issue.StatusCategoryKey == "done" && IsFeatureIssue(x.Issue))
+                .Where(x => SelectedEpics.Count == 0 || SelectedEpics.Contains(x.Issue.EpicKey))
+                .Where(x => SelectedMembers.Count == 0 || SelectedMembers.Contains(x.Issue.Assignee))
+                .DistinctBy(x => x.Issue.Key)
+                .Select(x => new DoneFeatureRow(
+                    x.Issue.Key, x.Issue.Summary, x.Issue.IssueType,
+                    x.Issue.Assignee, x.Issue.EpicKey, x.Issue.EpicName,
+                    x.Issue.StoryPoints,
+                    x.Issue.Worklogs.Sum(w => w.TimeSpentSeconds) / 3600.0,
+                    x.SprintName));
+            return (_sortColDF switch
+            {
+                "Key"      => _sortAscDF ? q.OrderBy(r => r.Key)        : q.OrderByDescending(r => r.Key),
+                "Summary"  => _sortAscDF ? q.OrderBy(r => r.Summary)    : q.OrderByDescending(r => r.Summary),
+                "Type"     => _sortAscDF ? q.OrderBy(r => r.IssueType)  : q.OrderByDescending(r => r.IssueType),
+                "Assignee" => _sortAscDF ? q.OrderBy(r => r.Assignee)   : q.OrderByDescending(r => r.Assignee),
+                "Sprint"   => _sortAscDF ? q.OrderBy(r => r.SprintName) : q.OrderByDescending(r => r.SprintName),
+                "Epic"     => _sortAscDF ? q.OrderBy(r => r.EpicName)   : q.OrderByDescending(r => r.EpicName),
+                "SP"       => _sortAscDF ? q.OrderBy(r => r.StoryPoints)  : q.OrderByDescending(r => r.StoryPoints),
+                "Hours"    => _sortAscDF ? q.OrderBy(r => r.HoursLogged)  : q.OrderByDescending(r => r.HoursLogged),
+                _          => q.OrderBy(r => r.Key),
+            }).ToList();
+        }
+    }
+
+    private double DoneTotalSP    => DoneFeatures.Sum(r => r.StoryPoints ?? 0);
+    private double DoneTotalHours => DoneFeatures.Sum(r => r.HoursLogged);
+    private bool   ShowSprintColDF => SprintReports.Count > 1;
+
+    // ── KPI properties ──────────────────────────────────────────────────────────
+    private double TotalHours         => FilteredWorklogs.Sum(w => w.TimeSpentSeconds) / 3600.0;
+    private int    ActiveMemberCount  => FilteredWorklogs.Select(w => w.Author).Distinct().Count();
+    private int    FilteredEntryCount => FilteredWorklogs.Count;
+    private double AvgHoursPerMember  => ActiveMemberCount > 0 ? TotalHours / ActiveMemberCount : 0;
+
+    private double AvgHoursPerDay => FilteredWorklogs.GroupBy(w => w.Date).Any()
+        ? TotalHours / FilteredWorklogs.Select(w => w.Date).Distinct().Count()
+        : 0;
+
+    private double MaxDayHours => FilteredWorklogs
+        .GroupBy(w => w.Date)
+        .Select(g => g.Sum(w => w.TimeSpentSeconds) / 3600.0)
+        .DefaultIfEmpty(0).Max();
+
+    private string TopContributor => FilteredWorklogs
+        .GroupBy(w => w.Author)
+        .OrderByDescending(g => g.Sum(w => w.TimeSpentSeconds))
+        .Select(g => g.Key)
+        .FirstOrDefault() ?? "—";
+
+    private string BusiestWeekday => FilteredWorklogs
+        .GroupBy(w => w.Date.DayOfWeek)
+        .OrderByDescending(g => g.Sum(w => w.TimeSpentSeconds))
+        .Select(g => g.Key.ToString())
+        .FirstOrDefault() ?? "—";
+
+    // ── Load ────────────────────────────────────────────────────────────────────
+    private async Task HandleKeyUp(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        var ids = SprintIdsInput
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(s => int.TryParse(s.Trim(), out var n) ? (int?)n : null)
+            .Where(n => n.HasValue).Select(n => n!.Value).Distinct().ToList();
+
+        if (ids.Count == 0) { ErrorMessage = "Enter at least one sprint ID."; return; }
+
+        IsLoading = true; ErrorMessage = null;
+        SprintReports.Clear(); SelectedMembers.Clear();
+        DateFrom = null; DateTo = null;
+        StateHasChanged();
+
+        try
+        {
+            var results    = await Task.WhenAll(ids.Select(id => JiraService.GetDeliveryDataAsync(id)));
+            ParsedSprintIds = ids;
+            SprintReports   = [.. results];
+            SelectedMembers = new HashSet<string>(AllAuthors);
+            SelectedEpics   = new HashSet<string>(AllEpics.Select(e => e.Key));
+            _renderCharts   = true;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load sprint data: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    // ── Filter actions ──────────────────────────────────────────────────────────
+    private void SelectAllMembers()   { SelectedMembers = new HashSet<string>(AllAuthors); OnFilterChanged(); }
+    private void ClearMembersFilter() { SelectedMembers.Clear(); OnFilterChanged(); }
+
+    private void ToggleMember(string author, bool selected)
+    {
+        if (selected) SelectedMembers.Add(author); else SelectedMembers.Remove(author);
+        OnFilterChanged();
+    }
+
+    private void SelectAllEpics()    { SelectedEpics = new HashSet<string>(AllEpics.Select(e => e.Key)); OnFilterChanged(); }
+    private void ClearEpicsFilter()   { SelectedEpics.Clear(); OnFilterChanged(); }
+
+    private void ToggleEpic(string key, bool selected)
+    {
+        if (selected) SelectedEpics.Add(key); else SelectedEpics.Remove(key);
+        OnFilterChanged();
+    }
+
+    private void ClearDates() { DateFrom = null; DateTo = null; OnFilterChanged(); }
+
+    private void OnFilterChanged() { _renderCharts = true; StateHasChanged(); }
+
+    // ── Charts ──────────────────────────────────────────────────────────────────
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_renderCharts && SprintReports.Count > 0)
+        {
+            _renderCharts = false;
+            var filtered = FilteredWorklogs;
+            await RenderMemberChart(filtered);
+            await RenderDayChart(filtered);
+            await RenderEpicChart(filtered);
+        }
+    }
+
+    private async Task RenderMemberChart(List<WorklogRow> filtered)
+    {
+        var byMember = filtered
+            .GroupBy(w => w.Author)
+            .Select(g => new { Name = g.Key, Hours = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1) })
+            .OrderByDescending(m => m.Hours).ToList();
+        if (byMember.Count == 0) return;
+
+        await JS.InvokeVoidAsync("renderChart", "chart-hours-member", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels   = byMember.Select(m => m.Name).ToArray(),
+                datasets = new[]
+                {
+                    new
+                    {
+                        label           = "Hours",
+                        data            = byMember.Select(m => m.Hours).ToArray(),
+                        backgroundColor = byMember.Select((_, i) => ChartColor(i, 0.8)).ToArray(),
+                        borderColor     = byMember.Select((_, i) => ChartColor(i, 1.0)).ToArray(),
+                        borderWidth = 1, borderRadius = 4
+                    }
+                }
+            },
+            options = new
+            {
+                indexAxis = "y", responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales  = new { x = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } } }
+            }
+        });
+    }
+
+    private async Task RenderDayChart(List<WorklogRow> filtered)
+    {
+        var byDay = filtered
+            .GroupBy(w => w.Date)
+            .Select(g => new { Date = g.Key, Hours = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1) })
+            .OrderBy(d => d.Date).ToList();
+        if (byDay.Count == 0) return;
+
+        await JS.InvokeVoidAsync("renderChart", "chart-hours-day", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels   = byDay.Select(d => d.Date.ToString("MMM d")).ToArray(),
+                datasets = new[]
+                {
+                    new
+                    {
+                        label           = "Hours",
+                        data            = byDay.Select(d => d.Hours).ToArray(),
+                        backgroundColor = "rgba(99,102,241,0.75)",
+                        borderColor     = "rgba(99,102,241,1)",
+                        borderWidth = 1, borderRadius = 4
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales  = new
+                {
+                    x = new { grid = new { display = false } },
+                    y = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } }
+                }
+            }
+        });
+    }
+
+    private async Task RenderEpicChart(List<WorklogRow> filtered)
+    {
+        var byEpic = filtered
+            .Where(w => !string.IsNullOrEmpty(w.EpicKey))
+            .GroupBy(w => w.EpicKey)
+            .Select(g => new { Epic = g.Key, Hours = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1) })
+            .OrderByDescending(e => e.Hours).Take(10).ToList();
+        if (byEpic.Count == 0) return;
+
+        await JS.InvokeVoidAsync("renderChart", "chart-hours-epic", new
+        {
+            type = "doughnut",
+            data = new
+            {
+                labels   = byEpic.Select(e => e.Epic).ToArray(),
+                datasets = new[]
+                {
+                    new
+                    {
+                        data            = byEpic.Select(e => e.Hours).ToArray(),
+                        backgroundColor = byEpic.Select((_, i) => ChartColor(i, 0.8)).ToArray(),
+                        borderColor     = byEpic.Select((_, i) => ChartColor(i, 1.0)).ToArray(),
+                        borderWidth = 1, hoverOffset = 4
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new
+                {
+                    legend = new { position = "bottom", labels = new { font = new { size = 11 }, padding = 10 } }
+                },
+                cutout = "60%"
+            }
+        });
+    }
+
+    private static string ChartColor(int index, double alpha)
+    {
+        string[] palette =
+        [
+            $"rgba(99,102,241,{alpha:F2})",
+            $"rgba(6,214,160,{alpha:F2})",
+            $"rgba(251,133,0,{alpha:F2})",
+            $"rgba(155,93,229,{alpha:F2})",
+            $"rgba(239,35,60,{alpha:F2})",
+            $"rgba(56,176,0,{alpha:F2})",
+            $"rgba(255,183,3,{alpha:F2})",
+            $"rgba(17,138,178,{alpha:F2})",
+            $"rgba(233,104,36,{alpha:F2})",
+            $"rgba(0,169,165,{alpha:F2})",
+        ];
+        return palette[index % palette.Length];
+    }
+
+    // ── Export ──────────────────────────────────────────────────────────────────
+    private async Task ExportToExcel()
+    {
+        var filtered = FilteredWorklogs;
+        if (filtered.Count == 0) return;
+
+        IsExporting = true; StateHasChanged();
+        try
+        {
+            using var wb = new XLWorkbook();
+            var ws = wb.Worksheets.Add("Working Hours");
+
+            void Meta(int row, string label, string value)
+            {
+                ws.Cell(row, 1).Value = label;
+                ws.Cell(row, 1).Style.Font.Bold = true;
+                ws.Cell(row, 1).Style.Font.FontColor = XLColor.FromHtml("#6c757d");
+                ws.Cell(row, 2).Value = value;
+            }
+
+            var sprintNames = SprintReports.Where(r => !string.IsNullOrEmpty(r.SprintName))
+                .Select(r => r.SprintName).Distinct();
+            var sprintLabel = sprintNames.Any()
+                ? string.Join(", ", sprintNames)
+                : string.Join(", ", ParsedSprintIds);
+
+            Meta(1, "Sprint(s)",  sprintLabel);
+            Meta(2, "Members",    string.Join(", ", SelectedMembers.Order()));
+            Meta(3, "Date Range",
+                DateFrom.HasValue || DateTo.HasValue
+                    ? $"{(DateFrom.HasValue ? DateFrom.Value.ToString("yyyy-MM-dd") : "—")} → {(DateTo.HasValue ? DateTo.Value.ToString("yyyy-MM-dd") : "—")}"
+                    : "All dates");
+            Meta(4, "Exported", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+
+            var headers = new[] { "Date", "Day of the Week", "Team Member", "Logged Hours" };
+            for (int i = 0; i < headers.Length; i++)
+            {
+                var hc = ws.Cell(6, i + 1);
+                hc.Value = headers[i];
+                hc.Style.Font.Bold = true;
+                hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+                hc.Style.Font.FontColor = XLColor.White;
+                hc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            ws.SheetView.FreezeRows(6);
+
+            var sorted = filtered.OrderBy(w => w.Date).ThenBy(w => w.Author).ToList();
+            int row = 7;
+            foreach (var wl in sorted)
+            {
+                if (row % 2 == 0)
+                    ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+                ws.Cell(row, 1).Value = wl.Date.ToString("yyyy-MM-dd");
+                ws.Cell(row, 2).Value = wl.Date.ToString("dddd");
+                ws.Cell(row, 3).Value = wl.Author;
+                ws.Cell(row, 4).Value = Math.Round(wl.TimeSpentSeconds / 3600.0, 2);
+                ws.Cell(row, 4).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                row++;
+            }
+            ws.Cell(row, 1).Value = "TOTAL";
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 4).Value = Math.Round(sorted.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
+            ws.Cell(row, 4).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+            ws.Columns().AdjustToContents();
+            ws.Row(6).Height = 22;
+
+            // Summary sheet
+            var wsSummary = wb.Worksheets.Add("Summary by Member");
+            void MetaS(int r, string label, string value)
+            {
+                wsSummary.Cell(r, 1).Value = label;
+                wsSummary.Cell(r, 1).Style.Font.Bold = true;
+                wsSummary.Cell(r, 1).Style.Font.FontColor = XLColor.FromHtml("#6c757d");
+                wsSummary.Cell(r, 2).Value = value;
+            }
+            MetaS(1, "Sprint(s)", sprintLabel);
+            MetaS(2, "Exported",  DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
+
+            var members = filtered.Select(w => w.Author).Distinct().Order().ToList();
+            var dayMap  = filtered.GroupBy(w => w.Author).ToDictionary(
+                g => g.Key,
+                g => g.GroupBy(w => w.Date.DayOfWeek).ToDictionary(d => d.Key, d => d.Sum(w => w.TimeSpentSeconds) / 3600.0));
+
+            DayOfWeek[] orderedDays = [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
+                                       DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
+
+            wsSummary.Cell(4, 1).Value = "Day";
+            wsSummary.Cell(4, 1).Style.Font.Bold = true;
+            wsSummary.Cell(4, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+            wsSummary.Cell(4, 1).Style.Font.FontColor = XLColor.White;
+            for (int m = 0; m < members.Count; m++)
+            {
+                var hc = wsSummary.Cell(4, m + 2);
+                hc.Value = members[m];
+                hc.Style.Font.Bold = true;
+                hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+                hc.Style.Font.FontColor = XLColor.White;
+                hc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            var totalHc = wsSummary.Cell(4, members.Count + 2);
+            totalHc.Value = "Total"; totalHc.Style.Font.Bold = true;
+            totalHc.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+            totalHc.Style.Font.FontColor = XLColor.White;
+            totalHc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            wsSummary.SheetView.FreezeRows(4);
+
+            int sRow = 5;
+            foreach (var day in orderedDays)
+            {
+                if (sRow % 2 == 0)
+                    wsSummary.Row(sRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+                wsSummary.Cell(sRow, 1).Value = day.ToString();
+                wsSummary.Cell(sRow, 1).Style.Font.Bold = true;
+                double rowTotal = 0;
+                for (int m = 0; m < members.Count; m++)
+                {
+                    double hours = dayMap.TryGetValue(members[m], out var daysForMember)
+                                   && daysForMember.TryGetValue(day, out var h) ? h : 0;
+                    rowTotal += hours;
+                    if (hours > 0)
+                    {
+                        var dc = wsSummary.Cell(sRow, m + 2);
+                        dc.Value = Math.Round(hours, 2);
+                        dc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                    }
+                }
+                var rtc = wsSummary.Cell(sRow, members.Count + 2);
+                rtc.Value = Math.Round(rowTotal, 2);
+                rtc.Style.Font.Bold = true;
+                rtc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                sRow++;
+            }
+
+            wsSummary.Cell(sRow, 1).Value = "TOTAL";
+            wsSummary.Cell(sRow, 1).Style.Font.Bold = true;
+            wsSummary.Row(sRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+            for (int m = 0; m < members.Count; m++)
+            {
+                double memberTotal = dayMap.TryGetValue(members[m], out var dm) ? dm.Values.Sum() : 0;
+                var tc = wsSummary.Cell(sRow, m + 2);
+                tc.Value = Math.Round(memberTotal, 2);
+                tc.Style.Font.Bold = true;
+                tc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            var grandTotal = wsSummary.Cell(sRow, members.Count + 2);
+            grandTotal.Value = Math.Round(filtered.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
+            grandTotal.Style.Font.Bold = true;
+            grandTotal.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            wsSummary.Columns().AdjustToContents();
+            wsSummary.Row(4).Height = 22;
+
+            using var ms = new MemoryStream();
+            wb.SaveAs(ms);
+            var base64    = Convert.ToBase64String(ms.ToArray());
+            var fileLabel = sprintLabel.Replace(" ", "_").Replace("/", "-").Replace(",", "");
+            var fileName  = $"WorkingHours_{fileLabel}_{DateTime.Today:yyyyMMdd}.xlsx";
+            const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
+        }
+        catch (Exception ex) { ErrorMessage = $"Export failed: {ex.Message}"; }
+        finally { IsExporting = false; }
+    }
+}

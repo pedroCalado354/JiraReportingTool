@@ -1,0 +1,416 @@
+@page "/task-info"
+@rendermode InteractiveServer
+@using JiraReportingTool.Models
+@inject IJiraService JiraService
+@inject IConfiguration Config
+
+<PageTitle>Task Info</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ═════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon" style="background: linear-gradient(135deg,#0ea5e9 0%,#6366f1 100%); box-shadow: 0 8px 24px rgba(14,165,233,0.28);">
+                <i class="bi bi-card-text"></i>
+            </div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Task Info</span>
+                <h1 class="v2-hero-title">@(Issue?.Summary is { Length: > 0 } s ? s : "Task Detail")</h1>
+                <span class="v2-hero-sub">
+                    @if (Issue is not null)
+                    {
+                        <strong>@Issue.Key</strong>
+                        <span> · @Issue.Status</span>
+                        @if (!string.IsNullOrEmpty(Issue.Assignee) && Issue.Assignee != "Unassigned")
+                        {
+                            <span> · @Issue.Assignee</span>
+                        }
+                        @if (!string.IsNullOrEmpty(Issue.EpicName) && Issue.EpicName != "No Epic")
+                        {
+                            <span> · @Issue.EpicName</span>
+                        }
+                    }
+                    else
+                    {
+                        <span>Enter a task key to load full details — assignee, worklogs, time tracking and more.</span>
+                    }
+                </span>
+            </div>
+            <div class="v2-hero-spacer"></div>
+            @if (Issue is not null)
+            {
+                <div class="v2-hero-actions">
+                    <span class="v2-pill v2-pill-@StatusPillClass(Issue.StatusCategoryKey)">@Issue.Status</span>
+                    <span class="v2-chip v2-chip-@Issue.IssueType.ToLower()">@Issue.IssueType</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ CONTROL BAR ══════════════════════════════════════════════════════ -->
+    <div class="v2-control-bar">
+        <div class="v2-field" style="min-width:220px">
+            <label class="v2-label">Task Key</label>
+            <input class="v2-input" placeholder="e.g. JM-12345"
+                   @bind="TaskKeyInput" @bind:event="oninput" @onkeypress="OnKeyPress" />
+        </div>
+        <button class="v2-btn v2-btn-primary" @onclick="LoadTaskAsync" disabled="@IsLoading">
+            @if (IsLoading) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-search"></i> }
+            <span>Load Task</span>
+        </button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle"></i> @ErrorMessage</div>
+    }
+    @if (IsLoading)
+    {
+        <div class="v2-card" style="display:flex;align-items:center;gap:10px">
+            <span class="v2-spin" style="border-color:rgba(99,102,241,0.20);border-top-color:var(--v2-brand)"></span>
+            <span class="v2-text-muted">Loading task from Jira…</span>
+        </div>
+    }
+
+    @if (Issue is null && !IsLoading)
+    {
+        <div class="v2-empty">
+            <div class="v2-empty-icon"><i class="bi bi-card-text"></i></div>
+            <div class="v2-empty-title">Enter a task key to begin</div>
+            <div>You'll see the full breakdown — status, assignee, time estimates, and the complete worklog history.</div>
+        </div>
+    }
+
+    @if (Issue is not null)
+    {
+        var effortPct = Issue.OriginalEstimateSeconds > 0
+            ? (double)Issue.TimeSpentSeconds / Issue.OriginalEstimateSeconds * 100
+            : 0;
+        var effortClass = effortPct > 110 ? "v2-bar-fill-danger" : effortPct > 90 ? "v2-bar-fill-warn" : "v2-bar-fill-success";
+        var contributors = Issue.Worklogs
+            .GroupBy(w => w.Author)
+            .Select(g => new { Author = g.Key, TotalSec = g.Sum(w => w.TimeSpentSeconds), Count = g.Count() })
+            .OrderByDescending(c => c.TotalSec)
+            .ToList();
+
+        <!-- ═══ DETAIL GRID ════════════════════════════════════════════════════ -->
+        <div class="v2-grid-2">
+
+            <!-- Metadata card -->
+            <div class="v2-card v2-card-lg">
+                <div class="v2-section-title"><i class="bi bi-info-circle" style="color:#6366f1"></i>Details</div>
+
+                <div class="v2-row">
+                    <span class="v2-row-label">Jira Link</span>
+                    <span class="v2-row-value">
+                        <a class="ti-link" href="@(Config["Jira:BaseUrl"]?.TrimEnd('/'))/browse/@Issue.Key" target="_blank">
+                            @Issue.Key <i class="bi bi-box-arrow-up-right" style="font-size:10px"></i>
+                        </a>
+                    </span>
+                </div>
+                <div class="v2-row">
+                    <span class="v2-row-label">Type</span>
+                    <span class="v2-row-value"><span class="v2-chip v2-chip-@Issue.IssueType.ToLower()">@Issue.IssueType</span></span>
+                </div>
+                <div class="v2-row">
+                    <span class="v2-row-label">Status</span>
+                    <span class="v2-row-value"><span class="v2-pill v2-pill-@StatusPillClass(Issue.StatusCategoryKey)">@Issue.Status</span></span>
+                </div>
+                <div class="v2-row">
+                    <span class="v2-row-label">Priority</span>
+                    <span class="v2-row-value">@Issue.Priority</span>
+                </div>
+                <div class="v2-row">
+                    <span class="v2-row-label">Assignee</span>
+                    <span class="v2-row-value">@(string.IsNullOrEmpty(Issue.Assignee) || Issue.Assignee == "Unassigned" ? "—" : Issue.Assignee)</span>
+                </div>
+                @if (!string.IsNullOrEmpty(Issue.EpicKey))
+                {
+                    <div class="v2-row">
+                        <span class="v2-row-label">Epic</span>
+                        <span class="v2-row-value">
+                            <a class="ti-link" href="@(Config["Jira:BaseUrl"]?.TrimEnd('/'))/browse/@Issue.EpicKey" target="_blank">
+                                @(string.IsNullOrEmpty(Issue.EpicName) || Issue.EpicName == "No Epic" ? Issue.EpicKey : $"{Issue.EpicKey} — {Issue.EpicName}")
+                                <i class="bi bi-box-arrow-up-right" style="font-size:10px"></i>
+                            </a>
+                        </span>
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(Issue.SprintName))
+                {
+                    <div class="v2-row">
+                        <span class="v2-row-label">Sprint</span>
+                        <span class="v2-row-value">@Issue.SprintName</span>
+                    </div>
+                }
+                @if (Issue.StoryPoints.HasValue)
+                {
+                    <div class="v2-row">
+                        <span class="v2-row-label">Story Points</span>
+                        <span class="v2-row-value">@Issue.StoryPoints</span>
+                    </div>
+                }
+                @if (Issue.Created.HasValue)
+                {
+                    <div class="v2-row">
+                        <span class="v2-row-label">Created</span>
+                        <span class="v2-row-value">@Issue.Created.Value.ToString("MMM d, yyyy")</span>
+                    </div>
+                }
+                @if (Issue.DueDate.HasValue)
+                {
+                    var overdue = Issue.DueDate < DateTime.Today && Issue.StatusCategoryKey != "done";
+                    <div class="v2-row">
+                        <span class="v2-row-label">Due Date</span>
+                        <span class="v2-row-value @(overdue ? "v2-text-danger" : "")">
+                            @Issue.DueDate.Value.ToString("MMM d, yyyy")
+                            @if (overdue) { <span> · overdue</span> }
+                        </span>
+                    </div>
+                }
+                @if (Issue.ResolutionDate.HasValue)
+                {
+                    <div class="v2-row">
+                        <span class="v2-row-label">Resolved</span>
+                        <span class="v2-row-value v2-text-success">@Issue.ResolutionDate.Value.ToString("MMM d, yyyy")</span>
+                    </div>
+                }
+                @if (Issue.Labels.Count > 0)
+                {
+                    <div class="v2-row" style="align-items:flex-start">
+                        <span class="v2-row-label" style="padding-top:3px">Labels</span>
+                        <span class="v2-row-value" style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+                            @foreach (var lbl in Issue.Labels)
+                            {
+                                <span class="v2-chip ti-chip-label">@lbl</span>
+                            }
+                        </span>
+                    </div>
+                }
+            </div>
+
+            <!-- Time tracking card -->
+            <div class="v2-card v2-card-lg">
+                <div class="v2-section-title"><i class="bi bi-stopwatch" style="color:#10b981"></i>Time Tracking</div>
+                <div class="v2-stat-row">
+                    <span class="v2-num-lg @(effortPct > 110 ? "v2-text-danger" : "")">@($"{effortPct:F0}%")</span>
+                    <span class="v2-num-suffix">logged vs estimate</span>
+                </div>
+                <div class="v2-bar v2-tall-bar" style="margin:10px 0 16px">
+                    <div class="v2-bar-fill @effortClass" style="width:@Math.Min(effortPct, 100)%"></div>
+                </div>
+
+                <div class="v2-row">
+                    <span class="v2-row-label">Original Estimate</span>
+                    <span class="v2-row-value">@(Issue.OriginalEstimate == "-" ? "—" : Issue.OriginalEstimate)</span>
+                </div>
+                <div class="v2-row">
+                    <span class="v2-row-label">Time Logged</span>
+                    <span class="v2-row-value">@(Issue.TimeSpent == "-" ? "—" : Issue.TimeSpent)</span>
+                </div>
+                <div class="v2-row">
+                    <span class="v2-row-label">Remaining</span>
+                    <span class="v2-row-value">@(Issue.RemainingEstimate == "-" ? "—" : Issue.RemainingEstimate)</span>
+                </div>
+                @if (Issue.OriginalEstimateSeconds > 0)
+                {
+                    <div class="v2-row">
+                        <span class="v2-row-label">Variance</span>
+                        <span class="v2-row-value @(effortPct > 100 ? "v2-text-danger" : "v2-text-success")">
+                            @(effortPct > 100 ? $"+{effortPct - 100:F0}%" : $"{effortPct - 100:F0}%")
+                        </span>
+                    </div>
+                }
+
+                @if (Issue.Worklogs.Count > 0)
+                {
+                    <div class="v2-divider"></div>
+                    <div class="v2-row">
+                        <span class="v2-row-label">Worklog entries</span>
+                        <span class="v2-row-value">@Issue.Worklogs.Count</span>
+                    </div>
+                    <div class="v2-row">
+                        <span class="v2-row-label">First logged</span>
+                        <span class="v2-row-value">@Issue.Worklogs.Min(w => w.Started).ToString("MMM d, yyyy")</span>
+                    </div>
+                    <div class="v2-row">
+                        <span class="v2-row-label">Last logged</span>
+                        <span class="v2-row-value">@Issue.Worklogs.Max(w => w.Started).ToString("MMM d, yyyy")</span>
+                    </div>
+                    @if (Issue.StatusCategoryKey == "indeterminate")
+                    {
+                        <div class="v2-row">
+                            <span class="v2-row-label">Days since last log</span>
+                            <span class="v2-row-value @(Issue.DaysSinceLastWorklog > 1 ? "v2-text-warn" : "")">
+                                @(Issue.DaysSinceLastWorklog == 999 ? "—" : $"{Issue.DaysSinceLastWorklog}d")
+                            </span>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+
+        <!-- ═══ CONTRIBUTOR BREAKDOWN ════════════════════════════════════════ -->
+        @if (contributors.Count > 1)
+        {
+            <div class="v2-section v2-mt-lg">
+                <div class="v2-section-title">
+                    <i class="bi bi-people-fill"></i>Logged by Contributor
+                    <span class="v2-section-note">@contributors.Count contributors</span>
+                </div>
+                <div class="v2-table-wrap">
+                    <table class="v2-table">
+                        <thead>
+                            <tr>
+                                <th>Contributor</th>
+                                <th class="v2-table-num">Entries</th>
+                                <th class="v2-table-num">Time Logged</th>
+                                <th>Share</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ int rank = 1; }
+                            @foreach (var c in contributors)
+                            {
+                                var sharePct = Issue.TimeSpentSeconds > 0
+                                    ? c.TotalSec * 100.0 / Issue.TimeSpentSeconds : 0;
+                                <tr>
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:8px">
+                                            <span class="v2-avatar @($"v2-avatar-grad-{1 + (rank % 5)}")">@Initials(c.Author)</span>
+                                            <span style="font-weight:600">@c.Author</span>
+                                        </div>
+                                    </td>
+                                    <td class="v2-table-num">@c.Count</td>
+                                    <td class="v2-table-num">@FormatSeconds(c.TotalSec)</td>
+                                    <td style="min-width:140px">
+                                        <div style="display:flex;align-items:center;gap:6px">
+                                            <div class="v2-bar" style="flex:1;height:6px">
+                                                <div class="v2-bar-fill v2-bar-fill-success" style="width:@sharePct%"></div>
+                                            </div>
+                                            <span class="v2-row-value" style="font-size:11px;min-width:34px;text-align:right">@($"{sharePct:F0}%")</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                                rank++;
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+
+        <!-- ═══ WORKLOG TABLE ════════════════════════════════════════════════ -->
+        <div class="v2-section v2-mt-lg">
+            <div class="v2-section-title">
+                <i class="bi bi-journal-text"></i>Worklog
+                @if (Issue.Worklogs.Count > 0)
+                {
+                    <span class="v2-section-note">@Issue.Worklogs.Count @(Issue.Worklogs.Count == 1 ? "entry" : "entries") · @(Issue.TimeSpent == "-" ? "0h" : Issue.TimeSpent) total</span>
+                }
+            </div>
+            @if (Issue.Worklogs.Count == 0)
+            {
+                <div class="v2-empty" style="padding:32px 20px">
+                    <div class="v2-empty-icon" style="font-size:28px"><i class="bi bi-journal-x"></i></div>
+                    <div>No worklog entries recorded for this task.</div>
+                </div>
+            }
+            else
+            {
+                <div class="v2-table-wrap">
+                    <table class="v2-table">
+                        <thead>
+                            <tr>
+                                <th>Date</th>
+                                <th>Author</th>
+                                <th class="v2-table-num">Time Logged</th>
+                                <th>Comment</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @{ int logRank = 1; }
+                            @foreach (var log in Issue.Worklogs.OrderByDescending(w => w.Started))
+                            {
+                                <tr>
+                                    <td style="white-space:nowrap;color:var(--v2-ink-3);font-variant-numeric:tabular-nums">
+                                        @log.Started.ToString("MMM d, yyyy")
+                                    </td>
+                                    <td>
+                                        <div style="display:flex;align-items:center;gap:8px">
+                                            <span class="v2-avatar v2-avatar-sm @($"v2-avatar-grad-{1 + (Math.Abs(log.Author.GetHashCode()) % 5)}")">@Initials(log.Author)</span>
+                                            <span>@log.Author</span>
+                                        </div>
+                                    </td>
+                                    <td class="v2-table-num"><strong>@log.TimeSpent</strong></td>
+                                    <td class="v2-truncate" style="max-width:420px;color:var(--v2-ink-3)">
+                                        @(string.IsNullOrWhiteSpace(log.Comment) ? "—" : log.Comment)
+                                    </td>
+                                </tr>
+                                logRank++;
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private string TaskKeyInput = "";
+    private bool IsLoading;
+    private string? ErrorMessage;
+    private SprintIssue? Issue;
+
+    private async Task LoadTaskAsync()
+    {
+        if (string.IsNullOrWhiteSpace(TaskKeyInput)) return;
+        IsLoading = true; ErrorMessage = null; Issue = null;
+        try
+        {
+            var key = TaskKeyInput.Trim().ToUpper();
+            var report = await JiraService.GetIssuesByKeysAsync([key]);
+            Issue = report.Issues.FirstOrDefault();
+            if (Issue is null)
+                ErrorMessage = $"Task {key} not found in Jira.";
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load task: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    private async Task OnKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadTaskAsync();
+    }
+
+    private static string StatusPillClass(string key) => key switch
+    {
+        "done"          => "success",
+        "indeterminate" => "brand",
+        _               => "neutral"
+    };
+
+    private static string Initials(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name.Length >= 2 ? name[..2].ToUpper() : name.ToUpper();
+    }
+
+    private static string FormatSeconds(long sec)
+    {
+        var h = sec / 3600;
+        var m = (sec % 3600) / 60;
+        return h > 0 ? $"{h}h {m}m" : $"{m}m";
+    }
+}
+
+<style>
+    .ti-link { color: var(--v2-brand); text-decoration: none; font-weight: 600; }
+    .ti-link:hover { text-decoration: underline; }
+    .ti-chip-label { background: #f1f5f9; color: var(--v2-ink-3); border: 1px solid var(--v2-border-strong); }
+</style>

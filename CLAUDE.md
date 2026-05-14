@@ -20,7 +20,7 @@ dotnet user-secrets --project JiraReportingTool set "Jira:ApiToken" "<value>"
 dotnet user-secrets --project JiraReportingTool set "Anthropic:ApiKey" "<value>"
 ```
 
-Migrations run automatically on startup via `db.Database.Migrate()` in `Program.cs`.
+Migrations run automatically on startup via `db.Database.Migrate()` in `Program.cs`. There are no test projects in this repo.
 
 ## Architecture
 
@@ -30,14 +30,16 @@ All pages use `@rendermode InteractiveServer` and are self-contained single-file
 
 ### Service Layer
 
-Two `IJiraService` implementations are registered in DI:
-
 | Class | Role |
 |---|---|
 | `JiraService` | Direct Jira Cloud API calls via `POST /rest/api/3/search/jql` with cursor-based pagination (`nextPageToken`, 100 items/page) |
-| `JiraCacheService` | Wraps `JiraService` + `JiraDbRepository`; checks DB first, falls back to API on miss/stale, then persists result |
+| `JiraCacheService` | Wraps `JiraService` + `JiraDbRepository`; checks DB first, falls back to API on miss/stale, then persists result. Registered as `IJiraService` — pages always inject `IJiraService` |
+| `DataSyncService` | Force-refreshes reports by bypassing `JiraCacheService` and writing directly to DB; used by the `/sync` page |
+| `SprintPlanService` | CRUD for sprint plans via EF Core; auto-versions plans as JSON snapshots on update |
+| `ChatService` | Anthropic SDK integration; exposes Claude tools (`get_sprint_summary`, `get_sprint_issues`) that call `IJiraService` internally |
+| `EpicProgressCalculator` | Static utility — pure functions with no DI; computes `EpicDeliveryMetrics`, `EpicEffortMetrics`, `EpicRiskMetrics` from a list of `SprintIssue` |
 
-`JiraCacheService` is registered as `IJiraService` — pages always inject `IJiraService`. Cache TTL is controlled by `Database:CacheTtlMinutes` (default 300 min). Methods that return live/aggregated data bypass the cache: `GetEpicBugsAsync`, `GetIssuesByKeysAsync`, `GetDeliveryDataByFilterAsync`, `GetPriorityBugsAsync`.
+Cache TTL is controlled by `Database:CacheTtlMinutes` (default 300 min). Methods that bypass the cache: `GetEpicBugsAsync`, `GetIssuesByKeysAsync`, `GetDeliveryDataByFilterAsync`, `GetPriorityBugsAsync`.
 
 Cache keys stored in `SprintReport.ReportIdentifier`:
 - `sprint:PROJ:42` — sprint report
@@ -50,7 +52,31 @@ Cache keys stored in `SprintReport.ReportIdentifier`:
 
 `SprintIssue.Labels` is stored as JSON (`nvarchar(max)`) — EF value converter is configured in `AppDbContext.OnModelCreating`.
 
-`SprintPlanHeader` owns a sprint plan and cascades to `SprintPlanAllocation` (one row per task+member+day), `SprintPlanCustomTask`, `SprintPlanHoliday`, `SprintPlanTimeOff`. Custom task IDs are negative integers; Jira task IDs are positive.
+`SprintPlanHeader` owns a sprint plan and cascades to `SprintPlanAllocation` (one row per task+member+day), `SprintPlanCustomTask`, `SprintPlanHoliday`, `SprintPlanTimeOff`, `SprintPlanVersion`, `SprintPlanRemovalLog`. Custom task IDs are negative integers; Jira task IDs are positive.
+
+### Page Inventory
+
+NavMenu is divided into sections. Active/primary pages (latest versions):
+
+| Section | Route | Page |
+|---|---|---|
+| Executive v2 | `/delivery-v3` | Team Delivery — Command Center |
+| Executive v2 | `/epic-progress-v2` | Epic Progress — Exec |
+| Executive v2 | `/quality-metrics-v2` | Quality — Exec |
+| Executive v2 | `/epic-forecast-v2` | Forecast — Predictive |
+| Sprint & Delivery | `/delivery-v2` | Team Delivery |
+| Sprint & Delivery | `/sprint-planning` | Sprint Planning |
+| Sprint & Delivery | `/epic-forecast` | Sprint Forecast |
+| Sprint & Delivery | `/sprint-capacity` | Sprint Capacity |
+| Reporting | `/epic-progress` | Epic Progress |
+| Reporting | `/quality-metrics` | Quality Metrics |
+| Reporting | `/performance-score` | Performance Score |
+| Reporting | `/support-bugs` | Support Bugs |
+| Tools | `/working-hours-v2` | Working Hours (primary) |
+| Tools | `/chat` | AI Chat |
+| Admin | `/sync` | Data Sync |
+
+`/working-hours` is the legacy predecessor of `/working-hours-v2`.
 
 ### Jira API Notes
 
@@ -69,14 +95,21 @@ Cache keys stored in `SprintReport.ReportIdentifier`:
    @using JiraReportingTool.Models
    @inject IJiraService JiraService
    @inject IConfiguration Config
-   @inject IJSRuntime JS   // only if using Excel export
+   @inject IJSRuntime JS   // only if using Excel export or JS interop
    ```
 2. Add a `<NavLink>` entry in `Components/Layout/NavMenu.razor`
 3. If you need model changes, add an EF migration
 
-### Excel Export Pattern
+### JS Interop Helpers (`wwwroot/js/`)
 
-All pages use the same JS interop pattern — **do not use `Response` or file streaming**:
+| Function | Purpose |
+|---|---|
+| `downloadBase64File(base64, fileName, mimeType)` | Triggers a browser file download — used for Excel export |
+| `renderChart(canvasId, config)` | Creates or updates a Chart.js instance on the given canvas |
+| `destroyChart(canvasId)` | Cleans up a Chart.js instance (call before re-rendering) |
+| `modalHelper.patchDialog(element)` | Prevents click propagation escaping a modal |
+
+Excel export pattern — **do not use `Response` or file streaming**:
 ```csharp
 using var ms = new MemoryStream();
 wb.SaveAs(ms);
@@ -84,7 +117,6 @@ var base64 = Convert.ToBase64String(ms.ToArray());
 await JS.InvokeVoidAsync("downloadBase64File", base64, fileName,
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
 ```
-The `downloadBase64File` function is defined in `wwwroot/js/`.
 
 ### Jira Issue Links
 
