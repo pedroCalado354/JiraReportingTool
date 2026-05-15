@@ -175,11 +175,20 @@
                 <div class="v2-kpi-sub">@($"{m.Quality.BugRatio:F1}%") bug share · @($"{m.Quality.BugOverhead:F0}%") overhead</div>
             </div>
 
-            <div class="v2-kpi @(ForecastClass)">
-                <div class="v2-kpi-head"><i class="bi bi-flag"></i>Projection</div>
-                <div class="v2-kpi-value v2-kpi-value-sm">@ProjectedEndLabel</div>
-                <div class="v2-kpi-sub">@ProjectionMessage</div>
+            <div class="v2-kpi @(TaskForecastClass)">
+                <div class="v2-kpi-head"><i class="bi bi-flag"></i>Tasks Projection</div>
+                <div class="v2-kpi-value v2-kpi-value-sm">@TaskProjectedEndLabel</div>
+                <div class="v2-kpi-sub">@TaskProjectionMessage</div>
             </div>
+
+            @if (m.Quality.TotalBugs > 0)
+            {
+                <div class="v2-kpi @(BugForecastClass)">
+                    <div class="v2-kpi-head"><i class="bi bi-bug-fill"></i>Bugs Projection</div>
+                    <div class="v2-kpi-value v2-kpi-value-sm">@BugProjectedEndLabel</div>
+                    <div class="v2-kpi-sub">@BugProjectionMessage</div>
+                </div>
+            }
 
             <div class="v2-kpi @(m.Risk.StaleInProgress + m.Risk.Unestimated > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-shield-exclamation"></i>Risk signals</div>
@@ -514,58 +523,118 @@
     private string EffortKpiClass => Metrics?.Effort.EffortPct > 110 ? "v2-kpi-danger"
         : Metrics?.Effort.EffortPct > 90 ? "v2-kpi-warn" : "v2-kpi-success";
 
-    // ── Forecast (project end date based on current pace) ────────────────────
-    private string ProjectedEndLabel
+    // ── Forecast ─────────────────────────────────────────────────────────────
+    private string TaskProjectedEndLabel
     {
         get
         {
-            if (Metrics is null || EpicData is null) return "—";
-            var (date, _) = ProjectEnd();
+            if (EpicData is null) return "—";
+            if (!EpicData.Issues.Any(i => !IsBugIssue(i) && i.StatusCategoryKey != "done")) return "Complete";
+            var (date, _) = ProjectEndTasks();
             return date is null ? "Unknown" : date.Value.ToString("MMM d, yyyy");
         }
     }
 
-    private string ProjectionMessage
+    private string TaskProjectionMessage
     {
         get
         {
-            if (Metrics is null || EpicData is null) return "";
-            var (date, daysLeft) = ProjectEnd();
+            if (EpicData is null) return "";
+            if (!EpicData.Issues.Any(i => !IsBugIssue(i) && i.StatusCategoryKey != "done")) return "All tasks done";
+            var (date, daysLeft) = ProjectEndTasks();
             if (date is null) return "Insufficient worklog history to forecast";
-            if (daysLeft <= 0) return "Already past projected completion date";
-            return $"~{daysLeft} working days remaining at current pace";
+            if (daysLeft <= 0) return "Past projected completion date";
+            return $"~{daysLeft} working days at current logging pace";
         }
     }
 
-    private string ForecastClass
+    private string TaskForecastClass
     {
         get
         {
-            if (Metrics is null || EpicData is null) return "v2-kpi-neutral";
-            var (date, _) = ProjectEnd();
-            if (date is null) return "v2-kpi-neutral";
-            return "v2-kpi-success";
+            if (EpicData is null) return "v2-kpi-neutral";
+            if (!EpicData.Issues.Any(i => !IsBugIssue(i) && i.StatusCategoryKey != "done")) return "v2-kpi-success";
+            var (date, _) = ProjectEndTasks();
+            return date is null ? "v2-kpi-neutral" : "v2-kpi-success";
         }
     }
 
-    private (DateTime? Date, int DaysLeft) ProjectEnd()
+    private string BugProjectedEndLabel
+    {
+        get
+        {
+            if (EpicData is null || Metrics is null) return "—";
+            if (Metrics.Quality.OpenBugs == 0) return "All clear";
+            var (date, _) = ProjectEndBugs();
+            return date is null ? "Unknown" : date.Value.ToString("MMM d, yyyy");
+        }
+    }
+
+    private string BugProjectionMessage
+    {
+        get
+        {
+            if (EpicData is null || Metrics is null) return "";
+            if (Metrics.Quality.OpenBugs == 0) return "No open bugs";
+            var (date, daysLeft) = ProjectEndBugs();
+            if (date is null) return "Insufficient worklog history to forecast";
+            if (daysLeft <= 0) return "Past projected completion date";
+            var avgLabel = Metrics.Quality.AvgBugFixTimeSec > 0
+                ? $"avg {EpicProgressCalculator.FormatSeconds((int)Metrics.Quality.AvgBugFixTimeSec)}/bug"
+                : "remaining estimates";
+            return $"{Metrics.Quality.OpenBugs} open · ~{daysLeft} working days ({avgLabel})";
+        }
+    }
+
+    private string BugForecastClass
+    {
+        get
+        {
+            if (EpicData is null || Metrics is null) return "v2-kpi-neutral";
+            if (Metrics.Quality.OpenBugs == 0) return "v2-kpi-success";
+            var (date, _) = ProjectEndBugs();
+            return date is null ? "v2-kpi-neutral" : "v2-kpi-warn";
+        }
+    }
+
+    private static bool IsBugIssue(SprintIssue i) =>
+        string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase);
+
+    private (DateTime? Date, int DaysLeft) ProjectEndTasks()
     {
         if (EpicData is null) return (null, 0);
-        var allLogs = EpicData.Issues.SelectMany(i => i.Worklogs).ToList();
+        var tasks = EpicData.Issues.Where(i => !IsBugIssue(i)).ToList();
+        var totalRemainingSec = tasks
+            .Where(i => i.StatusCategoryKey != "done")
+            .Sum(i => (long)i.RemainingEstimateSeconds);
+        if (totalRemainingSec <= 0) return (null, 0);
+        var allLogs = tasks.SelectMany(i => i.Worklogs).ToList();
         if (allLogs.Count == 0) return (null, 0);
-        var first = allLogs.Min(w => w.Started.Date);
-        var last  = allLogs.Max(w => w.Started.Date);
-        var elapsedDays = Math.Max(1, (last - first).Days + 1);
-        var doneCount = EpicData.Issues.Count(i => i.StatusCategoryKey == "done");
-        if (doneCount == 0) return (null, 0);
-        var remaining = EpicData.Issues.Count - doneCount;
-        var ratePerDay = doneCount / (double)elapsedDays;
-        if (ratePerDay <= 0) return (null, 0);
-        var daysLeft = (int)Math.Ceiling(remaining / ratePerDay);
-        var date = DateTime.Today.AddDays(daysLeft);
-        // skip weekends approximately
-        var workDaysLeft = (int)Math.Ceiling(daysLeft * 5.0 / 7.0);
-        return (date, workDaysLeft);
+        var activeDays = Math.Max(1, allLogs.Select(w => w.Started.Date).Distinct().Count());
+        var dailyRateSec = allLogs.Sum(w => (long)w.TimeSpentSeconds) / (double)activeDays;
+        if (dailyRateSec <= 0) return (null, 0);
+        var daysLeft = (int)Math.Ceiling(totalRemainingSec / dailyRateSec);
+        return (DateTime.Today.AddDays(daysLeft), (int)Math.Ceiling(daysLeft * 5.0 / 7.0));
+    }
+
+    private (DateTime? Date, int DaysLeft) ProjectEndBugs()
+    {
+        if (EpicData is null || Metrics is null) return (null, 0);
+        var bugs = EpicData.Issues.Where(IsBugIssue).ToList();
+        var openBugs = bugs.Count(i => i.StatusCategoryKey != "done");
+        if (openBugs == 0) return (null, 0);
+        var avgFixSec = Metrics.Quality.AvgBugFixTimeSec;
+        var totalRemainingBugSec = avgFixSec > 0
+            ? openBugs * avgFixSec
+            : bugs.Where(i => i.StatusCategoryKey != "done").Sum(i => (long)i.RemainingEstimateSeconds);
+        if (totalRemainingBugSec <= 0) return (null, 0);
+        var allLogs = bugs.SelectMany(i => i.Worklogs).ToList();
+        if (allLogs.Count == 0) return (null, 0);
+        var activeDays = Math.Max(1, allLogs.Select(w => w.Started.Date).Distinct().Count());
+        var dailyRateSec = allLogs.Sum(w => (long)w.TimeSpentSeconds) / (double)activeDays;
+        if (dailyRateSec <= 0) return (null, 0);
+        var daysLeft = (int)Math.Ceiling(totalRemainingBugSec / dailyRateSec);
+        return (DateTime.Today.AddDays(daysLeft), (int)Math.Ceiling(daysLeft * 5.0 / 7.0));
     }
 
     // ── Loading ──────────────────────────────────────────────────────────────
