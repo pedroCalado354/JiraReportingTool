@@ -373,6 +373,9 @@
                 <button class="v2-tab @(ActiveTab=="epics" ? "is-active" : "")" @onclick='() => ActiveTab="epics"'>
                     <i class="bi bi-collection"></i>Epics
                 </button>
+                <button class="v2-tab @(ActiveTab=="tasks" ? "is-active" : "")" @onclick='() => ActiveTab="tasks"'>
+                    <i class="bi bi-list-task"></i>Tasks
+                </button>
                 <button class="v2-tab @(ActiveTab=="scope" ? "is-active" : "")" @onclick='() => ActiveTab="scope"'>
                     <i class="bi bi-arrows-expand"></i>Scope Changes
                     @if (ScopeChangedIssues.Count > 0) { <span class="v2-tab-badge">@ScopeChangedIssues.Count</span> }
@@ -1885,6 +1888,186 @@
                 Signal · <strong>Busy</strong>: any bug in progress or 12h+ non-bug remaining · <strong>Available Soon</strong>: &lt;12h · <strong>Running Low</strong>: &lt;6h · <strong>Needs Tasks</strong>: no non-bug/non-held work · On Hold tasks shown but excluded from signals
             </div>
         }
+        else if (ActiveTab == "tasks")
+        {
+            var tskFiltered  = TasksTabIssues;
+            var anyTskFilter = !string.IsNullOrWhiteSpace(_tskSearch)      || !string.IsNullOrEmpty(_tskFilterStatus)
+                            || !string.IsNullOrEmpty(_tskFilterType)       || !string.IsNullOrEmpty(_tskFilterPriority)
+                            || !string.IsNullOrEmpty(_tskFilterAssignee)   || !string.IsNullOrEmpty(_tskFilterEpic);
+
+            <!-- ── Summary pills ─────────────────────────────────────────────── -->
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+                <span class="v2-pill v2-pill-neutral">@ActiveIssues.Count total</span>
+                <span class="v2-pill v2-pill-success">@DoneCount done</span>
+                <span class="v2-pill v2-pill-brand">@InProgressCount in progress</span>
+                <span class="v2-pill v2-pill-warn">@ToDoCount to do</span>
+                @if (UnestimatedCount > 0)
+                {
+                    <span class="v2-pill v2-pill-danger" title="Tasks with no original estimate">@UnestimatedCount unestimated</span>
+                }
+                @if (NeverLoggedCount > 0)
+                {
+                    <span class="v2-pill v2-pill-danger" title="Tasks with zero worklogs">@NeverLoggedCount never logged</span>
+                }
+            </div>
+
+            <!-- ── Filter bar ─────────────────────────────────────────────────── -->
+            <div class="v2-filter-bar" style="margin-bottom:12px;flex-wrap:wrap;row-gap:8px">
+                <div class="v2-filter-group">
+                    <i class="bi bi-search" style="font-size:12px;color:var(--v2-ink-3)"></i>
+                    <input class="v2-input v2-input-sm" style="min-width:180px" placeholder="Search key or summary…"
+                           @bind="_tskSearch" @bind:event="oninput" />
+                </div>
+                <div class="v2-filter-sep"></div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Status</span>
+                    <select class="v2-select v2-input-sm" @bind="_tskFilterStatus">
+                        <option value="">All</option>
+                        <option value="indeterminate">In Progress</option>
+                        <option value="new">To Do</option>
+                        <option value="done">Done</option>
+                    </select>
+                </div>
+                <div class="v2-filter-sep"></div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Type</span>
+                    <select class="v2-select v2-input-sm" @bind="_tskFilterType">
+                        <option value="">All</option>
+                        @foreach (var t in ActiveIssues.Select(i => i.IssueType).Where(t => !string.IsNullOrEmpty(t)).Distinct().Order())
+                        {
+                            <option value="@t">@t</option>
+                        }
+                    </select>
+                </div>
+                <div class="v2-filter-sep"></div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Priority</span>
+                    <select class="v2-select v2-input-sm" @bind="_tskFilterPriority">
+                        <option value="">All</option>
+                        @foreach (var p in new[] { "Highest", "Critical", "High", "Medium", "Low", "Lowest" }
+                                              .Where(p => ActiveIssues.Any(i => i.Priority == p)))
+                        {
+                            <option value="@p">@p</option>
+                        }
+                    </select>
+                </div>
+                <div class="v2-filter-sep"></div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Assignee</span>
+                    <select class="v2-select v2-input-sm" @bind="_tskFilterAssignee">
+                        <option value="">All</option>
+                        @foreach (var a in ActiveIssues.Select(i => i.Assignee).Where(a => !string.IsNullOrEmpty(a)).Distinct().Order())
+                        {
+                            <option value="@a">@a</option>
+                        }
+                    </select>
+                </div>
+                <div class="v2-filter-sep"></div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Epic</span>
+                    <select class="v2-select v2-input-sm" style="max-width:180px" @bind="_tskFilterEpic">
+                        <option value="">All</option>
+                        @foreach (var e in ActiveIssues
+                                            .Where(i => !string.IsNullOrEmpty(i.EpicKey))
+                                            .GroupBy(i => i.EpicKey)
+                                            .Select(g => new { Key = g.Key, Label = g.First().EpicName is { Length: > 0 } n && n != "No Epic" ? n : g.Key })
+                                            .OrderBy(e => e.Label))
+                        {
+                            <option value="@e.Key" title="@e.Key">@e.Label</option>
+                        }
+                    </select>
+                </div>
+                <span class="v2-filter-count">@tskFiltered.Count of @ActiveIssues.Count</span>
+                @if (anyTskFilter)
+                {
+                    <button class="v2-btn v2-btn-ghost" style="padding:4px 10px;font-size:12px" @onclick="ClearTaskFilters">
+                        <i class="bi bi-x-circle"></i> Clear filters
+                    </button>
+                }
+            </div>
+
+            <!-- ── Table ──────────────────────────────────────────────────────── -->
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th class="@SI("Key", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Key")'>Key</th>
+                            <th class="@SI("Summary", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Summary")'>Summary</th>
+                            <th class="@SI("Type", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Type")'>Type</th>
+                            <th class="@SI("Priority", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Priority")'>Priority</th>
+                            <th class="@SI("Status", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Status")'>Status</th>
+                            <th class="@SI("Assignee", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Assignee")'>Assignee</th>
+                            <th class="@SI("Epic", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Epic")'>Epic</th>
+                            <th class="v2-table-num @SI("Est", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Est")'>Estimate</th>
+                            <th class="v2-table-num @SI("Log", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Log")'>Logged</th>
+                            <th class="v2-table-num @SI("Rem", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Rem")'>Remaining</th>
+                            <th class="@SI("Pct", _sortTSK, _ascTSK)" style="min-width:120px" @onclick='() => SortTSK("Pct")'>Progress</th>
+                            <th class="@SI("Last", _sortTSK, _ascTSK)" @onclick='() => SortTSK("Last")'>Last log</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (!tskFiltered.Any())
+                        {
+                            <tr><td colspan="12" style="text-align:center;padding:28px" class="v2-text-muted">No tasks match the current filters.</td></tr>
+                        }
+                        @foreach (var i in ApplySortTSK(tskFiltered))
+                        {
+                            var pct      = IssuePercentDone(i) ?? 0;
+                            var lastLog  = i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : (DateTime?)null;
+                            var sc       = StatusColor(i);
+                            var epicLbl  = i.EpicName is { Length: > 0 } en && en != "No Epic" ? en : i.EpicKey;
+                            <tr class="@(i.StatusCategoryKey == "done" ? "is-done" : "")"
+                                style="background:@sc.bg;border-left:3px solid @sc.border">
+                                <td class="v2-table-key">@i.Key</td>
+                                <td class="v2-truncate" style="max-width:320px" title="@i.Summary">@i.Summary</td>
+                                <td><span class="v2-chip v2-chip-@i.IssueType.ToLower()">@i.IssueType</span></td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(i.Priority))
+                                    {
+                                        <span class="v2-chip v2-chip-pri-@i.Priority.ToLower()">@i.Priority</span>
+                                    }
+                                    else { <span class="v2-text-muted">—</span> }
+                                </td>
+                                <td>
+                                    <span class="v2-pill" style="font-size:10px;padding:1px 6px;background:@sc.bg;color:@sc.border;border:1px solid @sc.border">@i.Status</span>
+                                </td>
+                                <td>
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <span class="v2-avatar v2-avatar-grad-2" style="width:22px;height:22px;font-size:9px">@Initials(i.Assignee)</span>
+                                        <span class="v2-truncate" style="max-width:110px">@(string.IsNullOrEmpty(i.Assignee) ? "Unassigned" : i.Assignee)</span>
+                                    </div>
+                                </td>
+                                <td class="v2-truncate" style="max-width:140px;font-size:11px;color:var(--v2-ink-3)" title="@epicLbl">
+                                    @(string.IsNullOrEmpty(epicLbl) ? "—" : epicLbl)
+                                </td>
+                                <td class="v2-table-num">@(i.OriginalEstimateSeconds > 0 ? FmtH(i.OriginalEstimateSeconds) : "—")</td>
+                                <td class="v2-table-num">@(i.TimeSpentSeconds > 0 ? FmtH(i.TimeSpentSeconds) : "—")</td>
+                                <td class="v2-table-num">@(i.RemainingEstimateSeconds > 0 ? FmtH(i.RemainingEstimateSeconds) : i.StatusCategoryKey is "done" or "indeterminate" ? "0h" : "—")</td>
+                                <td style="min-width:120px">
+                                    <div style="display:flex;align-items:center;gap:6px">
+                                        <div class="v2-bar" style="flex:1;height:5px">
+                                            <div class="v2-bar-fill @(pct >= 100 ? "v2-bar-fill-success" : "")"
+                                                 style="width:@Math.Min(pct, 100)%"></div>
+                                        </div>
+                                        <span style="font-size:11px;min-width:32px;text-align:right">@pct%</span>
+                                    </div>
+                                </td>
+                                <td class="v2-hint" style="white-space:nowrap">
+                                    @if (lastLog.HasValue)
+                                    {
+                                        var daysAgo = (DateTime.Today - lastLog.Value.Date).Days;
+                                        <span class="@(daysAgo >= 2 && i.StatusCategoryKey == "indeterminate" ? "v2-text-danger" : daysAgo >= 1 && i.StatusCategoryKey == "indeterminate" ? "v2-text-warn" : "")">
+                                            @(daysAgo == 0 ? "Today" : daysAgo == 1 ? "Yesterday" : $"{daysAgo}d ago")
+                                        </span>
+                                    }
+                                    else { <span class="@(i.StatusCategoryKey == "indeterminate" ? "v2-text-danger" : "")">—</span> }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
     }
 </div>
 
@@ -2706,6 +2889,7 @@
         "712020:70b8ee97-aa93-49b3-a96e-990e12ed83d5",
         "5f33fe9c1ac29c00459996bb",
         "5f33fb5c3e9e2e004da90cbe",
+        "712020:8601f838-d40f-4df4-b1b5-489def715fca","712020:1bb77856-b891-4bac-8872-710dc39d25bf","712020:a00568c4-0722-41fe-bb76-a6cdc6f3e2c9","712020:0ebf2294-2779-4a12-baf4-97fcd8a6a2d5"
     ];
 
     private bool OnlyTeamMembers = false;
@@ -2892,6 +3076,72 @@
         "Log"      => _ascSC ? src.OrderBy(i => i.TimeSpentSeconds)          : src.OrderByDescending(i => i.TimeSpentSeconds),
         "Rem"      => _ascSC ? src.OrderBy(i => i.RemainingEstimateSeconds)  : src.OrderByDescending(i => i.RemainingEstimateSeconds),
         _          => src.OrderBy(i => i.EpicKey).ThenBy(i => i.Created),
+    };
+
+    // ── Tasks tab ────────────────────────────────────────────────────────────
+    private string _tskSearch = "";
+    private string _tskFilterStatus = "";
+    private string _tskFilterType = "";
+    private string _tskFilterPriority = "";
+    private string _tskFilterAssignee = "";
+    private string _tskFilterEpic = "";
+    private string _sortTSK = ""; private bool _ascTSK = true;
+
+    private void SortTSK(string c) { if (_sortTSK == c) _ascTSK = !_ascTSK; else { _sortTSK = c; _ascTSK = true; } }
+
+    private void ClearTaskFilters()
+    {
+        _tskSearch = ""; _tskFilterStatus = ""; _tskFilterType = "";
+        _tskFilterPriority = ""; _tskFilterAssignee = ""; _tskFilterEpic = "";
+    }
+
+    private List<SprintIssue> TasksTabIssues
+    {
+        get
+        {
+            var q = ActiveIssues.AsEnumerable();
+            if (!string.IsNullOrWhiteSpace(_tskSearch))
+            {
+                var s = _tskSearch.Trim();
+                q = q.Where(i => i.Key.Contains(s, StringComparison.OrdinalIgnoreCase)
+                              || i.Summary.Contains(s, StringComparison.OrdinalIgnoreCase));
+            }
+            if (!string.IsNullOrEmpty(_tskFilterStatus))   q = q.Where(i => i.StatusCategoryKey == _tskFilterStatus);
+            if (!string.IsNullOrEmpty(_tskFilterType))     q = q.Where(i => i.IssueType == _tskFilterType);
+            if (!string.IsNullOrEmpty(_tskFilterPriority)) q = q.Where(i => i.Priority == _tskFilterPriority);
+            if (!string.IsNullOrEmpty(_tskFilterAssignee)) q = q.Where(i => i.Assignee == _tskFilterAssignee);
+            if (!string.IsNullOrEmpty(_tskFilterEpic))     q = q.Where(i => i.EpicKey == _tskFilterEpic);
+            return q.ToList();
+        }
+    }
+
+    private IEnumerable<SprintIssue> ApplySortTSK(IEnumerable<SprintIssue> src) => _sortTSK switch
+    {
+        "Key"      => _ascTSK ? src.OrderBy(i => i.Key)                        : src.OrderByDescending(i => i.Key),
+        "Summary"  => _ascTSK ? src.OrderBy(i => i.Summary)                    : src.OrderByDescending(i => i.Summary),
+        "Type"     => _ascTSK ? src.OrderBy(i => i.IssueType)                  : src.OrderByDescending(i => i.IssueType),
+        "Priority" => _ascTSK ? src.OrderBy(i => TskPriorityOrder(i.Priority)) : src.OrderByDescending(i => TskPriorityOrder(i.Priority)),
+        "Status"   => _ascTSK ? src.OrderBy(i => i.StatusCategoryKey)          : src.OrderByDescending(i => i.StatusCategoryKey),
+        "Assignee" => _ascTSK ? src.OrderBy(i => i.Assignee)                   : src.OrderByDescending(i => i.Assignee),
+        "Epic"     => _ascTSK ? src.OrderBy(i => i.EpicKey)                    : src.OrderByDescending(i => i.EpicKey),
+        "Est"      => _ascTSK ? src.OrderBy(i => i.OriginalEstimateSeconds)    : src.OrderByDescending(i => i.OriginalEstimateSeconds),
+        "Log"      => _ascTSK ? src.OrderBy(i => i.TimeSpentSeconds)           : src.OrderByDescending(i => i.TimeSpentSeconds),
+        "Rem"      => _ascTSK ? src.OrderBy(i => i.RemainingEstimateSeconds)   : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "Pct"      => _ascTSK ? src.OrderBy(i => IssuePercentDone(i) ?? -1)    : src.OrderByDescending(i => IssuePercentDone(i) ?? -1),
+        "Last"     => _ascTSK ? src.OrderBy(i => i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : DateTime.MinValue)
+                              : src.OrderByDescending(i => i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : DateTime.MinValue),
+        _          => src.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 })
+                         .ThenByDescending(i => i.RemainingEstimateSeconds),
+    };
+
+    private static int TskPriorityOrder(string p) => p switch
+    {
+        "Highest" or "Critical" => 5,
+        "High"    => 4,
+        "Medium"  => 3,
+        "Low"     => 2,
+        "Lowest"  => 1,
+        _         => 0
     };
 
     private static string FmtH(int seconds)
