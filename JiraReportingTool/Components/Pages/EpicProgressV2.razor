@@ -721,11 +721,9 @@
                                 <th class="v2-table-num">Open</th>
                                 <th class="v2-table-num">Resolved</th>
                                 <th class="v2-table-num">Bug Hours</th>
-                                <th class="v2-table-num">Avg Fix Time</th>
                                 <th style="min-width:150px">Bug Effort</th>
                                 <th class="v2-table-num">Stale</th>
                                 <th class="v2-table-num">QA Rej. Tickets</th>
-                                <th class="v2-table-num">Total QA Rej.</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -740,43 +738,46 @@
                                         g => g.Key,
                                         g => (BugHrs: g.Where(x => x.IsBug).Sum(x => x.Hours), TotalHrs: g.Sum(x => x.Hours)));
 
-                                var memberRows = QAllIssues
-                                    .Where(i => !string.IsNullOrEmpty(i.Assignee) && i.Assignee != "Unassigned")
-                                    .GroupBy(i => i.Assignee)
-                                    .Select(g =>
+                                // Include everyone who is either assigned to a bug OR logged hours on a bug
+                                var bugLoggers = memberLogMap
+                                    .Where(kv => kv.Value.BugHrs > 0)
+                                    .Select(kv => kv.Key)
+                                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                                var bugAssignees = QAllIssues
+                                    .Where(i => IsBugIssue(i) && !string.IsNullOrEmpty(i.Assignee) && i.Assignee != "Unassigned")
+                                    .Select(i => i.Assignee!)
+                                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                                var allMemberNames = bugAssignees.Union(bugLoggers);
+
+                                var memberRows = allMemberNames
+                                    .Select(name =>
                                     {
-                                        var bugs = g.Where(IsBugIssue).ToList();
+                                        var assigned = QAllIssues.Where(i => string.Equals(i.Assignee, name, StringComparison.OrdinalIgnoreCase)).ToList();
+                                        var bugs = assigned.Where(IsBugIssue).ToList();
                                         var openBugs = bugs.Where(b => b.StatusCategoryKey != "done").ToList();
                                         var resolvedBugs = bugs.Where(b => b.StatusCategoryKey == "done").ToList();
-                                        var resolvedWithDates = resolvedBugs
-                                            .Where(b => b.Created.HasValue && b.ResolutionDate.HasValue).ToList();
-                                        var avgFix = resolvedWithDates.Count > 0
-                                            ? resolvedWithDates.Average(b => WorkingHours(b.Created!.Value, b.ResolutionDate!.Value))
-                                            : -1.0;
-                                        memberLogMap.TryGetValue(g.Key, out var logs);
+                                        memberLogMap.TryGetValue(name, out var logs);
                                         return new
                                         {
-                                            Name         = g.Key,
+                                            Name         = name,
                                             BugCount     = bugs.Count,
                                             Open         = openBugs.Count,
                                             Resolved     = resolvedBugs.Count,
                                             BugHrs       = logs.BugHrs,
                                             TotalHrs     = logs.TotalHrs,
                                             BugEffort    = logs.TotalHrs == 0 ? 0.0 : logs.BugHrs / logs.TotalHrs * 100,
-                                            AvgFix       = avgFix,
                                             Stale        = openBugs.Count(b => b.DaysSinceLastWorklog >= 2),
                                             QaRejTickets = bugs.Count(b => b.QaRejectedCount > 0),
-                                            QaRejTotal   = bugs.Sum(b => b.QaRejectedCount)
                                         };
                                     })
-                                    .Where(r => r.BugCount > 0 || r.QaRejTotal > 0)
+                                    .Where(r => r.BugCount > 0 || r.BugHrs > 0 || r.QaRejTickets > 0)
                                     .OrderByDescending(r => r.BugCount)
                                     .ThenByDescending(r => r.BugEffort)
                                     .ToList();
                             }
                             @if (!memberRows.Any())
                             {
-                                <tr><td colspan="10" style="text-align:center;padding:20px" class="v2-text-muted">No bugs found in this epic.</td></tr>
+                                <tr><td colspan="8" style="text-align:center;padding:20px" class="v2-text-muted">No bugs found in this epic.</td></tr>
                             }
                             @foreach (var r in memberRows)
                             {
@@ -791,7 +792,6 @@
                                     <td class="v2-table-num @(r.Open > 0 ? "v2-text-warn" : "v2-text-muted")">@r.Open</td>
                                     <td class="v2-table-num"><strong style="color:var(--v2-success)">@r.Resolved</strong></td>
                                     <td class="v2-table-num v2-text-muted">@FormatHours(r.BugHrs)</td>
-                                    <td class="v2-table-num v2-text-muted">@(r.AvgFix < 0 ? "—" : FormatFixTime(r.AvgFix))</td>
                                     <td style="min-width:150px">
                                         <div style="display:flex;align-items:center;gap:6px">
                                             <div class="v2-bar" style="flex:1;height:6px">
@@ -803,7 +803,6 @@
                                     </td>
                                     <td class="v2-table-num @(r.Stale > 0 ? "v2-text-warn" : "v2-text-muted")">@(r.Stale > 0 ? r.Stale.ToString() : "—")</td>
                                     <td class="v2-table-num @(r.QaRejTickets > 0 ? "v2-text-warn" : "v2-text-muted")">@(r.QaRejTickets > 0 ? r.QaRejTickets.ToString() : "—")</td>
-                                    <td class="v2-table-num @(r.QaRejTotal > r.QaRejTickets ? "v2-text-danger" : r.QaRejTotal > 0 ? "v2-text-warn" : "v2-text-muted")">@(r.QaRejTotal > 0 ? r.QaRejTotal.ToString() : "—")</td>
                                 </tr>
                             }
                         </tbody>
@@ -816,7 +815,6 @@
                                     <td class="v2-table-num v2-text-warn">@QOpenBugs</td>
                                     <td class="v2-table-num"><strong style="color:var(--v2-success)">@QResolvedBugs</strong></td>
                                     <td class="v2-table-num v2-text-muted">@FormatHours(QBugLoggedHours)</td>
-                                    <td class="v2-table-num v2-text-muted">@(QAvgFixHours <= 0 ? "—" : FormatFixTime(QAvgFixHours))</td>
                                     <td>
                                         <div style="display:flex;align-items:center;gap:6px">
                                             <div class="v2-bar" style="flex:1;height:6px">
@@ -828,7 +826,6 @@
                                     </td>
                                     <td class="v2-table-num v2-text-muted">@(QStaleOpenBugs > 0 ? QStaleOpenBugs.ToString() : "—")</td>
                                     <td class="v2-table-num v2-text-muted">@(QQaRejectedBugs > 0 ? QQaRejectedBugs.ToString() : "—")</td>
-                                    <td class="v2-table-num v2-text-muted">@(QQaRejectionsTotal > 0 ? QQaRejectionsTotal.ToString() : "—")</td>
                                 </tr>
                             </tfoot>
                         }

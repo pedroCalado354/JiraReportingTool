@@ -676,6 +676,80 @@
         <div class="sb-empty-state">Enter a support bug epic key above and click <strong>Load Bugs</strong> to get started.</div>
     }
 
+    <!-- ═══════════════════ JSSUPPORT ISSUE KEYS ═══════════════════ -->
+    <div class="sb-section sb-jss-section">
+        <div class="sb-section-header" style="cursor:default">
+            <span class="sb-section-title">JSSUPPORT Issue Keys</span>
+            <span class="sb-section-sub">One per line or comma-separated · @_jssupportIssues.Count loaded</span>
+            @if (_jssupportIssues.Count > 0)
+            {
+                <button class="sb-btn sb-btn-ghost" style="margin-left:auto;padding:3px 12px;font-size:12px" @onclick="ExportToExcelAsync" title="Export to Excel (includes Planned Issues sheet)">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" fill="currentColor" viewBox="0 0 16 16">
+                        <path d="M.5 9.9a.5.5 0 0 1 .5.5v2.5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-2.5a.5.5 0 0 1 1 0v2.5a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2v-2.5a.5.5 0 0 1 .5-.5z"/>
+                        <path d="M7.646 11.854a.5.5 0 0 0 .708 0l3-3a.5.5 0 0 0-.708-.708L8.5 10.293V1.5a.5.5 0 0 0-1 0v8.793L5.354 8.146a.5.5 0 1 0-.708.708l3 3z"/>
+                    </svg>
+                    Export .xlsx
+                </button>
+            }
+        </div>
+        <div class="sb-jss-input-row">
+            <textarea class="sb-input sb-jss-textarea" placeholder="JM-11101&#10;JM-11102, JM-11103" @bind="_jssupportKeysInput" rows="4"></textarea>
+            <button class="sb-btn sb-btn-primary" @onclick="LoadJsSupportAsync" disabled="@(_jssupportLoading || string.IsNullOrWhiteSpace(_jssupportKeysInput))">
+                @if (_jssupportLoading) { <span class="sb-spinner"></span> } <span>Load Issues</span>
+            </button>
+        </div>
+
+        @if (_jssupportIssues.Count > 0)
+        {
+            <div class="sb-table-wrap" style="margin-top:12px">
+                <table class="sb-table">
+                    <thead>
+                        <tr>
+                            <th class="sb-th sb-th-key">Key</th>
+                            <th class="sb-th sb-th-title">Summary</th>
+                            <th class="sb-th sb-th-status">Status</th>
+                            <th class="sb-th sb-th-assignee">Assignee</th>
+                            <th class="sb-th sb-th-due">Created</th>
+                            <th class="sb-th">Logged By</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var issue in _jssupportIssues)
+                        {
+                            var loggers = issue.Worklogs
+                                .Select(w => w.Author)
+                                .Where(a => !string.IsNullOrEmpty(a))
+                                .Distinct()
+                                .OrderBy(a => a)
+                                .ToList();
+                            <tr class="sb-row">
+                                <td class="sb-td sb-td-key">
+                                    <a class="sb-key-link" href="@_jiraBase/browse/@issue.Key" target="_blank" rel="noopener noreferrer">@issue.Key</a>
+                                </td>
+                                <td class="sb-td sb-td-title" title="@issue.Summary">@issue.Summary</td>
+                                <td class="sb-td sb-td-status">
+                                    <span class="rpt-status-chip @GetStatusClass(issue.Status)">@(issue.Status ?? "—")</span>
+                                </td>
+                                <td class="sb-td sb-td-assignee">@(issue.Assignee ?? "—")</td>
+                                <td class="sb-td sb-td-due">@(issue.Created.HasValue ? issue.Created.Value.ToString("dd MMM yyyy") : "—")</td>
+                                <td class="sb-td" style="font-size:12px;color:var(--txt-2)">
+                                    @if (loggers.Count > 0)
+                                    {
+                                        @string.Join(", ", loggers)
+                                    }
+                                    else
+                                    {
+                                        <span style="color:var(--txt-4)">—</span>
+                                    }
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </div>
+
 </div>
 
 @code {
@@ -691,6 +765,9 @@
 
     private List<SprintIssue>  _bugs              = new();
     private List<SprintIssue>  _priorityBugs      = new();
+    private List<SprintIssue>  _jssupportIssues   = new();
+    private string             _jssupportKeysInput = "";
+    private bool               _jssupportLoading  = false;
     private HashSet<string>    _expandedKeys      = new();
     private HashSet<string>    _selectedAssignees = new();
     private string             _statusFilter      = "all";
@@ -961,6 +1038,33 @@
         }
     }
 
+    // ── JSSUPPORT Load ────────────────────────────────────────────────────────
+    private async Task LoadJsSupportAsync()
+    {
+        var keys = ParseIssueKeys(_jssupportKeysInput);
+        if (keys.Count == 0) return;
+        _jssupportLoading = true;
+        StateHasChanged();
+        try
+        {
+            var report = await JiraService.GetIssuesByKeysAsync(keys);
+            _jssupportIssues = report.Issues ?? new();
+        }
+        catch { _jssupportIssues = new(); }
+        finally { _jssupportLoading = false; }
+    }
+
+    private static List<string> ParseIssueKeys(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input)) return new();
+        return input
+            .Split(new[] { '\n', '\r', ',' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(k => k.Trim().ToUpperInvariant())
+            .Where(k => k.Length > 0)
+            .Distinct()
+            .ToList();
+    }
+
     // ── Health & Forecast ──────────────────────────────────────────────────────
     private static bool IsDone(SprintIssue b) =>
         b.StatusCategoryKey == "done" || string.Equals(b.Status, "done", StringComparison.OrdinalIgnoreCase);
@@ -1221,6 +1325,34 @@
         }
         wsWl.Columns().AdjustToContents();
 
+        if (_jssupportIssues.Count > 0)
+        {
+            var wsPlanned = wb.Worksheets.Add("Planned Issues");
+            var plannedHeaders = new[] { "Key", "Summary", "Status", "Assignee", "Created", "Logged By" };
+            for (int c = 0; c < plannedHeaders.Length; c++)
+            {
+                wsPlanned.Cell(1, c + 1).Value = plannedHeaders[c];
+                wsPlanned.Cell(1, c + 1).Style.Font.Bold = true;
+            }
+            int pRow = 2;
+            foreach (var issue in _jssupportIssues)
+            {
+                var loggers = issue.Worklogs
+                    .Select(w => w.Author)
+                    .Where(a => !string.IsNullOrEmpty(a))
+                    .Distinct()
+                    .OrderBy(a => a);
+                wsPlanned.Cell(pRow, 1).Value = issue.Key;
+                wsPlanned.Cell(pRow, 2).Value = issue.Summary;
+                wsPlanned.Cell(pRow, 3).Value = issue.Status ?? "";
+                wsPlanned.Cell(pRow, 4).Value = issue.Assignee ?? "";
+                wsPlanned.Cell(pRow, 5).Value = issue.Created.HasValue ? issue.Created.Value.ToString("dd MMM yyyy") : "";
+                wsPlanned.Cell(pRow, 6).Value = string.Join(", ", loggers);
+                pRow++;
+            }
+            wsPlanned.Columns().AdjustToContents();
+        }
+
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
         var base64   = Convert.ToBase64String(ms.ToArray());
@@ -1356,6 +1488,9 @@
 
     .sb-epic-input { width: 130px; }
     .sb-input-date { width: 148px; }
+    .sb-jss-section { margin-top: 8px; }
+    .sb-jss-input-row { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px 4px; }
+    .sb-jss-textarea { width: 320px; resize: vertical; min-height: 72px; line-height: 1.5; font-family: monospace; font-size: 12px; }
 
     .sb-load-actions {
         display: flex;

@@ -687,6 +687,26 @@
                                     </div>
                                 }
                             </div>
+                            <!-- Full Epic donut (right side) -->
+                            @if (ep.Key != "—" && !string.IsNullOrEmpty(ep.Key))
+                            {
+                                <div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex-shrink:0">
+                                    @if (_fullEpicStats.TryGetValue(ep.Key, out var fullRight))
+                                    {
+                                        var fullRightPct = fullRight.Total > 0 ? fullRight.Done * 100 / fullRight.Total : 0;
+                                        <div class="v2-donut" style="--p:@fullRightPct;--c1:#6366f1" title="Full Epic: @fullRight.Done / @fullRight.Total tasks done">
+                                            <span>@fullRightPct%</span>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="v2-donut" style="--p:0;--c1:#6366f1;opacity:0.3">
+                                            <span style="opacity:0.5">…</span>
+                                        </div>
+                                    }
+                                    <span style="font-size:9px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--v2-ink-3)">Full Epic</span>
+                                </div>
+                            }
                         </div>
 
                         <!-- Status mix bar -->
