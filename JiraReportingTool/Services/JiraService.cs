@@ -635,59 +635,76 @@ public class JiraService : IJiraService
     public async Task<IssueDevStatus> GetDevStatusAsync(string jiraId)
     {
         var result = new IssueDevStatus();
+        var discoveredAppTypes = new List<string>();
 
-        // Summary: branch/commit/build counts (no applicationType required)
+        // Summary: branch/commit/build counts.
+        // Jira Cloud wraps counts under an "overall" sub-object: summary.branch.overall.count
         var summaryResp = await _httpClient.GetAsync(
-            $"{_baseUrl}/rest/dev-status/latest/issue/summary?issueId={Uri.EscapeDataString(jiraId)}");
+            $"{_baseUrl}/rest/dev-status/1.0/issue/summary?issueId={Uri.EscapeDataString(jiraId)}");
         if (summaryResp.IsSuccessStatusCode)
         {
             var summaryJson = await summaryResp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(summaryJson);
             if (doc.RootElement.TryGetProperty("summary", out var summary))
             {
-                if (summary.TryGetProperty("branch", out var br) && br.TryGetProperty("count", out var brc))
-                    result.BranchCount = brc.GetInt32();
-                if (summary.TryGetProperty("commit", out var cm) && cm.TryGetProperty("count", out var cmc))
-                    result.CommitCount = cmc.GetInt32();
+                if (summary.TryGetProperty("branch", out var br))
+                {
+                    var node = br.TryGetProperty("overall", out var o) ? o : br;
+                    if (node.TryGetProperty("count", out var c)) result.BranchCount = c.GetInt32();
+                    // Discover connected app types (e.g. "GitHub", "Bitbucket") for the detail call
+                    if (br.TryGetProperty("byInstanceType", out var bit))
+                        foreach (var p in bit.EnumerateObject())
+                            if (!discoveredAppTypes.Contains(p.Name)) discoveredAppTypes.Add(p.Name);
+                }
+                if (summary.TryGetProperty("commit", out var cm))
+                {
+                    var node = cm.TryGetProperty("overall", out var o) ? o : cm;
+                    if (node.TryGetProperty("count", out var c)) result.CommitCount = c.GetInt32();
+                }
                 if (summary.TryGetProperty("build", out var build))
                 {
-                    if (build.TryGetProperty("count",        out var bc)) result.BuildCount        = bc.GetInt32();
-                    if (build.TryGetProperty("successCount", out var sc)) result.BuildSuccessCount = sc.GetInt32();
-                    if (build.TryGetProperty("failCount",    out var fc)) result.BuildFailCount    = fc.GetInt32();
+                    var node = build.TryGetProperty("overall", out var o) ? o : build;
+                    if (node.TryGetProperty("count",        out var bc)) result.BuildCount        = bc.GetInt32();
+                    if (node.TryGetProperty("successCount", out var sc)) result.BuildSuccessCount = sc.GetInt32();
+                    if (node.TryGetProperty("failCount",    out var fc)) result.BuildFailCount    = fc.GetInt32();
                 }
             }
         }
 
-        // PR detail: title, URL, status, branch (applicationType configurable; defaults to GitHub)
-        var appType = _config["Jira:DevStatusAppType"] ?? "GitHub";
-        var prResp = await _httpClient.GetAsync(
-            $"{_baseUrl}/rest/dev-status/1.0/issue/detail?issueId={Uri.EscapeDataString(jiraId)}&applicationType={Uri.EscapeDataString(appType)}&dataType=pullrequest");
-        if (prResp.IsSuccessStatusCode)
+        // PR detail: use discovered app types from summary; fall back to configured/default value
+        var appTypesToTry = discoveredAppTypes.Count > 0
+            ? discoveredAppTypes
+            : new List<string> { _config["Jira:DevStatusAppType"] ?? "GitHub" };
+
+        foreach (var appType in appTypesToTry)
         {
+            var prResp = await _httpClient.GetAsync(
+                $"{_baseUrl}/rest/dev-status/1.0/issue/detail?issueId={Uri.EscapeDataString(jiraId)}&applicationType={Uri.EscapeDataString(appType)}&dataType=pullrequest");
+            if (!prResp.IsSuccessStatusCode) continue;
+
             var prJson = await prResp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(prJson);
-            if (doc.RootElement.TryGetProperty("detail", out var detail))
+            if (!doc.RootElement.TryGetProperty("detail", out var detail)) continue;
+
+            foreach (var provider in detail.EnumerateArray())
             {
-                foreach (var provider in detail.EnumerateArray())
+                if (!provider.TryGetProperty("pullRequests", out var prs)) continue;
+                foreach (var pr in prs.EnumerateArray())
                 {
-                    if (!provider.TryGetProperty("pullRequests", out var prs)) continue;
-                    foreach (var pr in prs.EnumerateArray())
+                    var devPr = new DevPullRequest
                     {
-                        var devPr = new DevPullRequest
-                        {
-                            Title  = pr.TryGetProperty("title",  out var t) ? t.GetString() ?? "" : "",
-                            Url    = pr.TryGetProperty("url",    out var u) ? u.GetString() ?? "" : "",
-                            Status = pr.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "",
-                        };
-                        if (pr.TryGetProperty("source", out var src) &&
-                            src.TryGetProperty("branch", out var srcBranch) &&
-                            srcBranch.TryGetProperty("name", out var branchName))
-                            devPr.SourceBranch = branchName.GetString() ?? "";
-                        if (pr.TryGetProperty("lastUpdate", out var lu) &&
-                            DateTime.TryParse(lu.GetString(), out var luDt))
-                            devPr.LastUpdated = luDt;
-                        result.PullRequests.Add(devPr);
-                    }
+                        Title  = pr.TryGetProperty("title",  out var t) ? t.GetString() ?? "" : "",
+                        Url    = pr.TryGetProperty("url",    out var u) ? u.GetString() ?? "" : "",
+                        Status = pr.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "",
+                    };
+                    if (pr.TryGetProperty("source", out var src) &&
+                        src.TryGetProperty("branch", out var srcBranch) &&
+                        srcBranch.TryGetProperty("name", out var branchName))
+                        devPr.SourceBranch = branchName.GetString() ?? "";
+                    if (pr.TryGetProperty("lastUpdate", out var lu) &&
+                        DateTime.TryParse(lu.GetString(), out var luDt))
+                        devPr.LastUpdated = luDt;
+                    result.PullRequests.Add(devPr);
                 }
             }
         }

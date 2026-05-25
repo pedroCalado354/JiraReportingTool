@@ -17,6 +17,7 @@ builder.Services.AddScoped<JiraDbRepository>();
 builder.Services.AddScoped<IJiraService, JiraCacheService>();
 builder.Services.AddScoped<DataSyncService>();
 builder.Services.AddScoped<ISprintPlanService, SprintPlanService>();
+builder.Services.AddHttpClient<GitHubService>();
 
 var app = builder.Build();
 

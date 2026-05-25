@@ -4,6 +4,7 @@
 @using ClosedXML.Excel
 @using System.IO
 @inject IJiraService JiraService
+@inject GitHubService GitHubService
 @inject IConfiguration Config
 @inject IJSRuntime JS
 
@@ -499,92 +500,67 @@
                                                 </div>
                                             }
 
-                                            <!-- Development Status -->
+                                            <!-- GitHub Pull Requests -->
                                             <div class="sb-dev-panel">
                                                 <div class="sb-worklog-header">
-                                                    <span>Development</span>
+                                                    <svg width="13" height="13" viewBox="0 0 98 96" fill="currentColor" style="margin-right:4px;vertical-align:middle"><path d="M48.854 0C21.839 0 0 22 0 49.217c0 21.756 13.993 40.172 33.405 46.69 2.427.49 3.316-1.059 3.316-2.362 0-1.141-.08-5.052-.08-9.127-13.59 2.934-16.42-5.867-16.42-5.867-2.184-5.704-5.42-7.17-5.42-7.17-4.448-3.015.324-3.015.324-3.015 4.934.326 7.523 5.052 7.523 5.052 4.367 7.496 11.404 5.378 14.235 4.074.404-3.178 1.699-5.378 3.074-6.6-10.839-1.141-22.243-5.378-22.243-24.283 0-5.378 1.94-9.778 5.014-13.2-.485-1.222-2.184-6.275.486-13.038 0 0 4.125-1.304 13.426 5.052a46.97 46.97 0 0 1 12.214-1.63c4.125 0 8.33.571 12.213 1.63 9.302-6.356 13.427-5.052 13.427-5.052 2.67 6.763.97 11.816.485 13.038 3.155 3.422 5.015 7.822 5.015 13.2 0 18.905-11.404 23.06-22.324 24.283 1.78 1.548 3.316 4.481 3.316 9.126 0 6.6-.08 11.897-.08 13.526 0 1.304.89 2.853 3.316 2.364 19.412-6.52 33.405-24.935 33.405-46.691C97.707 22 75.788 0 48.854 0z"/></svg>
+                                                    <span>GitHub Pull Requests</span>
                                                 </div>
-                                                @if (_devLoading.Contains(bug.Key))
+                                                @if (_ghPrLoading.Contains(bug.Key))
                                                 {
-                                                    <div class="sb-dev-loading"><span class="sb-spinner"></span> Loading…</div>
+                                                    <div class="sb-dev-loading"><span class="sb-spinner"></span> Searching GitHub…</div>
+                                                }
+                                                else if (!GitHubService.IsConfigured)
+                                                {
+                                                    <div class="sb-dev-empty">GitHub not configured — add GitHub:Token to user secrets.</div>
                                                 }
                                                 else
                                                 {
-                                                    var devLoaded = _devStatuses.TryGetValue(bug.Key, out var ds);
-                                                    @if (!devLoaded)
+                                                    var ghLoaded = _ghPrs.TryGetValue(bug.Key, out var ghList);
+                                                    @if (!ghLoaded)
                                                     {
-                                                        <div class="sb-dev-empty">Fetching development info…</div>
+                                                        <div class="sb-dev-empty">Searching…</div>
                                                     }
-                                                    else if (ds == null || !ds.HasData)
+                                                    else if (ghList == null)
                                                     {
-                                                        <div class="sb-dev-empty">No development activity found.</div>
+                                                        <div class="sb-dev-empty" style="color:var(--danger)">GitHub search failed — check token or rate limit.</div>
+                                                    }
+                                                    else if (ghList.Count == 0)
+                                                    {
+                                                        <div class="sb-dev-empty">No PRs found mentioning @bug.Key in the configured repos.</div>
                                                     }
                                                     else
                                                     {
-                                                        <!-- Summary badges -->
-                                                        <div class="sb-dev-summary-row">
-                                                            @if (ds.BranchCount > 0)
-                                                            {
-                                                                <span class="sb-dev-badge sb-dev-badge-branch">
-                                                                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.75 2.5a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0zm.75 3.25c-.69 0-1.375.192-1.97.548L8.5 5.25v5.5l2.03-.048A3.75 3.75 0 1 0 12.5 5.75zM4.25 2.5a1.75 1.75 0 1 1 3.5 0 1.75 1.75 0 0 1-3.5 0zM6 5.5v5L4.75 10l-.5.75H3.5A3.5 3.5 0 0 1 3.5 4h.75L4.75 5 6 5.5z"/></svg>
-                                                                    @ds.BranchCount branch@(ds.BranchCount != 1 ? "es" : "")
-                                                                </span>
-                                                            }
-                                                            @if (ds.CommitCount > 0)
-                                                            {
-                                                                <span class="sb-dev-badge sb-dev-badge-commit">
-                                                                    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><path d="M11.93 8.5a4.002 4.002 0 0 1-7.86 0H.75a.75.75 0 0 1 0-1.5h3.32a4.002 4.002 0 0 1 7.86 0h3.32a.75.75 0 0 1 0 1.5H11.93zM8 10.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z"/></svg>
-                                                                    @ds.CommitCount commit@(ds.CommitCount != 1 ? "s" : "")
-                                                                </span>
-                                                            }
-                                                            @if (ds.BuildCount > 0)
-                                                            {
-                                                                var buildOk = ds.BuildFailCount == 0;
-                                                                <span class="sb-dev-badge @(buildOk ? "sb-dev-badge-build-ok" : "sb-dev-badge-build-fail")">
-                                                                    @(buildOk ? "✓" : "✗") @ds.BuildCount build@(ds.BuildCount != 1 ? "s" : "")
-                                                                    @if (ds.BuildFailCount > 0) { <span>(@ds.BuildFailCount failed)</span> }
-                                                                </span>
-                                                            }
-                                                        </div>
-
-                                                        <!-- PR table -->
-                                                        @if (ds.PullRequests.Count > 0)
-                                                        {
-                                                            <table class="sb-wl-table sb-dev-table">
-                                                                <thead>
+                                                        <table class="sb-wl-table sb-dev-table">
+                                                            <thead>
+                                                                <tr>
+                                                                    <th>Status</th>
+                                                                    <th>PR Title</th>
+                                                                    <th>Repo</th>
+                                                                    <th>Last Updated</th>
+                                                                    <th>Link</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                @foreach (var ghPr in ghList)
+                                                                {
+                                                                    var ghPrCls = ghPr.Status switch {
+                                                                        "MERGED"   => "sb-dev-pr-merged",
+                                                                        "DECLINED" => "sb-dev-pr-declined",
+                                                                        _          => "sb-dev-pr-open"
+                                                                    };
                                                                     <tr>
-                                                                        <th>Status</th>
-                                                                        <th>PR Title</th>
-                                                                        <th>Branch</th>
-                                                                        <th>Last Updated</th>
-                                                                        <th>Link</th>
+                                                                        <td><span class="sb-dev-pr-status @ghPrCls">@ghPr.Status</span></td>
+                                                                        <td class="sb-wl-comment">@ghPr.Title</td>
+                                                                        <td style="font-family:monospace;font-size:11px;color:var(--txt-3)">@ghPr.SourceBranch</td>
+                                                                        <td>@(ghPr.LastUpdated?.ToString("dd MMM, HH:mm") ?? "—")</td>
+                                                                        <td>
+                                                                            <a class="sb-dev-pr-link" href="@ghPr.Url" target="_blank" rel="noopener noreferrer">↗ Open PR</a>
+                                                                        </td>
                                                                     </tr>
-                                                                </thead>
-                                                                <tbody>
-                                                                    @foreach (var pr in ds.PullRequests)
-                                                                    {
-                                                                        var prCls = pr.Status switch {
-                                                                            "MERGED"   => "sb-dev-pr-merged",
-                                                                            "DECLINED" => "sb-dev-pr-declined",
-                                                                            _          => "sb-dev-pr-open"
-                                                                        };
-                                                                        <tr>
-                                                                            <td><span class="sb-dev-pr-status @prCls">@pr.Status</span></td>
-                                                                            <td class="sb-wl-comment">@pr.Title</td>
-                                                                            <td style="font-family:monospace;font-size:11px;color:var(--txt-3)">@(string.IsNullOrEmpty(pr.SourceBranch) ? "—" : pr.SourceBranch)</td>
-                                                                            <td>@(pr.LastUpdated?.ToString("dd MMM, HH:mm") ?? "—")</td>
-                                                                            <td>
-                                                                                @if (!string.IsNullOrEmpty(pr.Url))
-                                                                                {
-                                                                                    <a class="sb-dev-pr-link" href="@pr.Url" target="_blank" rel="noopener noreferrer">↗ Open PR</a>
-                                                                                }
-                                                                                else { <span class="sb-never">—</span> }
-                                                                            </td>
-                                                                        </tr>
-                                                                    }
-                                                                </tbody>
-                                                            </table>
-                                                        }
+                                                                }
+                                                            </tbody>
+                                                        </table>
                                                     }
                                                 }
                                             </div>
@@ -1060,7 +1036,13 @@
         <!-- ═══════════════════ DASHBOARD CONTROL TAB ═══════════════════ -->
         @if (_activeTab == "dashboard")
         {
-            var dbActiveBugs    = DashActiveBugs;
+            var dbRaw           = DashActiveBugs;
+            var dbActiveBugs    = _dashSortCol switch {
+                "key"    => _dashSortAsc ? dbRaw.OrderBy(b => b.Key).ToList()                    : dbRaw.OrderByDescending(b => b.Key).ToList(),
+                "status" => _dashSortAsc ? dbRaw.OrderBy(b => b.Status).ToList()                 : dbRaw.OrderByDescending(b => b.Status).ToList(),
+                "sprint" => _dashSortAsc ? dbRaw.OrderBy(b => GetSprintTimeSeconds(b)).ToList()  : dbRaw.OrderByDescending(b => GetSprintTimeSeconds(b)).ToList(),
+                _        => dbRaw
+            };
             var dbUntouched     = DashUntouchedBugs;
             var dbSprintDays    = DashSprintDays;
             var dbToday         = DateOnly.FromDateTime(DateTime.Today);
@@ -1127,7 +1109,7 @@
                         <table class="sb-swimlane-table">
                             <thead>
                                 <tr>
-                                    <th class="sb-sw-info sb-sw-sticky-l" style="background:var(--surface-2)">Bug</th>
+                                    <th class="sb-sw-info sb-sw-sticky-l sortable @SIDash("key")" style="background:var(--surface-2);cursor:pointer" @onclick='() => SortDash("key")'>Bug</th>
                                     @foreach (var hday in dbSprintDays)
                                     {
                                         var hd = hday;
@@ -1144,8 +1126,8 @@
                                             </div>
                                         </th>
                                     }
-                                    <th class="sb-sw-end-th sb-sw-end-status" style="background:var(--surface-2)">Status</th>
-                                    <th class="sb-sw-end-th" style="background:var(--surface-2);text-align:right;padding-right:12px">Sprint ⏱</th>
+                                    <th class="sb-sw-end-th sb-sw-end-status sortable @SIDash("status")" style="background:var(--surface-2);cursor:pointer" @onclick='() => SortDash("status")'>Status</th>
+                                    <th class="sb-sw-end-th sortable @SIDash("sprint")" style="background:var(--surface-2);text-align:right;padding-right:12px;cursor:pointer" @onclick='() => SortDash("sprint")'>Sprint ⏱</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -1434,8 +1416,8 @@
     private string             _jssupportKeysInput = "";
     private bool               _jssupportLoading  = false;
     private HashSet<string>                        _expandedKeys  = new();
-    private Dictionary<string, IssueDevStatus?>    _devStatuses   = new();
-    private HashSet<string>                        _devLoading    = new();
+    private Dictionary<string, List<DevPullRequest>?> _ghPrs     = new();
+    private HashSet<string>                        _ghPrLoading   = new();
     private HashSet<string>    _selectedAssignees = new();
     private HashSet<string>    _selectedStatuses  = new();
     private string             _healthFilter      = "all";
@@ -1718,6 +1700,10 @@
 
     // ── Dashboard Control ─────────────────────────────────────────────────────
     private DateOnly? _dashSelectedDay;
+    private string    _dashSortCol = "";
+    private bool      _dashSortAsc = true;
+    private void SortDash(string col) { if (_dashSortCol == col) _dashSortAsc = !_dashSortAsc; else { _dashSortCol = col; _dashSortAsc = true; } }
+    private string SIDash(string col) => _dashSortCol == col ? (_dashSortAsc ? "sort-asc" : "sort-desc") : "";
 
     private void ToggleDashDay(DateOnly day) =>
         _dashSelectedDay = (_dashSelectedDay.HasValue && _dashSelectedDay.Value == day) ? null : day;
@@ -2055,29 +2041,17 @@
         if (!_expandedKeys.Remove(key))
         {
             _expandedKeys.Add(key);
-            var bug = _bugs.FirstOrDefault(b => b.Key == key);
-            if (bug != null && !string.IsNullOrEmpty(bug.JiraId) && !_devStatuses.ContainsKey(key))
-                _ = LoadDevStatusAsync(key, bug.JiraId);
+            if (!_ghPrs.ContainsKey(key))
+                _ = LoadGitHubPRsAsync(key);
         }
     }
 
-    private async Task LoadDevStatusAsync(string key, string jiraId)
+    private async Task LoadGitHubPRsAsync(string key)
     {
-        _devLoading.Add(key);
-        StateHasChanged();
-        try
-        {
-            _devStatuses[key] = await JiraService.GetDevStatusAsync(jiraId);
-        }
-        catch
-        {
-            _devStatuses[key] = null;
-        }
-        finally
-        {
-            _devLoading.Remove(key);
-            StateHasChanged();
-        }
+        _ghPrLoading.Add(key); StateHasChanged();
+        try   { _ghPrs[key] = await GitHubService.GetPullRequestsAsync(key); }
+        catch { _ghPrs[key] = null; }
+        finally { _ghPrLoading.Remove(key); StateHasChanged(); }
     }
 
     // ── Formatting ─────────────────────────────────────────────────────────────
