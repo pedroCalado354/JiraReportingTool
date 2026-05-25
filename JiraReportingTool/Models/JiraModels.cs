@@ -68,7 +68,7 @@ public class SprintReport
 
     [NotMapped] public int TotalTimeSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
     [NotMapped] public int TotalOriginalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
-    [NotMapped] public int TotalRemainingEstimateSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
+    [NotMapped] public int TotalRemainingEstimateSeconds => Issues.Sum(i => i.ComputedRemainingSeconds);
 
     [NotMapped] public int TotalSprintDays => (StartDate.HasValue && EndDate.HasValue)
         ? Math.Max(1, CountWeekdays(StartDate.Value.Date, EndDate.Value.Date))
@@ -136,8 +136,8 @@ public class SprintReport
             return true;
         if (issue.StatusCategoryKey == "indeterminate" && issue.DaysSinceLastWorklog >= 2)
             return true;
-        if (DaysRemaining > 0 && issue.RemainingEstimateSeconds > 0 &&
-            issue.RemainingEstimateSeconds > DaysRemaining * 6 * 3600)
+        if (DaysRemaining > 0 && issue.ComputedRemainingSeconds > 0 &&
+            issue.ComputedRemainingSeconds > DaysRemaining * 6 * 3600)
             return true;
         return false;
     }
@@ -167,6 +167,7 @@ public class SprintIssue
     public int TimeSpentSeconds { get; set; }
     public string RemainingEstimate { get; set; } = "-";
     public int RemainingEstimateSeconds { get; set; }
+    [NotMapped] public int ComputedRemainingSeconds => OriginalEstimateSeconds == 0 ? 0 : OriginalEstimateSeconds - TimeSpentSeconds;
     public string EpicKey { get; set; } = "";
     public string EpicName { get; set; } = "No Epic";
     public string SprintName { get; set; } = "";
@@ -176,12 +177,35 @@ public class SprintIssue
     public DateTime? ResolutionDate { get; set; }
     public DateTime? DueDate        { get; set; }
 
-    [NotMapped] public bool IsExpanded      { get; set; }
-    [NotMapped] public int  QaRejectedCount { get; set; }
+    [NotMapped] public bool   IsExpanded      { get; set; }
+    [NotMapped] public int    QaRejectedCount { get; set; }
+    [NotMapped] public string JiraId          { get; set; } = "";
 
     [NotMapped] public int DaysSinceLastWorklog => Worklogs.Any()
         ? Math.Max(0, (int)(DateTime.Today - Worklogs.Max(w => w.Started).Date).TotalDays)
         : 999;
+}
+
+// ── Development Status ────────────────────────────────────────────────────────
+
+public class DevPullRequest
+{
+    public string Title        { get; set; } = "";
+    public string Url          { get; set; } = "";
+    public string Status       { get; set; } = ""; // OPEN, MERGED, DECLINED
+    public string SourceBranch { get; set; } = "";
+    public DateTime? LastUpdated { get; set; }
+}
+
+public class IssueDevStatus
+{
+    public int BranchCount       { get; set; }
+    public int CommitCount       { get; set; }
+    public int BuildCount        { get; set; }
+    public int BuildSuccessCount { get; set; }
+    public int BuildFailCount    { get; set; }
+    public List<DevPullRequest> PullRequests { get; set; } = new();
+    public bool HasData => BranchCount > 0 || CommitCount > 0 || PullRequests.Count > 0 || BuildCount > 0;
 }
 
 // ── Jira Saved Filter ─────────────────────────────────────────────────────────
@@ -211,7 +235,7 @@ public class EpicSummary
 
     [NotMapped] public int TotalEstimateSeconds => Issues.Sum(i => i.OriginalEstimateSeconds);
     [NotMapped] public int TotalSpentSeconds => Issues.Sum(i => i.TimeSpentSeconds);
-    [NotMapped] public int TotalRemainingSeconds => Issues.Sum(i => i.RemainingEstimateSeconds);
+    [NotMapped] public int TotalRemainingSeconds => Issues.Sum(i => i.ComputedRemainingSeconds);
 
     [NotMapped] public double CompletionPct => TotalIssues == 0 ? 0
         : (double)DoneCount / TotalIssues * 100;

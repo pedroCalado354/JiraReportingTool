@@ -260,6 +260,9 @@
                 <button class="view-toggle-btn @(ViewMode == "daily" ? "active" : "")" @onclick="SetDailyView">
                     Daily
                 </button>
+                <button class="view-toggle-btn @(ViewMode == "bugs" ? "active" : "")" @onclick="SetBugsView">
+                    🐛 Support Bugs
+                </button>
             </div>
         </div>
     </div>
@@ -536,7 +539,7 @@
                                                             <span class="rpt-status-chip @GetStatusClass(row.Status)">@(string.IsNullOrEmpty(row.Status) ? "—" : row.Status)</span>
                                                         </td>
                                                         <td class="rpt-td rpt-td-est">@FormatEstimate(row.OriginalEstimate, row.OriginalEstimateSeconds)</td>
-                                                        <td class="rpt-td rpt-td-est">@FormatEstimate(row.RemainingEstimate, row.RemainingEstimateSeconds)</td>
+                                                        <td class="rpt-td rpt-td-est">@FormatEstimate(row.RemainingEstimate, row.ComputedRemainingSeconds)</td>
                                                         <td class="rpt-td rpt-td-est">@FormatEstimate(row.TimeSpent, row.TimeSpentSeconds)</td>
                                                         <td class="rpt-td rpt-td-pct">
                                                             <span class="risk-badge @GetCompletionBadgeClass(row)">@GetCompletionPct(row)</span>
@@ -774,6 +777,140 @@
                                 </tbody>
                             </table>
                         </div>
+                    }
+                </div>
+            }
+            else if (ViewMode == "bugs")
+            {
+                <!-- ═ SUPPORT BUGS VIEW ══════════════════════════════════════════ -->
+                <div class="bugs-container">
+                    @if (_isRefreshingReport)
+                    {
+                        <div class="rpt-loading">Fetching latest data from Jira…</div>
+                    }
+                    @{
+                        var bugWeeks   = GetWeekRanges();
+                        var bugMembers = GetMembersWithSupportBugActivity();
+                        var hasBugData = _customTasks.Values.Any(ct => ct.Category == "Support Bug")
+                                      || LoadedSupportBugEpics.Count > 0;
+                    }
+                    @if (!hasBugData)
+                    {
+                        <div class="bugs-no-data">
+                            <p>No Support Bug data yet.</p>
+                            <p>Assign <strong>Support Bug</strong> custom tasks in the calendar, and/or load a Bug Epic in the config bar above.</p>
+                        </div>
+                    }
+                    else if (bugWeeks.Count == 0)
+                    {
+                        <div class="bugs-no-data">Apply a sprint date range first.</div>
+                    }
+                    else
+                    {
+                        <table class="bugs-table">
+                            <thead>
+                                <tr>
+                                    <th class="bugs-th bugs-th-member">Member</th>
+                                    @foreach (var wk in bugWeeks)
+                                    {
+                                        <th class="bugs-th bugs-th-week">
+                                            @wk.Label
+                                            <span class="bugs-th-sub">@wk.Start.ToString("dd-MMM") – @wk.End.ToString("dd-MMM")</span>
+                                            <span class="bugs-th-sub">Planned / Logged</span>
+                                        </th>
+                                    }
+                                    <th class="bugs-th bugs-th-week bugs-th-total">
+                                        Sprint Total
+                                        <span class="bugs-th-sub">Planned / Logged</span>
+                                    </th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (bugMembers.Count == 0)
+                                {
+                                    <tr>
+                                        <td colspan="@(bugWeeks.Count + 2)" class="bugs-no-data">No members have Support Bug allocations or logged hours yet.</td>
+                                    </tr>
+                                }
+                                else
+                                {
+                                    @foreach (var grp in bugMembers.GroupBy(m => m.Team))
+                                    {
+                                        <tr class="bugs-team-row">
+                                            <td colspan="@(bugWeeks.Count + 2)" class="bugs-team-cell">@grp.Key</td>
+                                        </tr>
+                                        @foreach (var mem in grp)
+                                        {
+                                            var bMem        = mem;
+                                            var totalPlanned = GetSupportBugPlannedHoursInRange(bMem.Id, SprintStart, SprintEnd);
+                                            var totalLogged  = GetSupportBugLoggedSecondsInRange(bMem.Name, SprintStart, SprintEnd);
+                                            <tr class="bugs-tr">
+                                                <td class="bugs-td bugs-td-member">
+                                                    @bMem.Name
+                                                </td>
+                                                @foreach (var wk in bugWeeks)
+                                                {
+                                                    var wkPlanned = GetSupportBugPlannedHoursInRange(bMem.Id, wk.Start, wk.End);
+                                                    var wkLogged  = GetSupportBugLoggedSecondsInRange(bMem.Name, wk.Start, wk.End);
+                                                    var wkLoggedH = wkLogged / 3600m;
+                                                    var wkBadge   = BugPctBadgeClass(wkPlanned, wkLoggedH);
+                                                    var wkPctStr  = BugPctLabel(wkPlanned, wkLoggedH);
+                                                    <td class="bugs-td bugs-td-cell">
+                                                        <div class="bugs-cell">
+                                                            <span class="bugs-planned">@($"{wkPlanned:0.#}h")</span>
+                                                            <span class="bugs-logged">@($"{wkLoggedH:0.#}h logged")</span>
+                                                            <span class="bugs-pct @wkBadge">@wkPctStr</span>
+                                                        </div>
+                                                    </td>
+                                                }
+                                                @{
+                                                    var totLoggedH = totalLogged / 3600m;
+                                                    var totBadge   = BugPctBadgeClass(totalPlanned, totLoggedH);
+                                                    var totPctStr  = BugPctLabel(totalPlanned, totLoggedH);
+                                                }
+                                                <td class="bugs-td bugs-td-cell bugs-td-total">
+                                                    <div class="bugs-cell">
+                                                        <span class="bugs-planned">@($"{totalPlanned:0.#}h")</span>
+                                                        <span class="bugs-logged">@($"{totLoggedH:0.#}h logged")</span>
+                                                        <span class="bugs-pct @totBadge">@totPctStr</span>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                }
+                            </tbody>
+                            <tfoot>
+                                <tr class="bugs-total-row">
+                                    <td class="bugs-td bugs-td-member">TOTAL</td>
+                                    @foreach (var wk in bugWeeks)
+                                    {
+                                        var wkTotalPlanned = bugMembers.Sum(m => GetSupportBugPlannedHoursInRange(m.Id, wk.Start, wk.End));
+                                        var wkTotalLoggedSec = bugMembers.Sum(m => GetSupportBugLoggedSecondsInRange(m.Name, wk.Start, wk.End));
+                                        var wkTotalLoggedH   = wkTotalLoggedSec / 3600m;
+                                        <td class="bugs-td bugs-td-cell">
+                                            <div class="bugs-cell">
+                                                <span class="bugs-planned">@($"{wkTotalPlanned:0.#}h")</span>
+                                                <span class="bugs-logged">@($"{wkTotalLoggedH:0.#}h logged")</span>
+                                                <span class="bugs-pct @BugPctBadgeClass(wkTotalPlanned, wkTotalLoggedH)">@BugPctLabel(wkTotalPlanned, wkTotalLoggedH)</span>
+                                            </div>
+                                        </td>
+                                    }
+                                    @{
+                                        var grandPlanned    = bugMembers.Sum(m => GetSupportBugPlannedHoursInRange(m.Id, SprintStart, SprintEnd));
+                                        var grandLoggedSec  = bugMembers.Sum(m => GetSupportBugLoggedSecondsInRange(m.Name, SprintStart, SprintEnd));
+                                        var grandLoggedH    = grandLoggedSec / 3600m;
+                                    }
+                                    <td class="bugs-td bugs-td-cell bugs-td-total">
+                                        <div class="bugs-cell">
+                                            <span class="bugs-planned">@($"{grandPlanned:0.#}h")</span>
+                                            <span class="bugs-logged">@($"{grandLoggedH:0.#}h logged")</span>
+                                            <span class="bugs-pct @BugPctBadgeClass(grandPlanned, grandLoggedH)">@BugPctLabel(grandPlanned, grandLoggedH)</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tfoot>
+                        </table>
                     }
                 </div>
             }
@@ -1217,7 +1354,7 @@
     private int InProgressCount    => GetScheduledIssues().Count(t => t.StatusCategoryKey == "indeterminate");
     private int BlockedStatCount   => GetScheduledIssues().Count(t => string.Equals(t.Status, "On Hold", StringComparison.OrdinalIgnoreCase));
     private int MissingEstCount    => GetScheduledIssues().Count(t =>
-        t.StatusCategoryKey != "done" && t.OriginalEstimateSeconds > 0 && t.RemainingEstimateSeconds == 0);
+        t.StatusCategoryKey != "done" && t.OriginalEstimateSeconds > 0 && t.ComputedRemainingSeconds == 0);
 
     private decimal SupportBugAllocatedHours =>
         _customTasks.Values
@@ -1253,8 +1390,8 @@
             var remainingSec = (long)RemainingWorkingDays * 6 * 3600;
             return GetScheduledIssues()
                 .Count(t => t.StatusCategoryKey != "done"
-                          && t.RemainingEstimateSeconds > 0
-                          && t.RemainingEstimateSeconds > remainingSec);
+                          && t.ComputedRemainingSeconds > 0
+                          && t.ComputedRemainingSeconds > remainingSec);
         }
     }
 
@@ -1270,7 +1407,7 @@
         if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "100%";
         if (row.OriginalEstimateSeconds > 0)
             return $"{(double)row.TimeSpentSeconds / row.OriginalEstimateSeconds * 100:0}%";
-        var total = row.TimeSpentSeconds + row.RemainingEstimateSeconds;
+        var total = row.TimeSpentSeconds + row.ComputedRemainingSeconds;
         if (total == 0) return "—";
         var pct = (double)row.TimeSpentSeconds / total * 100;
         return $"{Math.Min(pct, 99):0}%";
@@ -1295,7 +1432,7 @@
             completionPct = (double)row.TimeSpentSeconds / row.OriginalEstimateSeconds * 100;
         else
         {
-            var total = row.TimeSpentSeconds + row.RemainingEstimateSeconds;
+            var total = row.TimeSpentSeconds + row.ComputedRemainingSeconds;
             if (total == 0) return "risk-amber";
             completionPct = (double)row.TimeSpentSeconds / total * 100;
         }
@@ -1310,8 +1447,8 @@
     {
         if (row.IsCustom) return "—";
         if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "✓ Done";
-        if (row.RemainingEstimateSeconds == 0) return "No Estimate";
-        return row.RemainingEstimateSeconds <= (long)RemainingWorkingDays * 6 * 3600
+        if (row.ComputedRemainingSeconds == 0) return "No Estimate";
+        return row.ComputedRemainingSeconds <= (long)RemainingWorkingDays * 6 * 3600
             ? "✓ Feasible" : "✗ Not Feasible";
     }
 
@@ -1319,8 +1456,8 @@
     {
         if (row.IsCustom) return "feas-na";
         if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "feas-done";
-        if (row.RemainingEstimateSeconds == 0) return "feas-unknown";
-        return row.RemainingEstimateSeconds <= (long)RemainingWorkingDays * 6 * 3600
+        if (row.ComputedRemainingSeconds == 0) return "feas-unknown";
+        return row.ComputedRemainingSeconds <= (long)RemainingWorkingDays * 6 * 3600
             ? "feas-ok" : "feas-fail";
     }
 
@@ -1354,10 +1491,12 @@
 
     private static string FmtSec(int seconds)
     {
-        if (seconds <= 0) return "0h";
-        var h = seconds / 3600;
-        var m = (seconds % 3600) / 60;
-        return h > 0 && m > 0 ? $"{h}h {m}m" : h > 0 ? $"{h}h" : $"{m}m";
+        if (seconds == 0) return "0h";
+        var abs = Math.Abs(seconds);
+        var h = abs / 3600;
+        var m = (abs % 3600) / 60;
+        var s = h > 0 && m > 0 ? $"{h}h {m}m" : h > 0 ? $"{h}h" : $"{m}m";
+        return seconds < 0 ? $"-{s}" : s;
     }
 
     // ───────────────────────────────────────────────────────────
@@ -2255,6 +2394,7 @@
     private void SetCalendarView()            { ViewMode = "calendar"; }
     private async Task SetReportView()        { ViewMode = "report"; await RefreshReportDataAsync(); }
     private async Task SetDailyView()         { ViewMode = "daily";  await RefreshReportDataAsync(); }
+    private async Task SetBugsView()          { ViewMode = "bugs";   await RefreshReportDataAsync(); }
 
     // ── Report / Daily shared data ──
     // Keyed by Jira issue key (e.g. "JM-14506") — populated on Report/Daily view switch.
@@ -2398,7 +2538,7 @@
         public string OriginalEstimate        { get; init; } = "";
         public int    OriginalEstimateSeconds { get; init; }
         public string RemainingEstimate       { get; init; } = "";
-        public int    RemainingEstimateSeconds { get; init; }
+        public int    ComputedRemainingSeconds { get; init; }
         public string    TimeSpent               { get; init; } = "";
         public int       TimeSpentSeconds        { get; init; }
         public DateTime? LastActivityDate        { get; init; }
@@ -2486,7 +2626,7 @@
                     OriginalEstimate = issue.OriginalEstimate,
                     OriginalEstimateSeconds = issue.OriginalEstimateSeconds,
                     RemainingEstimate = issue.RemainingEstimate,
-                    RemainingEstimateSeconds = issue.RemainingEstimateSeconds,
+                    ComputedRemainingSeconds = issue.ComputedRemainingSeconds,
                     TimeSpent = issue.TimeSpent,
                     TimeSpentSeconds = issue.TimeSpentSeconds,
                     LastActivityDate = issue.Worklogs.Count > 0
@@ -2643,7 +2783,7 @@
 
         var jiraWithEst = jiraTasks.Where(t => t.OriginalEstimateSeconds > 0).ToList();
         long totalOrigSec = jiraWithEst.Sum(t => (long)t.OriginalEstimateSeconds);
-        long totalRemSec  = jiraWithEst.Sum(t => (long)t.RemainingEstimateSeconds);
+        long totalRemSec  = jiraWithEst.Sum(t => (long)t.ComputedRemainingSeconds);
         double hoursPct   = totalOrigSec == 0 ? 0
             : Math.Clamp((double)(totalOrigSec - totalRemSec) / totalOrigSec * 100, 0, 100);
 
@@ -2654,13 +2794,13 @@
         var activeTasks = jiraTasks.Where(t => t.StatusCategoryKey != "done").ToList();
 
         var noRemainingTasks = activeTasks
-            .Where(t => t.RemainingEstimateSeconds == 0 && t.OriginalEstimateSeconds > 0)
+            .Where(t => t.ComputedRemainingSeconds == 0 && t.OriginalEstimateSeconds > 0)
             .OrderBy(t => t.Assignee).ThenBy(t => t.Key)
             .ToList();
 
         var untouchedTasks = activeTasks
             .Where(t => t.OriginalEstimateSeconds > 0 &&
-                        t.RemainingEstimateSeconds == t.OriginalEstimateSeconds)
+                        t.ComputedRemainingSeconds == t.OriginalEstimateSeconds)
             .OrderBy(t => t.Assignee).ThenBy(t => t.Key)
             .ToList();
 
@@ -3482,7 +3622,7 @@ private static decimal ParseJiraDurationToHours(string? input)
                         rpt.Cell(rptRow, 3).Value = row.Title;
                         rpt.Cell(rptRow, 4).Value = row.Status;
                         rpt.Cell(rptRow, 5).Value = FormatEstimate(row.OriginalEstimate, row.OriginalEstimateSeconds);
-                        rpt.Cell(rptRow, 6).Value = FormatEstimate(row.RemainingEstimate, row.RemainingEstimateSeconds);
+                        rpt.Cell(rptRow, 6).Value = FormatEstimate(row.RemainingEstimate, row.ComputedRemainingSeconds);
                         rpt.Cell(rptRow, 7).Value = FormatEstimate(row.TimeSpent, row.TimeSpentSeconds);
                         rpt.Cell(rptRow, 8).Value = GetCompletionPct(row);
                         rpt.Cell(rptRow, 9).Value = GetFeasibilityLabel(row);
@@ -3523,6 +3663,102 @@ private static decimal ParseJiraDurationToHours(string? input)
             ErrorMessage = $"Export failed: {ex.Message}";
         }
     }
+    // ───────────────────────────────────────────────────────────
+    // Support Bugs View helpers
+    // ───────────────────────────────────────────────────────────
+    private record WeekRange(string Label, DateOnly Start, DateOnly End);
+
+    private List<WeekRange> GetWeekRanges()
+    {
+        if (SprintStart == default || SprintEnd < SprintStart) return [];
+        var weeks = new List<WeekRange>();
+        var weekStart = SprintStart;
+        while (weekStart.DayOfWeek != DayOfWeek.Monday)
+            weekStart = weekStart.AddDays(-1);
+        int weekNum = 1;
+        while (weekStart <= SprintEnd)
+        {
+            var weekEnd        = weekStart.AddDays(6);
+            var effectiveStart = weekStart < SprintStart ? SprintStart : weekStart;
+            var effectiveEnd   = weekEnd   > SprintEnd   ? SprintEnd   : weekEnd;
+            weeks.Add(new WeekRange($"Week {weekNum}", effectiveStart, effectiveEnd));
+            weekNum++;
+            weekStart = weekStart.AddDays(7);
+        }
+        return weeks;
+    }
+
+    private decimal GetSupportBugPlannedHoursInRange(Guid memberId, DateOnly from, DateOnly to)
+    {
+        var supportBugTaskIds = _customTasks.Values
+            .Where(ct => ct.Category == "Support Bug")
+            .Select(ct => ct.Id)
+            .ToHashSet();
+        return Allocations
+            .Where(a => a.TeamMemberId == memberId
+                     && supportBugTaskIds.Contains(a.TaskId)
+                     && a.Date >= from && a.Date <= to)
+            .Sum(a => a.HoursAllocated);
+    }
+
+    private int GetSupportBugLoggedSecondsInRange(string memberName, DateOnly from, DateOnly to)
+    {
+        if (_supportBugIssues.Count == 0 || string.IsNullOrEmpty(memberName)) return 0;
+        var fromDt = from.ToDateTime(TimeOnly.MinValue);
+        var toDt   = to.ToDateTime(TimeOnly.MaxValue);
+        return _supportBugIssues.Values
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= fromDt && w.Started <= toDt
+                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+            .Sum(w => w.TimeSpentSeconds);
+    }
+
+    private IReadOnlyList<TeamMemberDto> GetMembersWithSupportBugActivity()
+    {
+        var supportBugTaskIds = _customTasks.Values
+            .Where(ct => ct.Category == "Support Bug")
+            .Select(ct => ct.Id)
+            .ToHashSet();
+
+        var membersWithPlan = Allocations
+            .Where(a => supportBugTaskIds.Contains(a.TaskId)
+                     && a.Date >= SprintStart && a.Date <= SprintEnd)
+            .Select(a => a.TeamMemberId)
+            .ToHashSet();
+
+        var sprintStartDt = SprintStart.ToDateTime(TimeOnly.MinValue);
+        var sprintEndDt   = SprintEnd.ToDateTime(TimeOnly.MaxValue);
+        var authorsWithLog = _supportBugIssues.Values
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= sprintStartDt && w.Started <= sprintEndDt)
+            .Select(w => w.Author)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return TeamMembers
+            .Where(m => membersWithPlan.Contains(m.Id)
+                     || authorsWithLog.Any(a => a.Contains(m.Name, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+    }
+
+    private static string BugPctBadgeClass(decimal planned, decimal loggedHours)
+    {
+        if (planned <= 0m && loggedHours <= 0m) return "bugs-pct-gray";
+        if (planned <= 0m) return "bugs-pct-gray";
+        var pct = loggedHours / planned * 100m;
+        if (pct > 100m)  return "bugs-pct-red";
+        if (pct >= 80m)  return "bugs-pct-green";
+        if (pct >= 40m)  return "bugs-pct-amber";
+        return "bugs-pct-red";
+    }
+
+    private static string BugPctLabel(decimal planned, decimal loggedHours)
+    {
+        if (planned <= 0m && loggedHours <= 0m) return "—";
+        if (planned <= 0m) return "unplanned";
+        var pct = loggedHours / planned * 100m;
+        return $"{pct:0}%";
+    }
+
     private static string GetStatusType(string? issueType)
     {
         return issueType?.ToLowerInvariant() switch
@@ -4978,6 +5214,142 @@ private static decimal ParseJiraDurationToHours(string? input)
         color: #6b7280;
         font-size: 12px;
         flex: 1;
+    }
+
+    /* ─── Support Bugs View ─── */
+    .bugs-container {
+        overflow-x: auto;
+    }
+
+    .bugs-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .bugs-th {
+        background: #1e3a8a;
+        color: #fff;
+        padding: 10px 14px;
+        text-align: center;
+        font-weight: 600;
+        white-space: nowrap;
+        border: 1px solid #1e40af;
+    }
+
+    .bugs-th-member {
+        text-align: left;
+        min-width: 150px;
+    }
+
+    .bugs-th-week {
+        min-width: 130px;
+    }
+
+    .bugs-th-total {
+        background: #1e3a8a;
+        border-left: 2px solid #60a5fa;
+    }
+
+    .bugs-th-sub {
+        display: block;
+        font-size: 10px;
+        font-weight: 400;
+        color: #bfdbfe;
+        margin-top: 2px;
+    }
+
+    .bugs-team-row td {
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-weight: 700;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        padding: 5px 14px;
+        border: 1px solid #e5e7eb;
+    }
+
+    .bugs-tr:nth-child(even) { background: #f8fafc; }
+    .bugs-tr:hover           { background: #eff6ff; }
+
+    .bugs-td {
+        padding: 8px 12px;
+        border: 1px solid #e5e7eb;
+        vertical-align: middle;
+    }
+
+    .bugs-td-member {
+        font-weight: 600;
+        color: #1f2937;
+    }
+
+    .bugs-td-cell {
+        text-align: center;
+    }
+
+    .bugs-td-total {
+        border-left: 2px solid #93c5fd;
+        background: #f0f7ff;
+    }
+
+    .bugs-cell {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+    }
+
+    .bugs-planned {
+        font-weight: 700;
+        color: #1d4ed8;
+        font-size: 13px;
+    }
+
+    .bugs-logged {
+        color: #374151;
+        font-size: 12px;
+    }
+
+    .bugs-pct {
+        font-size: 11px;
+        padding: 1px 8px;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+
+    .bugs-pct-green  { background: #d1fae5; color: #065f46; }
+    .bugs-pct-amber  { background: #fef3c7; color: #92400e; }
+    .bugs-pct-red    { background: #fee2e2; color: #991b1b; }
+    .bugs-pct-gray   { background: #f3f4f6; color: #9ca3af; }
+
+    .bugs-total-row td {
+        background: #1e3a8a !important;
+        border-color: #1e40af;
+        font-weight: 700;
+    }
+
+    .bugs-total-row .bugs-td-member {
+        color: #fff;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    .bugs-total-row .bugs-planned { color: #93c5fd; }
+    .bugs-total-row .bugs-logged  { color: #bfdbfe; }
+
+    .bugs-total-row .bugs-pct-green { background: #065f46; color: #d1fae5; }
+    .bugs-total-row .bugs-pct-amber { background: #92400e; color: #fef3c7; }
+    .bugs-total-row .bugs-pct-red   { background: #991b1b; color: #fee2e2; }
+    .bugs-total-row .bugs-pct-gray  { background: #374151; color: #9ca3af; }
+
+    .bugs-no-data {
+        padding: 40px;
+        text-align: center;
+        color: #9ca3af;
+        font-style: italic;
+        line-height: 1.8;
     }
 
 </style>

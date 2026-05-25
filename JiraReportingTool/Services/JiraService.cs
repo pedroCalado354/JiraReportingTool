@@ -309,7 +309,8 @@ public class JiraService : IJiraService
             var fields = item.GetProperty("fields");
             var issue = new SprintIssue
             {
-                Key = item.GetProperty("key").GetString() ?? "",
+                Key    = item.GetProperty("key").GetString() ?? "",
+                JiraId = item.TryGetProperty("id", out var jiraIdEl) ? jiraIdEl.GetString() ?? "" : "",
                 Summary = fields.GetProperty("summary").GetString() ?? "",
                 IssueType = fields.TryGetProperty("issuetype", out var it) && it.ValueKind != JsonValueKind.Null
                     ? it.GetProperty("name").GetString() ?? ""
@@ -629,6 +630,69 @@ public class JiraService : IJiraService
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, _) = ParseSprintReport(json, "");
         return report;
+    }
+
+    public async Task<IssueDevStatus> GetDevStatusAsync(string jiraId)
+    {
+        var result = new IssueDevStatus();
+
+        // Summary: branch/commit/build counts (no applicationType required)
+        var summaryResp = await _httpClient.GetAsync(
+            $"{_baseUrl}/rest/dev-status/latest/issue/summary?issueId={Uri.EscapeDataString(jiraId)}");
+        if (summaryResp.IsSuccessStatusCode)
+        {
+            var summaryJson = await summaryResp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(summaryJson);
+            if (doc.RootElement.TryGetProperty("summary", out var summary))
+            {
+                if (summary.TryGetProperty("branch", out var br) && br.TryGetProperty("count", out var brc))
+                    result.BranchCount = brc.GetInt32();
+                if (summary.TryGetProperty("commit", out var cm) && cm.TryGetProperty("count", out var cmc))
+                    result.CommitCount = cmc.GetInt32();
+                if (summary.TryGetProperty("build", out var build))
+                {
+                    if (build.TryGetProperty("count",        out var bc)) result.BuildCount        = bc.GetInt32();
+                    if (build.TryGetProperty("successCount", out var sc)) result.BuildSuccessCount = sc.GetInt32();
+                    if (build.TryGetProperty("failCount",    out var fc)) result.BuildFailCount    = fc.GetInt32();
+                }
+            }
+        }
+
+        // PR detail: title, URL, status, branch (applicationType configurable; defaults to GitHub)
+        var appType = _config["Jira:DevStatusAppType"] ?? "GitHub";
+        var prResp = await _httpClient.GetAsync(
+            $"{_baseUrl}/rest/dev-status/1.0/issue/detail?issueId={Uri.EscapeDataString(jiraId)}&applicationType={Uri.EscapeDataString(appType)}&dataType=pullrequest");
+        if (prResp.IsSuccessStatusCode)
+        {
+            var prJson = await prResp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(prJson);
+            if (doc.RootElement.TryGetProperty("detail", out var detail))
+            {
+                foreach (var provider in detail.EnumerateArray())
+                {
+                    if (!provider.TryGetProperty("pullRequests", out var prs)) continue;
+                    foreach (var pr in prs.EnumerateArray())
+                    {
+                        var devPr = new DevPullRequest
+                        {
+                            Title  = pr.TryGetProperty("title",  out var t) ? t.GetString() ?? "" : "",
+                            Url    = pr.TryGetProperty("url",    out var u) ? u.GetString() ?? "" : "",
+                            Status = pr.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "",
+                        };
+                        if (pr.TryGetProperty("source", out var src) &&
+                            src.TryGetProperty("branch", out var srcBranch) &&
+                            srcBranch.TryGetProperty("name", out var branchName))
+                            devPr.SourceBranch = branchName.GetString() ?? "";
+                        if (pr.TryGetProperty("lastUpdate", out var lu) &&
+                            DateTime.TryParse(lu.GetString(), out var luDt))
+                            devPr.LastUpdated = luDt;
+                        result.PullRequests.Add(devPr);
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     // Jira API v3 returns comments in Atlassian Document Format (ADF)

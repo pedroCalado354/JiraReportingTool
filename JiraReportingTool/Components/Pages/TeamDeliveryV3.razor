@@ -75,7 +75,7 @@
                 disabled="@(IsLoading || (string.IsNullOrEmpty(SprintId) && string.IsNullOrEmpty(SelectedFilterId)))">
             @if (IsLoading) { <span class="v2-spin"></span> }
             else { <i class="bi bi-lightning-charge-fill"></i> }
-            <span>Load delivery</span>
+            <span>@(IsLoading ? (_epicLoadTotal > 0 ? $"Epics {_epicLoadProgress}/{_epicLoadTotal}" : "Loading…") : "Load delivery")</span>
         </button>
 
         <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--v2-ink-2);cursor:pointer"
@@ -90,6 +90,16 @@
             <span class="v2-hint" style="margin-left:auto">@Report.TotalIssues issues · @Report.Issues.Select(i => i.Assignee).Distinct().Count() contributors</span>
         }
     </div>
+
+    @if (IsLoading && _epicLoadTotal > 0)
+    {
+        <div class="v2-epic-load-bar">
+            <div class="v2-epic-load-track">
+                <div class="v2-epic-load-fill" style="width:@(_epicLoadProgress * 100 / _epicLoadTotal)%"></div>
+            </div>
+            <span class="v2-hint" style="white-space:nowrap">Fetching epic details @_epicLoadProgress / @_epicLoadTotal</span>
+        </div>
+    }
 
     @if (ErrorMessage != null)
     {
@@ -211,6 +221,18 @@
                          style="width:@Math.Min((int)CompletionPct,100)%"></div>
                 </div>
                 <div class="v2-kpi-sub">@DoneCount of @ActiveIssues.Count done · @InProgressCount active · @ToDoCount pending</div>
+                <div class="v2-kpi-sub" style="margin-top:4px">@($"{DoneHours:F0}h") logged on done · @($"{DoneAndInReviewHours:F0}h") proj. incl. in review</div>
+            </div>
+
+            <!-- Task Completion (non-bug) -->
+            <div class="v2-kpi @(NonBugCompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-check2-all"></i>Task Completion</div>
+                <div class="v2-kpi-value">@((int)NonBugCompletionPct)%</div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(NonBugCompletionBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@Math.Min((int)NonBugCompletionPct,100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@NonBugDoneCount of @NonBugIssues.Count done · @NonBugInProgressCount active · excl. bugs</div>
             </div>
 
             <!-- Story Points -->
@@ -859,7 +881,7 @@
                                                 <td><span class="v2-chip v2-chip-@i.IssueType.ToLower()">@i.IssueType</span></td>
                                                 <td><span class="v2-pill" style="font-size:10px;padding:1px 6px;background:@sc.bg;color:@sc.border;border:1px solid @sc.border">@i.Status</span></td>
                                                 <td class="v2-truncate" style="max-width:140px">@i.Assignee</td>
-                                                <td class="v2-table-num">@(i.RemainingEstimateSeconds > 0 ? FmtH(i.RemainingEstimateSeconds) : (i.StatusCategoryKey is "done" or "indeterminate" ? "0h" : "—"))</td>
+                                                <td class="v2-table-num">@(i.OriginalEstimateSeconds == 0 ? "—" : FmtH(i.ComputedRemainingSeconds))</td>
                                                 <td class="v2-table-num">@(pct.HasValue ? $"{pct.Value}%" : "—")</td>
                                                 <td class="v2-hint">@(lastLog.HasValue ? lastLog.Value.ToString("MMM d") : "—")</td>
                                             </tr>
@@ -1095,10 +1117,10 @@
                     }
                     @foreach (var grp in memberTasks
                         .GroupBy(i => string.IsNullOrEmpty(i.EpicKey) ? "—" : i.EpicKey)
-                        .OrderByDescending(g => g.Sum(i => i.RemainingEstimateSeconds)))
+                        .OrderByDescending(g => g.Sum(i => i.ComputedRemainingSeconds)))
                     {
                         var epicName = grp.First().EpicName;
-                        var grpRem   = grp.Where(i => i.StatusCategoryKey != "done").Sum(i => i.RemainingEstimateSeconds);
+                        var grpRem   = grp.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds);
                         var grpLog   = grp.Sum(i => i.TimeSpentSeconds);
                         <div style="margin-top:14px">
                             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;padding:6px 10px;background:var(--v2-surface-2);border-radius:6px">
@@ -1137,7 +1159,7 @@
                                                     @if (IsBlocked(i)) { <span class="v2-pill v2-pill-danger" style="font-size:10px;padding:1px 6px;margin-left:4px">blocked</span> }
                                                 </td>
                                                 <td class="v2-table-num">@FmtH(i.OriginalEstimateSeconds)</td>
-                                                <td class="v2-table-num">@FmtH(i.RemainingEstimateSeconds)</td>
+                                                <td class="v2-table-num">@FmtH(i.ComputedRemainingSeconds)</td>
                                                 <td class="v2-table-num">@FmtH(i.TimeSpentSeconds)</td>
                                                 <td class="v2-table-num">
                                                     <div style="display:flex;align-items:center;gap:6px;justify-content:flex-end">
@@ -1380,7 +1402,7 @@
                                             <td class="v2-hint">@(issue.Created.HasValue ? issue.Created.Value.ToString("dd MMM HH:mm") : "—")</td>
                                             <td class="v2-table-num">@FmtH(issue.OriginalEstimateSeconds)</td>
                                             <td class="v2-table-num">@FmtH(issue.TimeSpentSeconds)</td>
-                                            <td class="v2-table-num">@FmtH(issue.RemainingEstimateSeconds)</td>
+                                            <td class="v2-table-num">@FmtH(issue.ComputedRemainingSeconds)</td>
                                         </tr>
                                     }
                                 </tbody>
@@ -1468,7 +1490,7 @@
                                         <td><span class="v2-chip v2-chip-@(i.IssueType.ToLower())">@i.IssueType</span></td>
                                         <td>@i.Assignee</td>
                                         <td><span class="v2-pill v2-pill-@(i.StatusCategoryKey == "indeterminate" ? "brand" : "neutral")">@i.Status</span></td>
-                                        <td class="v2-table-num">@FmtH(i.RemainingEstimateSeconds)</td>
+                                        <td class="v2-table-num">@FmtH(i.ComputedRemainingSeconds)</td>
                                         <td><span class="v2-hint">@RiskReason(i)</span></td>
                                     </tr>
                                 }
@@ -1522,7 +1544,7 @@
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        @foreach (var i in grp.OrderByDescending(i => i.RemainingEstimateSeconds))
+                                        @foreach (var i in grp.OrderByDescending(i => i.ComputedRemainingSeconds))
                                         {
                                             var lastLog = i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : (DateTime?)null;
                                             <tr>
@@ -1531,7 +1553,7 @@
                                                 <td><span class="v2-chip v2-chip-@i.IssueType.ToLower()">@i.IssueType</span></td>
                                                 <td>@i.Assignee</td>
                                                 <td><span class="v2-pill v2-pill-danger" style="font-size:10px;padding:1px 6px">@i.Status</span></td>
-                                                <td class="v2-table-num">@FmtH(i.RemainingEstimateSeconds)</td>
+                                                <td class="v2-table-num">@FmtH(i.ComputedRemainingSeconds)</td>
                                                 <td class="v2-hint">@(lastLog.HasValue ? lastLog.Value.ToString("MMM d") : "—")</td>
                                             </tr>
                                         }
@@ -1822,7 +1844,7 @@
                                     }
                                 </td>
                                 <td class="v2-table-num @(row.Signal == "needs" || row.Signal == "low" ? "v2-text-danger" : "")">
-                                    @(row.TotalRem > 0 ? FmtH(row.TotalRem) : "—")
+                                    @FmtH(row.TotalRem)
                                 </td>
                                 <td style="white-space:nowrap">
                                     @if (row.DaysIdle == 999)   { <span class="v2-hint">—</span> }
@@ -1877,7 +1899,7 @@
                                                                 <td>
                                                                     <span class="v2-pill v2-pill-@(ai.StatusCategoryKey == "done" ? "success" : ai.StatusCategoryKey == "indeterminate" ? "brand" : "neutral")" style="font-size:10px;padding:1px 6px">@ai.Status</span>
                                                                 </td>
-                                                                <td class="v2-table-num">@FmtH(ai.RemainingEstimateSeconds)</td>
+                                                                <td class="v2-table-num">@FmtH(ai.ComputedRemainingSeconds)</td>
                                                                 <td style="min-width:100px">
                                                                     <div style="display:flex;align-items:center;gap:6px">
                                                                         <div class="v2-bar" style="flex:1;height:6px">
@@ -2062,7 +2084,7 @@
                                 </td>
                                 <td class="v2-table-num">@(i.OriginalEstimateSeconds > 0 ? FmtH(i.OriginalEstimateSeconds) : "—")</td>
                                 <td class="v2-table-num">@(i.TimeSpentSeconds > 0 ? FmtH(i.TimeSpentSeconds) : "—")</td>
-                                <td class="v2-table-num">@(i.RemainingEstimateSeconds > 0 ? FmtH(i.RemainingEstimateSeconds) : i.StatusCategoryKey is "done" or "indeterminate" ? "0h" : "—")</td>
+                                <td class="v2-table-num">@(i.OriginalEstimateSeconds == 0 ? "—" : FmtH(i.ComputedRemainingSeconds))</td>
                                 <td style="min-width:120px">
                                     <div style="display:flex;align-items:center;gap:6px">
                                         <div class="v2-bar" style="flex:1;height:5px">
@@ -2097,6 +2119,8 @@
     private string SelectedFilterId = "";
     private string OverrideDaysLeftInput = "";
     private bool   IsLoading;
+    private int    _epicLoadProgress;
+    private int    _epicLoadTotal;
     private bool   FiltersLoading = true;
     private string? ErrorMessage;
     private SprintReport? Report;
@@ -2120,11 +2144,29 @@
         : DoneCount * 100.0 / ActiveIssues.Count;
     private bool   CompletionBehind => Report != null && Report.SprintProgressPct - CompletionPct > 12;
 
+    // ── Non-bug task completion ──────────────────────────────────────────────
+    private List<SprintIssue> NonBugIssues => ActiveIssues
+        .Where(i => !string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase))
+        .ToList();
+    private int    NonBugDoneCount       => NonBugIssues.Count(i => i.StatusCategoryKey == "done");
+    private int    NonBugInProgressCount => NonBugIssues.Count(i => i.StatusCategoryKey == "indeterminate");
+    private double NonBugCompletionPct   => NonBugIssues.Count == 0 ? 0
+        : NonBugDoneCount * 100.0 / NonBugIssues.Count;
+    private bool   NonBugCompletionBehind => Report != null && Report.SprintProgressPct - NonBugCompletionPct > 12;
+
+    private double DoneHours => ActiveIssues
+        .Where(i => i.StatusCategoryKey == "done")
+        .Sum(i => i.TimeSpentSeconds) / 3600.0;
+    private double DoneAndInReviewHours => ActiveIssues
+        .Where(i => i.StatusCategoryKey == "done" ||
+                    string.Equals(i.Status, "In Review", StringComparison.OrdinalIgnoreCase))
+        .Sum(i => i.TimeSpentSeconds) / 3600.0;
+
     // ── Hours ────────────────────────────────────────────────────────────────
     private double TotalLoggedHours => ActiveIssues.Sum(i => i.TimeSpentSeconds) / 3600.0;
     private double TotalRemainingHours => ActiveIssues
         .Where(i => i.StatusCategoryKey != "done")
-        .Sum(i => i.RemainingEstimateSeconds) / 3600.0;
+        .Sum(i => i.ComputedRemainingSeconds) / 3600.0;
 
     private int EffectiveDaysRemaining =>
         int.TryParse(OverrideDaysLeftInput, out var d) ? d : Report?.DaysRemaining ?? 0;
@@ -2243,7 +2285,7 @@
                  && !string.IsNullOrWhiteSpace(i.Assignee)
                  && i.Assignee != "Unassigned")
         .GroupBy(i => i.Assignee)
-        .Select(g => (g.Key, g.Sum(x => x.RemainingEstimateSeconds) / 3600.0))
+        .Select(g => (g.Key, g.Sum(x => x.ComputedRemainingSeconds) / 3600.0))
         .Where(x => x.Item2 > 0)
         .ToList();
 
@@ -2372,7 +2414,7 @@
                     ToDo:           g.Count(i => i.StatusCategoryKey == "new"),
                     CompletionPct:  g.Count() == 0 ? 0 : g.Count(i => i.StatusCategoryKey == "done") * 100.0 / g.Count(),
                     HoursLogged:    g.Sum(i => i.TimeSpentSeconds) / 3600.0,
-                    RemainingHours: g.Where(i => i.StatusCategoryKey != "done").Sum(i => i.RemainingEstimateSeconds) / 3600.0,
+                    RemainingHours: g.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0,
                     HoursLogged7d:  g.SelectMany(i => i.Worklogs)
                         .Where(w => w.Started.Date >= sevenDaysAgo)
                         .Sum(w => w.TimeSpentSeconds) / 3600.0
@@ -2396,8 +2438,11 @@
             InProgress:     g.Count(i => i.StatusCategoryKey == "indeterminate"),
             ToDo:           g.Count(i => i.StatusCategoryKey == "new"),
             EstimateHours:  g.Sum(i => i.OriginalEstimateSeconds) / 3600.0,
-            LoggedHours:    g.Sum(i => i.TimeSpentSeconds) / 3600.0,
-            RemainingHours: g.Where(i => i.StatusCategoryKey != "done").Sum(i => i.RemainingEstimateSeconds) / 3600.0,
+            LoggedHours:    g.SelectMany(i => i.Worklogs)
+                             .Where(w => Report?.StartDate == null || w.Started.Date >= Report.StartDate.Value.Date)
+                             .Where(w => Report?.EndDate   == null || w.Started.Date <= Report.EndDate.Value.Date)
+                             .Sum(w => (long)w.TimeSpentSeconds) / 3600.0,
+            RemainingHours: g.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0,
             Issues:         g.ToList()
         ))
         .ToList();
@@ -2424,10 +2469,15 @@
             .Distinct()
             .ToList();
 
+        _epicLoadTotal    = epicKeys.Count;
+        _epicLoadProgress = 0;
+
         foreach (var k in epicKeys)
         {
-            if (_fullEpicStats.ContainsKey(k)) continue;
+            if (_fullEpicStats.ContainsKey(k)) { _epicLoadProgress++; continue; }
             await LoadFullEpicAsync(k);
+            _epicLoadProgress++;
+            // StateHasChanged already called inside LoadFullEpicAsync
         }
     }
 
@@ -2448,7 +2498,7 @@
                 Done:           issues.Count(i => i.StatusCategoryKey == "done"),
                 EstimateHours:  issues.Sum(i => i.OriginalEstimateSeconds) / 3600.0,
                 LoggedHours:    issues.Sum(i => i.TimeSpentSeconds) / 3600.0,
-                RemainingHours: issues.Where(i => i.StatusCategoryKey != "done").Sum(i => i.RemainingEstimateSeconds) / 3600.0);
+                RemainingHours: issues.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0);
         }
         catch (Exception ex)
         {
@@ -2470,25 +2520,47 @@
 
     private List<EpicMemberRow> EpicMembers(EpicRow ep)
     {
-        var capacity = CapacityPerMemberHours;
+        var capacity    = CapacityPerMemberHours;
+        var sprintStart = Report?.StartDate?.Date;
+        var sprintEnd   = Report?.EndDate?.Date;
+
         // Each member's total remaining work across ALL their open tasks in this sprint
         var totalRemainingByMember = ActiveIssues
             .Where(i => !string.IsNullOrWhiteSpace(i.Assignee) && i.Assignee != "Unassigned"
                      && i.StatusCategoryKey != "done")
             .GroupBy(i => i.Assignee)
-            .ToDictionary(g => g.Key, g => g.Sum(i => i.RemainingEstimateSeconds) / 3600.0);
+            .ToDictionary(g => g.Key, g => g.Sum(i => i.ComputedRemainingSeconds) / 3600.0);
 
-        return ep.Issues
+        // Logged hours by worklog *author* (matches Jira's worklog report attribution)
+        var loggedByAuthor = ep.Issues
+            .SelectMany(i => i.Worklogs)
+            .Where(w => sprintStart == null || w.Started.Date >= sprintStart)
+            .Where(w => sprintEnd   == null || w.Started.Date <= sprintEnd)
+            .GroupBy(w => w.Author, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Sum(w => (long)w.TimeSpentSeconds) / 3600.0,
+                          StringComparer.OrdinalIgnoreCase);
+
+        // Task/remaining data is still by assignee
+        var byAssignee = ep.Issues
             .Where(i => !string.IsNullOrWhiteSpace(i.Assignee) && i.Assignee != "Unassigned")
-            .GroupBy(i => i.Assignee)
-            .Select(g => new EpicMemberRow(
-                Name:           g.Key,
-                Tasks:          g.Count(),
-                Done:           g.Count(i => i.StatusCategoryKey == "done"),
-                Logged:         g.Sum(i => i.TimeSpentSeconds) / 3600.0,
-                EpicRemaining:  g.Where(i => i.StatusCategoryKey != "done").Sum(i => i.RemainingEstimateSeconds) / 3600.0,
-                TotalRemaining: totalRemainingByMember.TryGetValue(g.Key, out var tr) ? tr : 0,
-                Capacity:       capacity))
+            .GroupBy(i => i.Assignee, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+
+        return byAssignee.Keys
+            .Union(loggedByAuthor.Keys, StringComparer.OrdinalIgnoreCase)
+            .Select(name =>
+            {
+                var tasks = byAssignee.TryGetValue(name, out var tl) ? tl : new List<SprintIssue>();
+                return new EpicMemberRow(
+                    Name:           name,
+                    Tasks:          tasks.Count,
+                    Done:           tasks.Count(i => i.StatusCategoryKey == "done"),
+                    Logged:         loggedByAuthor.TryGetValue(name, out var lh) ? lh : 0,
+                    EpicRemaining:  tasks.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0,
+                    TotalRemaining: totalRemainingByMember.TryGetValue(name, out var tr) ? tr : 0,
+                    Capacity:       capacity);
+            })
+            .Where(r => r.Tasks > 0 || r.Logged > 0)
             .OrderByDescending(r => r.EpicRemaining)
             .ThenByDescending(r => r.Tasks)
             .ToList();
@@ -2584,7 +2656,7 @@
                      && !string.IsNullOrWhiteSpace(i.Assignee)
                      && i.Assignee != "Unassigned")
             .GroupBy(i => i.Assignee, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Sum(x => x.RemainingEstimateSeconds) / 3600.0,
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.ComputedRemainingSeconds) / 3600.0,
                           StringComparer.OrdinalIgnoreCase);
 
         // Union of both sets
@@ -2668,7 +2740,7 @@
                     var todo        = tasks.Count(i => i.StatusCategoryKey == "new");
                     var compl       = tasks.Count == 0 ? 0 : done * 100.0 / tasks.Count;
                     var logged      = tasks.Sum(i => i.TimeSpentSeconds) / 3600.0;
-                    var remaining   = tasks.Where(i => i.StatusCategoryKey != "done").Sum(i => i.RemainingEstimateSeconds) / 3600.0;
+                    var remaining   = tasks.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0;
                     var logged7d    = tasks.SelectMany(i => i.Worklogs).Where(w => w.Started.Date >= sevenDaysAgo).Sum(w => w.TimeSpentSeconds) / 3600.0;
                     var blocked     = tasks.Count(IsBlocked);
                     var idleActive  = tasks.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 1);
@@ -2732,7 +2804,7 @@
     {
         if (i.StatusCategoryKey == "done") return 100;
         var spent = i.TimeSpentSeconds;
-        var rem   = i.RemainingEstimateSeconds;
+        var rem   = i.ComputedRemainingSeconds;
         var orig  = i.OriginalEstimateSeconds;
 
         // No estimate of any kind → can't compute progress
@@ -2751,7 +2823,7 @@
         if (i.StatusCategoryKey == "done") return ("Done", "success", "Completed");
         var days = EffectiveDaysRemaining;
         if (days <= 0) return ("Overdue", "danger", "Sprint already ended — task not done");
-        var remH = i.RemainingEstimateSeconds / 3600.0;
+        var remH = i.ComputedRemainingSeconds / 3600.0;
         if (remH == 0 && i.OriginalEstimateSeconds == 0) return ("?", "warn", "No estimate");
         var capacity = days * 6.0;
         if (remH > capacity) return ("No", "danger", $"{remH:F0}h needed > {capacity:F0}h capacity");
@@ -2936,6 +3008,8 @@
         IsLoading = true; ErrorMessage = null; Report = null;
         _fullEpicStats.Clear();
         _loadingFullEpics.Clear();
+        _epicLoadProgress = 0;
+        _epicLoadTotal    = 0;
         try
         {
             // Cached sprint path is only safe when no extra filter is applied —
@@ -2960,14 +3034,15 @@
             }
         }
         catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
-        finally { IsLoading = false; }
 
-        // Kick off full-epic fetches in the background — UI shows "Loading…" placeholders
-        // and re-renders each card as its data arrives.
+        // Fetch full-epic details sequentially; IsLoading stays true so the button
+        // and progress bar remain visible until everything is ready.
         if (Report != null)
         {
-            _ = LoadAllFullEpicsAsync();
+            try { await LoadAllFullEpicsAsync(); }
+            catch { /* individual failures handled inside LoadFullEpicAsync */ }
         }
+        IsLoading = false;
     }
 
     private async Task HandleKeyUp(KeyboardEventArgs e)
@@ -3028,13 +3103,13 @@
         "Summary" => _ascMT ? src.OrderBy(i => i.Summary)                   : src.OrderByDescending(i => i.Summary),
         "Status"  => _ascMT ? src.OrderBy(i => i.Status)                    : src.OrderByDescending(i => i.Status),
         "Orig"    => _ascMT ? src.OrderBy(i => i.OriginalEstimateSeconds)   : src.OrderByDescending(i => i.OriginalEstimateSeconds),
-        "Rem"     => _ascMT ? src.OrderBy(i => i.RemainingEstimateSeconds)  : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "Rem"     => _ascMT ? src.OrderBy(i => i.ComputedRemainingSeconds)  : src.OrderByDescending(i => i.ComputedRemainingSeconds),
         "Logged"  => _ascMT ? src.OrderBy(i => i.TimeSpentSeconds)          : src.OrderByDescending(i => i.TimeSpentSeconds),
         "Pct"     => _ascMT ? src.OrderBy(i => IssuePercentDone(i) ?? -1)   : src.OrderByDescending(i => IssuePercentDone(i) ?? -1),
         "Last"    => _ascMT ? src.OrderBy(i => i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : DateTime.MinValue)
                             : src.OrderByDescending(i => i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : DateTime.MinValue),
         _         => src.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 })
-                        .ThenByDescending(i => i.RemainingEstimateSeconds),
+                        .ThenByDescending(i => i.ComputedRemainingSeconds),
     };
 
     private IEnumerable<SprintIssue> ApplySortET(IEnumerable<SprintIssue> src) => _sortET switch
@@ -3043,12 +3118,12 @@
         "Type"     => _ascET ? src.OrderBy(i => i.IssueType)                 : src.OrderByDescending(i => i.IssueType),
         "Status"   => _ascET ? src.OrderBy(i => i.Status)                    : src.OrderByDescending(i => i.Status),
         "Assignee" => _ascET ? src.OrderBy(i => i.Assignee)                  : src.OrderByDescending(i => i.Assignee),
-        "Rem"      => _ascET ? src.OrderBy(i => i.RemainingEstimateSeconds)  : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "Rem"      => _ascET ? src.OrderBy(i => i.ComputedRemainingSeconds)  : src.OrderByDescending(i => i.ComputedRemainingSeconds),
         "Pct"      => _ascET ? src.OrderBy(i => IssuePercentDone(i) ?? -1)   : src.OrderByDescending(i => IssuePercentDone(i) ?? -1),
         "Last"     => _ascET ? src.OrderBy(i => i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : DateTime.MinValue)
                              : src.OrderByDescending(i => i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : DateTime.MinValue),
         _          => src.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 })
-                         .ThenByDescending(i => i.RemainingEstimateSeconds),
+                         .ThenByDescending(i => i.ComputedRemainingSeconds),
     };
 
     private IEnumerable<SprintIssue> ApplySortRI(IEnumerable<SprintIssue> src) => _sortRI switch
@@ -3058,8 +3133,8 @@
         "Type"     => _ascRI ? src.OrderBy(i => i.IssueType)                 : src.OrderByDescending(i => i.IssueType),
         "Assignee" => _ascRI ? src.OrderBy(i => i.Assignee)                  : src.OrderByDescending(i => i.Assignee),
         "Status"   => _ascRI ? src.OrderBy(i => i.Status)                    : src.OrderByDescending(i => i.Status),
-        "Rem"      => _ascRI ? src.OrderBy(i => i.RemainingEstimateSeconds)  : src.OrderByDescending(i => i.RemainingEstimateSeconds),
-        _          => src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "Rem"      => _ascRI ? src.OrderBy(i => i.ComputedRemainingSeconds)  : src.OrderByDescending(i => i.ComputedRemainingSeconds),
+        _          => src.OrderByDescending(i => i.ComputedRemainingSeconds),
     };
 
     private IEnumerable<WorklogRow> ApplySortAC(IEnumerable<WorklogRow> src) => _sortAC switch
@@ -3094,7 +3169,7 @@
         "Created"  => _ascSC ? src.OrderBy(i => i.Created ?? DateTime.MinValue) : src.OrderByDescending(i => i.Created ?? DateTime.MinValue),
         "Est"      => _ascSC ? src.OrderBy(i => i.OriginalEstimateSeconds)   : src.OrderByDescending(i => i.OriginalEstimateSeconds),
         "Log"      => _ascSC ? src.OrderBy(i => i.TimeSpentSeconds)          : src.OrderByDescending(i => i.TimeSpentSeconds),
-        "Rem"      => _ascSC ? src.OrderBy(i => i.RemainingEstimateSeconds)  : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "Rem"      => _ascSC ? src.OrderBy(i => i.ComputedRemainingSeconds)  : src.OrderByDescending(i => i.ComputedRemainingSeconds),
         _          => src.OrderBy(i => i.EpicKey).ThenBy(i => i.Created),
     };
 
@@ -3146,12 +3221,12 @@
         "Epic"     => _ascTSK ? src.OrderBy(i => i.EpicKey)                    : src.OrderByDescending(i => i.EpicKey),
         "Est"      => _ascTSK ? src.OrderBy(i => i.OriginalEstimateSeconds)    : src.OrderByDescending(i => i.OriginalEstimateSeconds),
         "Log"      => _ascTSK ? src.OrderBy(i => i.TimeSpentSeconds)           : src.OrderByDescending(i => i.TimeSpentSeconds),
-        "Rem"      => _ascTSK ? src.OrderBy(i => i.RemainingEstimateSeconds)   : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "Rem"      => _ascTSK ? src.OrderBy(i => i.ComputedRemainingSeconds)   : src.OrderByDescending(i => i.ComputedRemainingSeconds),
         "Pct"      => _ascTSK ? src.OrderBy(i => IssuePercentDone(i) ?? -1)    : src.OrderByDescending(i => IssuePercentDone(i) ?? -1),
         "Last"     => _ascTSK ? src.OrderBy(i => i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : DateTime.MinValue)
                               : src.OrderByDescending(i => i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : DateTime.MinValue),
         _          => src.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 })
-                         .ThenByDescending(i => i.RemainingEstimateSeconds),
+                         .ThenByDescending(i => i.ComputedRemainingSeconds),
     };
 
     private static int TskPriorityOrder(string p) => p switch
@@ -3166,9 +3241,11 @@
 
     private static string FmtH(int seconds)
     {
-        if (seconds <= 0) return "—";
-        var h = seconds / 3600; var m = (seconds % 3600) / 60;
-        return m == 0 ? $"{h}h" : $"{h}h {m}m";
+        if (seconds == 0) return "—";
+        var abs = Math.Abs(seconds);
+        var h = abs / 3600; var m = (abs % 3600) / 60;
+        var s = m == 0 ? $"{h}h" : $"{h}h {m}m";
+        return seconds < 0 ? $"-{s}" : s;
     }
 
     private static string Initials(string name)
@@ -3184,7 +3261,7 @@
     {
         if (i.StatusCategoryKey == "new") return "Not started past 50% mark";
         if (i.DaysSinceLastWorklog >= 2 && i.StatusCategoryKey == "indeterminate") return $"No worklog in {i.DaysSinceLastWorklog}d";
-        if (i.RemainingEstimateSeconds > 0) return "Remaining > capacity";
+        if (i.ComputedRemainingSeconds > 0) return "Remaining > capacity";
         return "Flagged";
     }
 
@@ -3429,14 +3506,14 @@
         var allActive = ActiveIssues
             .Where(i => i.Assignee.Equals(person, StringComparison.OrdinalIgnoreCase)
                      && i.StatusCategoryKey == "indeterminate")
-            .OrderBy(i => i.RemainingEstimateSeconds)
+            .OrderBy(i => i.ComputedRemainingSeconds)
             .ToList();
         var effective   = allActive.Where(i => !(i.Status?.Contains("Hold", StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
         var hasBug      = effective.Any(i => i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase));
         var nonBugRem   = effective.Where(i => !i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase))
-                                   .Sum(i => i.RemainingEstimateSeconds);
+                                   .Sum(i => i.ComputedRemainingSeconds);
         var nonBugCount = effective.Count(i => !i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase));
-        var totalRem    = effective.Sum(i => i.RemainingEstimateSeconds);
+        var totalRem    = effective.Sum(i => i.ComputedRemainingSeconds);
         var lastLog     = ActiveIssues
             .Where(i => i.Assignee.Equals(person, StringComparison.OrdinalIgnoreCase))
             .SelectMany(i => i.Worklogs)
@@ -3471,7 +3548,7 @@
                      && !(i.Status?.Contains("Hold", StringComparison.OrdinalIgnoreCase) ?? false))
             .ToList();
         if (effective.Any(i => i.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase))) return false;
-        var rem = effective.Sum(i => i.RemainingEstimateSeconds);
+        var rem = effective.Sum(i => i.ComputedRemainingSeconds);
         return rem > 0 && rem < 6 * 3600;
     });
 

@@ -28,7 +28,7 @@ public sealed record EpicDeliveryMetrics(
 
 /// <summary>
 /// Effort (hours) tracking for the epic.
-/// <see cref="IsApproxRemaining"/> is always false — RemainingEstimateSeconds comes directly from Jira.
+/// <see cref="IsApproxRemaining"/> is always false — ComputedRemainingSeconds comes directly from Jira.
 /// </summary>
 public sealed record EpicEffortMetrics(
     long TotalEstimateSec,
@@ -187,7 +187,7 @@ public static class EpicProgressCalculator
     {
         var totalEst  = issues.Sum(i => (long)i.OriginalEstimateSeconds);
         var spent     = issues.Sum(i => (long)i.TimeSpentSeconds);
-        var remaining = issues.Sum(i => (long)i.RemainingEstimateSeconds);
+        var remaining = issues.Sum(i => (long)i.ComputedRemainingSeconds);
         var pct       = SafePct(spent, totalEst);
         return new(totalEst, spent, remaining, pct, IsApproxRemaining: false);
     }
@@ -313,7 +313,7 @@ public static class EpicProgressCalculator
                     TotalRemainingEstimateSec:  list
                         .Where(i => Cat(i.StatusCategoryKey) != "done" &&
                                     !string.Equals(i.Status, "Rejected", StringComparison.OrdinalIgnoreCase))
-                        .Sum(i => (long)i.RemainingEstimateSeconds)
+                        .Sum(i => (long)i.ComputedRemainingSeconds)
                 );
             })
             .OrderByDescending(r => r.Total)
@@ -333,7 +333,7 @@ public static class EpicProgressCalculator
         var todo       = Math.Max(0, total - done - inProgress);
         var est        = si.Sum(i => (long)i.OriginalEstimateSeconds);
         var spent      = si.Sum(i => (long)i.TimeSpentSeconds);
-        var remaining  = si.Sum(i => (long)i.RemainingEstimateSeconds);
+        var remaining  = si.Sum(i => (long)i.ComputedRemainingSeconds);
 
         return new(
             SprintId:             sprint.JiraSprintId ?? 0,
@@ -375,10 +375,12 @@ public static class EpicProgressCalculator
 
     public static string FormatSeconds(long sec)
     {
-        if (sec <= 0) return "0h";
-        var h = sec / 3600;
-        var m = (sec % 3600) / 60;
-        return m > 0 ? $"{h}h {m}m" : $"{h}h";
+        if (sec == 0) return "0h";
+        var abs = Math.Abs(sec);
+        var h = abs / 3600;
+        var m = (abs % 3600) / 60;
+        var s = m > 0 ? $"{h}h {m}m" : $"{h}h";
+        return sec < 0 ? $"-{s}" : s;
     }
 
     public static string FormatPct(double pct) => $"{pct:F1}%";

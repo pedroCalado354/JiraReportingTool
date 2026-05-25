@@ -351,13 +351,13 @@
                     <tbody>
                         @foreach (var i in FilteredIssues
                             .OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 })
-                            .ThenByDescending(i => i.RemainingEstimateSeconds))
+                            .ThenByDescending(i => i.ComputedRemainingSeconds))
                         {
                             var pct = IssuePct(i);
                             var done = i.StatusCategoryKey == "done";
-                            var noEst = !done && i.RemainingEstimateSeconds == 0 && i.OriginalEstimateSeconds == 0;
-                            var feasible = done || i.RemainingEstimateSeconds == 0
-                                || i.RemainingEstimateSeconds <= CapacityHours * 3600;
+                            var noEst = !done && i.ComputedRemainingSeconds == 0 && i.OriginalEstimateSeconds == 0;
+                            var feasible = done || i.ComputedRemainingSeconds == 0
+                                || i.ComputedRemainingSeconds <= CapacityHours * 3600;
                             <tr class="@(done ? "is-done" : "")">
                                 <td class="v2-table-key">@i.Key</td>
                                 <td class="v2-truncate" style="max-width:280px">@i.Summary</td>
@@ -430,10 +430,10 @@
 
     private double TotalRemainingHours => FilteredIssues
         .Where(i => i.StatusCategoryKey != "done")
-        .Sum(i => i.RemainingEstimateSeconds) / 3600.0;
+        .Sum(i => i.ComputedRemainingSeconds) / 3600.0;
 
     private int NoEstimateCount => FilteredIssues
-        .Count(i => i.StatusCategoryKey != "done" && i.RemainingEstimateSeconds == 0 && i.OriginalEstimateSeconds == 0);
+        .Count(i => i.StatusCategoryKey != "done" && i.ComputedRemainingSeconds == 0 && i.OriginalEstimateSeconds == 0);
 
     private int TeamMembersCount => Math.Max(1, FilteredIssues
         .Where(i => i.Assignee != "Unassigned")
@@ -500,7 +500,7 @@
         .GroupBy(i => i.Assignee)
         .Select(g => new AssigneeMetrics(
             g.Key,
-            g.Where(i => i.StatusCategoryKey != "done").Sum(i => i.RemainingEstimateSeconds) / 3600.0,
+            g.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0,
             g.Count(i => i.StatusCategoryKey == "done"),
             g.Count(i => i.StatusCategoryKey == "indeterminate"),
             g.Count(i => i.StatusCategoryKey == "new")))

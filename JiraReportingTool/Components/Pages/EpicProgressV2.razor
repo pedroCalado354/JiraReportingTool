@@ -377,7 +377,7 @@
                                         @(row.TotalSpentSec > 0 ? EpicProgressCalculator.FormatSeconds(row.TotalSpentSec) : "—")
                                     </td>
                                     <td class="v2-table-num">
-                                        @(row.TotalRemainingEstimateSec > 0 ? EpicProgressCalculator.FormatSeconds(row.TotalRemainingEstimateSec) : "—")
+                                        @(row.TotalRemainingEstimateSec != 0 ? EpicProgressCalculator.FormatSeconds(row.TotalRemainingEstimateSec) : "—")
                                     </td>
                                 </tr>
                                 rank++;
@@ -1132,7 +1132,7 @@
         var tasks = EpicData.Issues.Where(i => !IsBugIssue(i)).ToList();
         var totalRemainingSec = tasks
             .Where(i => i.StatusCategoryKey != "done")
-            .Sum(i => (long)i.RemainingEstimateSeconds);
+            .Sum(i => (long)i.ComputedRemainingSeconds);
         if (totalRemainingSec <= 0) return (null, 0);
         var allLogs = tasks.SelectMany(i => i.Worklogs).ToList();
         if (allLogs.Count == 0) return (null, 0);
@@ -1152,7 +1152,7 @@
         var avgFixSec = Metrics.Quality.AvgBugFixTimeSec;
         var totalRemainingBugSec = avgFixSec > 0
             ? openBugs * avgFixSec
-            : bugs.Where(i => i.StatusCategoryKey != "done").Sum(i => (long)i.RemainingEstimateSeconds);
+            : bugs.Where(i => i.StatusCategoryKey != "done").Sum(i => (long)i.ComputedRemainingSeconds);
         if (totalRemainingBugSec <= 0) return (null, 0);
         var allLogs = bugs.SelectMany(i => i.Worklogs).ToList();
         if (allLogs.Count == 0) return (null, 0);
@@ -1276,10 +1276,10 @@
         "Assignee" => _ascIS ? src.OrderBy(i => i.Assignee)                  : src.OrderByDescending(i => i.Assignee),
         "Est"      => _ascIS ? src.OrderBy(i => i.OriginalEstimateSeconds)   : src.OrderByDescending(i => i.OriginalEstimateSeconds),
         "Log"      => _ascIS ? src.OrderBy(i => i.TimeSpentSeconds)          : src.OrderByDescending(i => i.TimeSpentSeconds),
-        "Rem"      => _ascIS ? src.OrderBy(i => i.RemainingEstimateSeconds)  : src.OrderByDescending(i => i.RemainingEstimateSeconds),
+        "Rem"      => _ascIS ? src.OrderBy(i => i.ComputedRemainingSeconds)  : src.OrderByDescending(i => i.ComputedRemainingSeconds),
         "Pct"      => _ascIS ? src.OrderBy(i => IssuePct(i))                 : src.OrderByDescending(i => IssuePct(i)),
         _          => src.OrderBy(i => i.StatusCategoryKey switch { "indeterminate" => 0, "new" => 1, _ => 2 })
-                         .ThenByDescending(i => i.RemainingEstimateSeconds),
+                         .ThenByDescending(i => i.ComputedRemainingSeconds),
     };
 
     // ── Quality tab derived data ──────────────────────────────────────────────

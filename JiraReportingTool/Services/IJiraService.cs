@@ -38,4 +38,9 @@ public interface IJiraService
     /// Fetches highest-priority open bugs for the Rentway Pro project that have been open for more than 7 days.
     /// </summary>
     Task<SprintReport> GetPriorityBugsAsync();
+
+    /// <summary>
+    /// Fetches development status (branches, commits, PRs with URLs, builds) for a Jira issue.
+    /// </summary>
+    Task<IssueDevStatus> GetDevStatusAsync(string jiraId);
 }
