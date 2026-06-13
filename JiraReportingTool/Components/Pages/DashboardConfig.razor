@@ -1,0 +1,271 @@
+@page "/config"
+@rendermode InteractiveServer
+@inject SprintConfigService ConfigService
+
+<PageTitle>Dashboard Config</PageTitle>
+
+<div class="cfg-root">
+
+    <div class="cfg-hero">
+        <div class="cfg-hero-icon"><i class="bi bi-sliders2"></i></div>
+        <div>
+            <h1 class="cfg-hero-title">Dashboard Config</h1>
+            <p class="cfg-hero-sub">Sprint configurations used to auto-fill the Delivery and Support Bugs pages. The row whose date range contains today is applied automatically on load.</p>
+        </div>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="cfg-alert"><i class="bi bi-exclamation-triangle-fill"></i> @_error</div>
+    }
+
+    <!-- ── Config table ──────────────────────────────────────────────────── -->
+    <div class="cfg-card">
+        <div class="cfg-card-header">
+            <span><i class="bi bi-table"></i> Sprint Configurations</span>
+            <button class="cfg-btn cfg-btn-primary" @onclick="AddRow" disabled="@(_editId == -1)">
+                <i class="bi bi-plus-lg"></i> Add Sprint
+            </button>
+        </div>
+
+        <div class="cfg-table-wrap">
+            <table class="cfg-table">
+                <thead>
+                    <tr>
+                        <th>Status</th>
+                        <th>Name</th>
+                        <th>Sprint ID</th>
+                        <th>Epic Key</th>
+                        <th>Start Date</th>
+                        <th>End Date</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @{
+                        var today = DateOnly.FromDateTime(DateTime.Today);
+                    }
+                    @foreach (var row in _configs)
+                    {
+                        var isCurrent = row.StartDate <= today && row.EndDate >= today;
+                        var isPast    = row.EndDate < today;
+
+                        @if (_editId == row.Id)
+                        {
+                            <!-- Edit row -->
+                            <tr class="cfg-tr-edit">
+                                <td><span class="cfg-badge @(isCurrent ? "cfg-badge-current" : isPast ? "cfg-badge-past" : "cfg-badge-future")">@(isCurrent ? "Current" : isPast ? "Past" : "Future")</span></td>
+                                <td><input class="cfg-input" @bind="_editRow.Name" placeholder="e.g. Pro 26.10" /></td>
+                                <td><input class="cfg-input cfg-input-sm" type="number" @bind="_editRow.SprintId" placeholder="7263" /></td>
+                                <td><input class="cfg-input cfg-input-sm" @bind="_editRow.EpicKey" placeholder="JM-17503" /></td>
+                                <td><input class="cfg-input cfg-input-sm" type="date" @bind="_editRow.StartDate" /></td>
+                                <td><input class="cfg-input cfg-input-sm" type="date" @bind="_editRow.EndDate" /></td>
+                                <td class="cfg-actions">
+                                    <button class="cfg-btn cfg-btn-primary cfg-btn-sm" @onclick="SaveEdit" disabled="@_saving">
+                                        @if (_saving) { <span class="cfg-spin"></span> } else { <i class="bi bi-check-lg"></i> }
+                                    </button>
+                                    <button class="cfg-btn cfg-btn-ghost cfg-btn-sm" @onclick="CancelEdit"><i class="bi bi-x-lg"></i></button>
+                                </td>
+                            </tr>
+                        }
+                        else
+                        {
+                            <tr class="@(isCurrent ? "cfg-tr-current" : "")">
+                                <td><span class="cfg-badge @(isCurrent ? "cfg-badge-current" : isPast ? "cfg-badge-past" : "cfg-badge-future")">@(isCurrent ? "Current" : isPast ? "Past" : "Future")</span></td>
+                                <td class="cfg-td-name">@row.Name</td>
+                                <td><code class="cfg-code">@row.SprintId</code></td>
+                                <td><code class="cfg-code">@(string.IsNullOrEmpty(row.EpicKey) ? "—" : row.EpicKey)</code></td>
+                                <td>@row.StartDate.ToString("dd MMM yyyy")</td>
+                                <td>@row.EndDate.ToString("dd MMM yyyy")</td>
+                                <td class="cfg-actions">
+                                    <button class="cfg-btn cfg-btn-ghost cfg-btn-sm" @onclick="() => StartEdit(row)" title="Edit"><i class="bi bi-pencil"></i></button>
+                                    <button class="cfg-btn cfg-btn-danger cfg-btn-sm" @onclick="() => DeleteRow(row.Id)" title="Delete"><i class="bi bi-trash3"></i></button>
+                                </td>
+                            </tr>
+                        }
+                    }
+
+                    <!-- New-row inline form -->
+                    @if (_editId == -1)
+                    {
+                        <tr class="cfg-tr-edit cfg-tr-new">
+                            <td><span class="cfg-badge cfg-badge-future">New</span></td>
+                            <td><input class="cfg-input" @bind="_editRow.Name" placeholder="e.g. Pro 26.11" /></td>
+                            <td><input class="cfg-input cfg-input-sm" type="number" @bind="_editRow.SprintId" placeholder="7300" /></td>
+                            <td><input class="cfg-input cfg-input-sm" @bind="_editRow.EpicKey" placeholder="JM-XXXXX" /></td>
+                            <td><input class="cfg-input cfg-input-sm" type="date" @bind="_editRow.StartDate" /></td>
+                            <td><input class="cfg-input cfg-input-sm" type="date" @bind="_editRow.EndDate" /></td>
+                            <td class="cfg-actions">
+                                <button class="cfg-btn cfg-btn-primary cfg-btn-sm" @onclick="SaveEdit" disabled="@_saving">
+                                    @if (_saving) { <span class="cfg-spin"></span> } else { <i class="bi bi-check-lg"></i> }
+                                </button>
+                                <button class="cfg-btn cfg-btn-ghost cfg-btn-sm" @onclick="CancelEdit"><i class="bi bi-x-lg"></i></button>
+                            </td>
+                        </tr>
+                    }
+
+                    @if (_configs.Count == 0 && _editId != -1)
+                    {
+                        <tr>
+                            <td colspan="7" class="cfg-empty">No sprint configurations yet. Click <strong>Add Sprint</strong> to create one.</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ── Help card ─────────────────────────────────────────────────────── -->
+    <div class="cfg-card cfg-help">
+        <div class="cfg-help-grid">
+            <div>
+                <div class="cfg-help-title"><i class="bi bi-speedometer2"></i> Team Delivery page</div>
+                <div class="cfg-help-text">Auto-fills <strong>Sprint ID</strong> from the current row.</div>
+            </div>
+            <div>
+                <div class="cfg-help-title"><i class="bi bi-bug-fill"></i> Support Bugs page</div>
+                <div class="cfg-help-text">Auto-fills <strong>Epic Key</strong>, <strong>Sprint Start</strong>, and <strong>Sprint End</strong> from the current row.</div>
+            </div>
+            <div>
+                <div class="cfg-help-title"><i class="bi bi-calendar-check"></i> "Current" row</div>
+                <div class="cfg-help-text">The row whose <strong>Start Date ≤ today ≤ End Date</strong> is used. If multiple rows match, the latest start date wins.</div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+@code {
+    private List<SprintConfig> _configs = [];
+    private int    _editId  = 0;   // 0 = none, -1 = new row, >0 = editing existing
+    private SprintConfig _editRow = new();
+    private bool   _saving = false;
+    private string? _error;
+
+    protected override async Task OnInitializedAsync()
+        => _configs = await ConfigService.GetAllAsync();
+
+    private void AddRow()
+    {
+        _editId  = -1;
+        _editRow = new SprintConfig { StartDate = DateOnly.FromDateTime(DateTime.Today), EndDate = DateOnly.FromDateTime(DateTime.Today.AddDays(9)) };
+        _error   = null;
+    }
+
+    private void StartEdit(SprintConfig row)
+    {
+        _editId  = row.Id;
+        _editRow = new SprintConfig
+        {
+            Id        = row.Id,
+            Name      = row.Name,
+            SprintId  = row.SprintId,
+            EpicKey   = row.EpicKey,
+            StartDate = row.StartDate,
+            EndDate   = row.EndDate,
+            CreatedAt = row.CreatedAt
+        };
+        _error = null;
+    }
+
+    private void CancelEdit()
+    {
+        _editId = 0;
+        _error  = null;
+    }
+
+    private async Task SaveEdit()
+    {
+        if (string.IsNullOrWhiteSpace(_editRow.Name) || _editRow.SprintId == 0)
+        {
+            _error = "Name and Sprint ID are required.";
+            return;
+        }
+        if (_editRow.EndDate < _editRow.StartDate)
+        {
+            _error = "End date must be on or after start date.";
+            return;
+        }
+        _saving = true; _error = null;
+        try
+        {
+            await ConfigService.SaveAsync(_editRow);
+            _configs = await ConfigService.GetAllAsync();
+            _editId  = 0;
+        }
+        catch (Exception ex) { _error = $"Save failed: {ex.Message}"; }
+        finally { _saving = false; }
+    }
+
+    private async Task DeleteRow(int id)
+    {
+        _error = null;
+        try
+        {
+            await ConfigService.DeleteAsync(id);
+            _configs = await ConfigService.GetAllAsync();
+            if (_editId == id) _editId = 0;
+        }
+        catch (Exception ex) { _error = $"Delete failed: {ex.Message}"; }
+    }
+}
+
+<style>
+    .cfg-root { max-width: 1100px; margin: 0 auto; padding: 24px 20px; display: flex; flex-direction: column; gap: 20px; }
+
+    .cfg-hero { display: flex; align-items: flex-start; gap: 16px; }
+    .cfg-hero-icon { width: 48px; height: 48px; border-radius: 12px; background: linear-gradient(135deg, #2563eb, #7c3aed); display: flex; align-items: center; justify-content: center; font-size: 22px; color: #fff; flex-shrink: 0; }
+    .cfg-hero-title { font-size: 22px; font-weight: 700; margin: 0 0 4px; color: var(--txt-1); }
+    .cfg-hero-sub { font-size: 13px; color: var(--txt-3); margin: 0; max-width: 680px; }
+
+    .cfg-alert { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; border-radius: 8px; padding: 10px 14px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+
+    .cfg-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; box-shadow: var(--sh-xs); }
+    .cfg-card-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 14px; gap: 12px; }
+
+    .cfg-table-wrap { overflow-x: auto; }
+    .cfg-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .cfg-table thead th { padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--txt-3); background: var(--surface-2); border-bottom: 1px solid var(--border); white-space: nowrap; }
+    .cfg-table tbody tr { border-bottom: 1px solid var(--border); transition: background .12s; }
+    .cfg-table tbody tr:last-child { border-bottom: none; }
+    .cfg-table tbody tr:hover:not(.cfg-tr-edit) { background: var(--surface-2); }
+    .cfg-table tbody td { padding: 10px 14px; color: var(--txt-1); vertical-align: middle; }
+
+    .cfg-tr-current { background: #eff6ff !important; }
+    .cfg-tr-edit { background: #f8faff !important; }
+    .cfg-tr-new { background: #f0fdf4 !important; }
+
+    .cfg-td-name { font-weight: 600; }
+
+    .cfg-badge { display: inline-flex; align-items: center; border-radius: 20px; padding: 2px 9px; font-size: 10px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+    .cfg-badge-current { background: #dbeafe; color: #1d4ed8; }
+    .cfg-badge-past    { background: var(--surface-2); color: var(--txt-3); }
+    .cfg-badge-future  { background: #f0fdf4; color: #166534; }
+
+    .cfg-code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; font-size: 12px; font-family: monospace; }
+
+    .cfg-input { border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; font-size: 13px; color: var(--txt-1); background: var(--surface); width: 100%; min-width: 0; outline: none; transition: border-color .15s; }
+    .cfg-input:focus { border-color: #2563eb; box-shadow: 0 0 0 2px #dbeafe; }
+    .cfg-input-sm { width: 120px; }
+
+    .cfg-actions { display: flex; gap: 6px; white-space: nowrap; justify-content: flex-end; }
+    .cfg-empty { text-align: center; color: var(--txt-3); padding: 32px 16px !important; font-size: 13px; }
+
+    .cfg-btn { display: inline-flex; align-items: center; gap: 6px; border: none; border-radius: 7px; padding: 7px 14px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity .15s, background .15s; white-space: nowrap; }
+    .cfg-btn:disabled { opacity: .55; cursor: not-allowed; }
+    .cfg-btn-primary { background: #2563eb; color: #fff; }
+    .cfg-btn-primary:hover:not(:disabled) { background: #1d4ed8; }
+    .cfg-btn-danger  { background: #fee2e2; color: #b91c1c; }
+    .cfg-btn-danger:hover:not(:disabled) { background: #fecaca; }
+    .cfg-btn-ghost   { background: var(--surface-2); color: var(--txt-2); border: 1px solid var(--border); }
+    .cfg-btn-ghost:hover:not(:disabled) { background: var(--border); }
+    .cfg-btn-sm { padding: 4px 10px; font-size: 12px; border-radius: 6px; }
+
+    .cfg-spin { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: cfg-spin .6s linear infinite; }
+    @@keyframes cfg-spin { to { transform: rotate(360deg); } }
+
+    .cfg-help { padding: 18px 20px; }
+    .cfg-help-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
+    .cfg-help-title { font-size: 13px; font-weight: 600; color: var(--txt-1); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+    .cfg-help-text  { font-size: 12px; color: var(--txt-3); line-height: 1.5; }
+</style>

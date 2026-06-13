@@ -35,9 +35,21 @@ public interface IJiraService
     Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys);
 
     /// <summary>
+    /// Fetches Committed Date and Committed Customers custom fields from the epic issues themselves.
+    /// Field IDs are discovered dynamically from /rest/api/3/field on first call.
+    /// </summary>
+    Task<Dictionary<string, EpicMeta>> FetchEpicMetaAsync(List<string> epicKeys);
+
+    /// <summary>
     /// Fetches highest-priority open bugs for the Rentway Pro project that have been open for more than 7 days.
     /// </summary>
     Task<SprintReport> GetPriorityBugsAsync();
+
+    /// <summary>
+    /// Fetches bugs from a raw JQL string. Includes customer, PrioListDate (customfield_12437), and standard
+    /// time-tracking fields. Used by the Bug Master Dashboard priority buckets.
+    /// </summary>
+    Task<SprintReport> GetBugsByJqlAsync(string rawJql);
 
     /// <summary>
     /// Fetches development status (branches, commits, PRs with URLs, builds) for a Jira issue.

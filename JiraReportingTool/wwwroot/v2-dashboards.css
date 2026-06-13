@@ -457,6 +457,8 @@
 .v2-table tbody tr.is-done td { color: var(--v2-ink-4); }
 .v2-table-num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .v2-table-key { font-weight: 700; color: var(--v2-brand); white-space: nowrap; }
+.v2-key-link { color: inherit; text-decoration: none; }
+.v2-key-link:hover { text-decoration: underline; }
 
 th.v2-sortable { cursor: pointer; user-select: none; }
 th.v2-sortable:hover { color: var(--v2-ink-1); }

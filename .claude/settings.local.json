@@ -21,7 +21,9 @@
       "Bash(Select-Object FullName)",
       "Bash(Get-Item -Path \"C:\\\\Users\\\\Pedro Calado\\\\source\\\\repos\\\\JiraReportingTool\\\\JiraReportingTool\\\\Components\\\\Pages\\\\TeamDeliveryV2.razor\")",
       "Bash(Select-Object -ExpandProperty Length)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(Select-String -Path \"JiraReportingTool\\\\Components\\\\Pages\\\\TeamDeliveryV3.razor\" -Pattern \"<style>\")",
+      "Bash(Select-Object -First 3)"
     ]
   }
 }

@@ -9,6 +9,13 @@ public class JiraService : IJiraService
     private readonly IConfiguration _config;
     private readonly string _baseUrl;
 
+    private string? _customerFieldId;
+    private bool    _customerFieldIdLookedUp;
+
+    private string? _committedDateFieldId;
+    private string? _committedCustomersFieldId;
+    private bool    _epicMetaFieldsLookedUp;
+
     public JiraService(HttpClient httpClient, IConfiguration config)
     {
         _httpClient = httpClient;
@@ -21,6 +28,113 @@ public class JiraService : IJiraService
         var authBytes = Encoding.ASCII.GetBytes($"{email}:{token}");
         _httpClient.DefaultRequestHeaders.Authorization =
             new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
+    }
+
+    private async Task<string?> GetCustomerFieldIdAsync()
+    {
+        if (_customerFieldIdLookedUp) return _customerFieldId;
+        _customerFieldIdLookedUp = true;
+        try
+        {
+            var resp = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/field");
+            if (!resp.IsSuccessStatusCode) return null;
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            foreach (var field in doc.RootElement.EnumerateArray())
+            {
+                if (!field.TryGetProperty("name", out var nameEl)) continue;
+                if ((nameEl.GetString() ?? "").Contains("Customers Jimpisoft", StringComparison.OrdinalIgnoreCase) &&
+                    field.TryGetProperty("id", out var idEl))
+                {
+                    _customerFieldId = idEl.GetString();
+                    return _customerFieldId;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    private async Task EnsureEpicMetaFieldIdsAsync()
+    {
+        if (_epicMetaFieldsLookedUp) return;
+        _epicMetaFieldsLookedUp = true;
+        try
+        {
+            var resp = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/field");
+            if (!resp.IsSuccessStatusCode) return;
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            foreach (var field in doc.RootElement.EnumerateArray())
+            {
+                if (!field.TryGetProperty("name", out var nameEl) ||
+                    !field.TryGetProperty("id", out var idEl)) continue;
+                var name = nameEl.GetString() ?? "";
+                if (name.Contains("Committed Date", StringComparison.OrdinalIgnoreCase))
+                    _committedDateFieldId = idEl.GetString();
+                else if (name.Contains("Committed Customer", StringComparison.OrdinalIgnoreCase))
+                    _committedCustomersFieldId = idEl.GetString();
+            }
+        }
+        catch { }
+    }
+
+    public async Task<Dictionary<string, EpicMeta>> FetchEpicMetaAsync(List<string> epicKeys)
+    {
+        if (epicKeys.Count == 0) return [];
+        await EnsureEpicMetaFieldIdsAsync();
+
+        var fieldIds = new List<string> { "summary" };
+        if (_committedDateFieldId != null) fieldIds.Add(_committedDateFieldId);
+        if (_committedCustomersFieldId != null) fieldIds.Add(_committedCustomersFieldId);
+        if (fieldIds.Count == 1) return []; // no custom fields found
+
+        var keysJql = string.Join(",", epicKeys.Select(k => $"\"{k}\""));
+        var jql = Uri.EscapeDataString($"key in ({keysJql})");
+        var fieldsParam = string.Join(",", fieldIds);
+        var response = await _httpClient.GetAsync(
+            $"{_baseUrl}/rest/api/3/search/jql?jql={jql}&fields={fieldsParam}&maxResults=500");
+        if (!response.IsSuccessStatusCode) return [];
+
+        var json = await response.Content.ReadAsStringAsync();
+        using var doc = JsonDocument.Parse(json);
+        var result = new Dictionary<string, EpicMeta>(StringComparer.OrdinalIgnoreCase);
+        if (!doc.RootElement.TryGetProperty("issues", out var issues)) return result;
+
+        foreach (var item in issues.EnumerateArray())
+        {
+            var key = item.GetProperty("key").GetString() ?? "";
+            var fields = item.GetProperty("fields");
+            DateTime? committedDate = null;
+            string committedCustomers = "";
+
+            if (_committedDateFieldId != null &&
+                fields.TryGetProperty(_committedDateFieldId, out var dateProp) &&
+                dateProp.ValueKind != JsonValueKind.Null &&
+                DateTime.TryParse(dateProp.GetString(), out var dt))
+                committedDate = dt;
+
+            if (_committedCustomersFieldId != null &&
+                fields.TryGetProperty(_committedCustomersFieldId, out var custProp) &&
+                custProp.ValueKind != JsonValueKind.Null)
+            {
+                committedCustomers = custProp.ValueKind switch
+                {
+                    JsonValueKind.String => custProp.GetString() ?? "",
+                    JsonValueKind.Object when custProp.TryGetProperty("value", out var val)
+                        => val.GetString() ?? "",
+                    JsonValueKind.Array => string.Join(",", custProp.EnumerateArray()
+                        .Select(v => v.ValueKind == JsonValueKind.String
+                            ? v.GetString() ?? ""
+                            : v.TryGetProperty("value", out var vv) ? vv.GetString() ?? "" : "")
+                        .Where(v => !string.IsNullOrEmpty(v))),
+                    _ => ""
+                };
+            }
+
+            result[key] = new EpicMeta(committedDate, committedCustomers);
+        }
+        return result;
     }
 
     // Jira Cloud hard-caps responses at 100 items per request.
@@ -295,7 +409,7 @@ public class JiraService : IJiraService
         return map;
     }
 
-    private (SprintReport Report, List<string> TruncatedKeys) ParseSprintReport(string json, string projectKey)
+    private (SprintReport Report, List<string> TruncatedKeys) ParseSprintReport(string json, string projectKey, string? customerFieldId = null)
     {
         using var doc = JsonDocument.Parse(json);
         var report = new SprintReport { ProjectKey = projectKey.ToUpper() };
@@ -381,12 +495,24 @@ public class JiraService : IJiraService
                 DateTime.TryParse(dueProp.GetString(), out var dueDt))
                 issue.DueDate = dueDt;
 
+            // JM Prio List[Date] (customfield_12437)
+            if (fields.TryGetProperty("customfield_12437", out var prioProp) && prioProp.ValueKind != JsonValueKind.Null &&
+                DateTime.TryParse(prioProp.GetString(), out var prioDate))
+                issue.PrioListDate = prioDate;
+
             // Labels
             if (fields.TryGetProperty("labels", out var labelsEl) && labelsEl.ValueKind == JsonValueKind.Array)
                 issue.Labels = labelsEl.EnumerateArray()
                     .Select(l => l.GetString() ?? "")
                     .Where(l => !string.IsNullOrEmpty(l))
                     .ToList();
+
+            // Customers Jimpisoft dropdown (dynamic field ID)
+            if (customerFieldId != null &&
+                fields.TryGetProperty(customerFieldId, out var custEl) &&
+                custEl.ValueKind != JsonValueKind.Null &&
+                custEl.TryGetProperty("value", out var custVal))
+                issue.Customer = custVal.GetString() ?? "";
 
             // Sprint metadata from customfield_10020 (array of sprints the issue belongs to)
             if (fields.TryGetProperty("customfield_10020", out var sprints) &&
@@ -608,9 +734,11 @@ public class JiraService : IJiraService
 
         var jql = Uri.EscapeDataString(
             $"issueType = Bug AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate,duedate";
+        var customerFieldId = await GetCustomerFieldIdAsync();
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate,duedate,labels"
+            + (customerFieldId != null ? $",{customerFieldId}" : "");
         var json = await FetchAllPagesAsync(jql, fields);
-        var (report, truncated) = ParseSprintReport(json, "");
+        var (report, truncated) = ParseSprintReport(json, "", customerFieldId);
         await FetchMissingWorklogsAsync(report, truncated);
 
         foreach (var issue in report.Issues)
@@ -626,9 +754,20 @@ public class JiraService : IJiraService
     {
         var jql = Uri.EscapeDataString(
             "project = JM AND \"Customers Jimpisoft[Dropdown]\" is not EMPTY AND issuetype = Bug AND status not in (Done, Rejected) AND priority in (Highest) AND createdDate <= -7d AND \"JS Project[Radio Buttons]\" = \"Rentway Pro\"");
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,created,duedate";
+        const string fields = "summary,status,assignee,issuetype,priority,timetracking,created,duedate,labels";
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, _) = ParseSprintReport(json, "");
+        return report;
+    }
+
+    public async Task<SprintReport> GetBugsByJqlAsync(string rawJql)
+    {
+        var customerFieldId = await GetCustomerFieldIdAsync();
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,created,duedate,labels,customfield_12437"
+            + (customerFieldId != null ? $",{customerFieldId}" : "");
+        var jql = Uri.EscapeDataString(rawJql);
+        var json = await FetchAllPagesAsync(jql, fields);
+        var (report, _) = ParseSprintReport(json, "", customerFieldId);
         return report;
     }
 

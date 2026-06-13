@@ -36,11 +36,17 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
     public Task<SprintReport> GetPriorityBugsAsync()
         => api.GetPriorityBugsAsync();
 
+    public Task<SprintReport> GetBugsByJqlAsync(string rawJql)
+        => api.GetBugsByJqlAsync(rawJql);
+
     public Task<IssueDevStatus> GetDevStatusAsync(string jiraId)
         => api.GetDevStatusAsync(jiraId);
 
     public Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys)
         => api.FetchEpicNamesAsync(epicKeys);
+
+    public Task<Dictionary<string, EpicMeta>> FetchEpicMetaAsync(List<string> epicKeys)
+        => api.FetchEpicMetaAsync(epicKeys);
 
     public Task<SprintReport> GetEpicSprintForecastAsync(string epicKey, int sprintId)
         => api.GetEpicSprintForecastAsync(epicKey, sprintId);

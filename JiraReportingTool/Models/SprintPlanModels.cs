@@ -116,6 +116,31 @@ public class SprintPlanVersion
     public string DataJson { get; set; } = "";
 }
 
+// ── Sprint / Epic configuration — drives default inputs on Delivery & Support Bugs pages ──
+
+/// <summary>
+/// One row per sprint. Stores the Jira sprint ID, support-bugs epic key, and dates.
+/// The row whose date range contains today is treated as the "current" config and
+/// auto-filled into the Delivery and Support Bugs dashboards on load.
+/// </summary>
+public class SprintConfig
+{
+    public int Id { get; set; }
+
+    [MaxLength(100)]
+    public string Name { get; set; } = "";
+
+    public int SprintId { get; set; }
+
+    [MaxLength(50)]
+    public string EpicKey { get; set; } = "";
+
+    public DateOnly StartDate { get; set; }
+    public DateOnly EndDate   { get; set; }
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 /// <summary>Audit log entry created each time a task assignment is removed from the calendar during a sprint.</summary>
 public class SprintPlanRemovalLog
 {

@@ -1,6 +1,8 @@
 @page "/delivery-v3"
 @rendermode InteractiveServer
 @inject IJiraService JiraService
+@inject IConfiguration Config
+@inject SprintConfigService SprintConfigService
 @using JiraReportingTool.Models
 
 <PageTitle>Team Delivery — Command Center</PageTitle>
@@ -738,6 +740,41 @@
                             <span style="width:@(ep.Total > 0 ? ep.ToDo * 100 / ep.Total : 0)%; background: linear-gradient(90deg,#94a3b8,#64748b)" title="To do @ep.ToDo"></span>
                         </div>
 
+                        <!-- Committed Date & Customers -->
+                        @if (ep.Key != "—" && !string.IsNullOrEmpty(ep.Key) && _epicMeta.TryGetValue(ep.Key, out var meta))
+                        {
+                            @if (meta.CommittedDate.HasValue || !string.IsNullOrEmpty(meta.CommittedCustomers))
+                            {
+                                <div style="display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:8px;font-size:11px">
+                                    @if (meta.CommittedDate.HasValue)
+                                    {
+                                        var isOverdue = meta.CommittedDate.Value.Date < DateTime.Today;
+                                        <div style="display:flex;align-items:center;gap:5px">
+                                            <i class="bi bi-calendar-check" style="color:var(--v2-ink-3)"></i>
+                                            <span class="v2-hint">Committed</span>
+                                            <span style="font-weight:600;color:@(isOverdue ? "var(--v2-danger)" : "var(--v2-ink-1)")">
+                                                @meta.CommittedDate.Value.ToString("d MMM yyyy")
+                                            </span>
+                                            @if (isOverdue)
+                                            {
+                                                <span class="v2-pill v2-pill-danger" style="font-size:9px;padding:1px 5px">overdue</span>
+                                            }
+                                        </div>
+                                    }
+                                    @if (!string.IsNullOrEmpty(meta.CommittedCustomers))
+                                    {
+                                        <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap">
+                                            <i class="bi bi-person-check" style="color:var(--v2-ink-3)"></i>
+                                            @foreach (var cust in meta.CommittedCustomers.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                                            {
+                                                <span class="v2-pill v2-pill-neutral" style="font-size:10px">@cust</span>
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        }
+
                         <div class="v2-divider"></div>
 
                         <!-- Hours — Sprint slice -->
@@ -876,7 +913,7 @@
                                             var sc = StatusColor(i);
                                             <tr class="@(i.StatusCategoryKey == "done" ? "is-done" : "")"
                                                 style="background:@sc.bg;border-left:3px solid @sc.border">
-                                                <td class="v2-table-key">@i.Key</td>
+                                                <td class="v2-table-key"><a href="@JiraBase/browse/@i.Key" target="_blank" title="@i.Summary" class="v2-key-link">@i.Key</a></td>
                                                 @* <td class="v2-truncate" style="max-width:340px" title="@i.Summary">@i.Summary</td> *@
                                                 <td><span class="v2-chip v2-chip-@i.IssueType.ToLower()">@i.IssueType</span></td>
                                                 <td><span class="v2-pill" style="font-size:10px;padding:1px 6px;background:@sc.bg;color:@sc.border;border:1px solid @sc.border">@i.Status</span></td>
@@ -1152,7 +1189,7 @@
                                             var lastLog  = i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : (DateTime?)null;
                                             var idle24   = i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 1;
                                             <tr class="@(i.StatusCategoryKey == "done" ? "is-done" : "")">
-                                                <td class="v2-table-key">@i.Key</td>
+                                                <td class="v2-table-key"><a href="@JiraBase/browse/@i.Key" target="_blank" title="@i.Summary" class="v2-key-link">@i.Key</a></td>
                                                 <td class="v2-truncate" style="max-width:280px" title="@i.Summary">@i.Summary</td>
                                                 <td>
                                                     <span class="v2-pill v2-pill-@(i.StatusCategoryKey == "done" ? "success" : i.StatusCategoryKey == "indeterminate" ? "brand" : "neutral")" style="font-size:10px;padding:1px 6px">@i.Status</span>
@@ -1394,7 +1431,7 @@
                                     @foreach (var issue in ApplySortSC(ScopeFilteredIssues))
                                     {
                                         <tr class="@(issue.StatusCategoryKey == "done" ? "is-done" : "")">
-                                            <td class="v2-table-key">@issue.Key</td>
+                                            <td class="v2-table-key"><a href="@JiraBase/browse/@issue.Key" target="_blank" title="@issue.Summary" class="v2-key-link">@issue.Key</a></td>
                                             <td class="v2-truncate" style="max-width:280px">@issue.Summary</td>
                                             <td><span class="v2-chip v2-chip-@issue.IssueType.ToLower()">@issue.IssueType</span></td>
                                             <td>@issue.Assignee</td>
@@ -1485,7 +1522,7 @@
                                 @foreach (var i in ApplySortRI(Report.AtRiskIssues))
                                 {
                                     <tr>
-                                        <td class="v2-table-key">@i.Key</td>
+                                        <td class="v2-table-key"><a href="@JiraBase/browse/@i.Key" target="_blank" title="@i.Summary" class="v2-key-link">@i.Key</a></td>
                                         <td class="v2-truncate" style="max-width:340px">@i.Summary</td>
                                         <td><span class="v2-chip v2-chip-@(i.IssueType.ToLower())">@i.IssueType</span></td>
                                         <td>@i.Assignee</td>
@@ -1548,7 +1585,7 @@
                                         {
                                             var lastLog = i.Worklogs.Any() ? i.Worklogs.Max(w => w.Started) : (DateTime?)null;
                                             <tr>
-                                                <td class="v2-table-key">@i.Key</td>
+                                                <td class="v2-table-key"><a href="@JiraBase/browse/@i.Key" target="_blank" title="@i.Summary" class="v2-key-link">@i.Key</a></td>
                                                 <td class="v2-truncate" style="max-width:300px" title="@i.Summary">@i.Summary</td>
                                                 <td><span class="v2-chip v2-chip-@i.IssueType.ToLower()">@i.IssueType</span></td>
                                                 <td>@i.Assignee</td>
@@ -1567,6 +1604,269 @@
         }
         else if (ActiveTab == "activity")
         {
+            var cutoff       = DateTime.Today.AddDays(-1);
+            var epicSdRows   = EpicStandupRows;
+            var memberSdRows = MemberStandupRows;
+
+            <!-- ── Epic Daily Standup ─────────────────────────────────────────── -->
+            <div class="v2-card" style="margin-bottom:16px">
+                <div class="v2-section-title">
+                    <i class="bi bi-collection" style="color:#6366f1"></i>
+                    Epic Standup
+                    <span class="v2-section-note">yesterday's progress &amp; today's focus, by epic</span>
+                </div>
+                @if (!epicSdRows.Any())
+                {
+                    <div class="v2-hint" style="padding:16px;font-style:italic">No epic data loaded.</div>
+                }
+                else
+                {
+                    <div class="v2-table-wrap">
+                        <table class="v2-table">
+                            <thead>
+                                <tr>
+                                    <th>Epic</th>
+                                    <th>Progress</th>
+                                    <th class="v2-table-num">Hrs Yesterday</th>
+                                    <th class="v2-table-num">Completed ✓</th>
+                                    <th class="v2-table-num">In Progress</th>
+                                    <th class="v2-table-num">Stuck</th>
+                                    <th style="width:24px"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var erow in epicSdRows)
+                                {
+                                    var epicExp  = _epicSdExpanded.Contains(erow.EpicKey);
+                                    var donePct  = erow.Total > 0 ? erow.Done * 100 / erow.Total : 0;
+                                    <tr style="cursor:pointer" @onclick="() => ToggleEpicSd(erow.EpicKey)">
+                                        <td>
+                                            <div style="display:flex;flex-direction:column;gap:2px">
+                                                <a class="v2-key-link v2-table-key" href="@JiraBase/browse/@erow.EpicKey" target="_blank" @onclick:stopPropagation>@erow.EpicKey</a>
+                                                <span class="v2-hint" style="font-size:11px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="@erow.EpicName">@erow.EpicName</span>
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div style="display:flex;align-items:center;gap:8px">
+                                                <div class="v2-bar" style="width:80px"><div class="v2-bar-fill" style="width:@donePct%"></div></div>
+                                                <span class="v2-hint" style="font-size:11px;white-space:nowrap">@erow.Done / @erow.Total</span>
+                                            </div>
+                                        </td>
+                                        <td class="v2-table-num @(erow.YesterdaySeconds == 0 ? "v2-hint" : "")">
+                                            @(erow.YesterdaySeconds > 0 ? FmtH(erow.YesterdaySeconds) : "—")
+                                        </td>
+                                        <td class="v2-table-num @(erow.CompletedYesterday.Count > 0 ? "v2-text-success" : "v2-hint")">
+                                            @(erow.CompletedYesterday.Count > 0 ? erow.CompletedYesterday.Count.ToString() : "—")
+                                        </td>
+                                        <td class="v2-table-num @(erow.InProgress.Count == 0 ? "v2-hint" : "")">
+                                            @(erow.InProgress.Count > 0 ? erow.InProgress.Count.ToString() : "—")
+                                        </td>
+                                        <td class="v2-table-num @(erow.Stuck.Count > 0 ? "v2-text-danger" : "v2-hint")">
+                                            @(erow.Stuck.Count > 0 ? erow.Stuck.Count.ToString() : "—")
+                                        </td>
+                                        <td class="v2-hint" style="text-align:center">@(epicExp ? "▲" : "▼")</td>
+                                    </tr>
+                                    @if (epicExp)
+                                    {
+                                        <tr>
+                                            <td colspan="7" style="padding:12px 16px 16px 32px;background:var(--v2-surface-2)">
+                                                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px">
+                                                    @if (erow.CompletedYesterday.Count > 0)
+                                                    {
+                                                        <div>
+                                                            <div style="font-size:11px;font-weight:700;color:var(--v2-success);margin-bottom:6px;display:flex;align-items:center;gap:4px">
+                                                                <i class="bi bi-check2-circle"></i> Completed Yesterday
+                                                            </div>
+                                                            @foreach (var ci in erow.CompletedYesterday)
+                                                            {
+                                                                <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;flex-wrap:wrap">
+                                                                    <a class="v2-key-link v2-table-key" href="@JiraBase/browse/@ci.Key" target="_blank" style="font-size:11px">@ci.Key</a>
+                                                                    <span class="v2-truncate" style="color:var(--v2-ink-2);max-width:180px" title="@ci.Summary">@(ci.Summary.Length > 50 ? ci.Summary[..50] + "…" : ci.Summary)</span>
+                                                                    @if (!string.IsNullOrEmpty(ci.Assignee)) { <span class="v2-hint" style="font-size:10px;white-space:nowrap">@FirstName(ci.Assignee)</span> }
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    @if (erow.WorkedYesterday.Count > 0)
+                                                    {
+                                                        <div>
+                                                            <div style="font-size:11px;font-weight:700;color:var(--v2-brand);margin-bottom:6px;display:flex;align-items:center;gap:4px">
+                                                                <i class="bi bi-play-circle"></i> Worked On Yesterday
+                                                            </div>
+                                                            @foreach (var wi in erow.WorkedYesterday)
+                                                            {
+                                                                var wHrs = wi.Worklogs.Where(w => w.Started.Date >= cutoff).Sum(w => w.TimeSpentSeconds);
+                                                                <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;flex-wrap:wrap">
+                                                                    <a class="v2-key-link v2-table-key" href="@JiraBase/browse/@wi.Key" target="_blank" style="font-size:11px">@wi.Key</a>
+                                                                    <span class="v2-truncate" style="color:var(--v2-ink-2);max-width:160px" title="@wi.Summary">@(wi.Summary.Length > 44 ? wi.Summary[..44] + "…" : wi.Summary)</span>
+                                                                    <span class="v2-pill v2-pill-neutral" style="font-size:10px;padding:0 5px;flex-shrink:0">@FmtH(wHrs)</span>
+                                                                    @if (!string.IsNullOrEmpty(wi.Assignee)) { <span class="v2-hint" style="font-size:10px;white-space:nowrap">@FirstName(wi.Assignee)</span> }
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    @if (erow.InProgress.Any(i => i.DaysSinceLastWorklog == 0))
+                                                    {
+                                                        <div>
+                                                            <div style="font-size:11px;font-weight:700;color:#0284c7;margin-bottom:6px;display:flex;align-items:center;gap:4px">
+                                                                <i class="bi bi-arrow-right-circle"></i> Active Today
+                                                            </div>
+                                                            @foreach (var ai in erow.InProgress.Where(i => i.DaysSinceLastWorklog == 0))
+                                                            {
+                                                                <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;flex-wrap:wrap">
+                                                                    <a class="v2-key-link v2-table-key" href="@JiraBase/browse/@ai.Key" target="_blank" style="font-size:11px">@ai.Key</a>
+                                                                    <span class="v2-truncate" style="color:var(--v2-ink-2);max-width:180px" title="@ai.Summary">@(ai.Summary.Length > 50 ? ai.Summary[..50] + "…" : ai.Summary)</span>
+                                                                    @if (!string.IsNullOrEmpty(ai.Assignee)) { <span class="v2-hint" style="font-size:10px;white-space:nowrap">@FirstName(ai.Assignee)</span> }
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    @if (erow.Stuck.Count > 0)
+                                                    {
+                                                        <div>
+                                                            <div style="font-size:11px;font-weight:700;color:var(--v2-danger);margin-bottom:6px;display:flex;align-items:center;gap:4px">
+                                                                <i class="bi bi-hourglass-split"></i> Stuck / Idle
+                                                            </div>
+                                                            @foreach (var si in erow.Stuck)
+                                                            {
+                                                                <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;flex-wrap:wrap">
+                                                                    <a class="v2-key-link v2-table-key" href="@JiraBase/browse/@si.Key" target="_blank" style="font-size:11px">@si.Key</a>
+                                                                    <span class="v2-truncate" style="color:var(--v2-ink-2);max-width:160px" title="@si.Summary">@(si.Summary.Length > 44 ? si.Summary[..44] + "…" : si.Summary)</span>
+                                                                    <span class="v2-pill v2-pill-danger" style="font-size:10px;padding:0 5px;flex-shrink:0">@si.DaysSinceLastWorklog d idle</span>
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+
+            <!-- ── Team Member Daily Standup ────────────────────────────────────── -->
+            <div class="v2-card" style="margin-bottom:16px">
+                <div class="v2-section-title">
+                    <i class="bi bi-people" style="color:#6366f1"></i>
+                    Team Standup
+                    <span class="v2-section-note">each member's yesterday &amp; today</span>
+                </div>
+                @if (!memberSdRows.Any())
+                {
+                    <div class="v2-hint" style="padding:16px;font-style:italic">No assignee data found.</div>
+                }
+                else
+                {
+                    <div class="v2-table-wrap">
+                        <table class="v2-table">
+                            <thead>
+                                <tr>
+                                    <th>Member</th>
+                                    <th class="v2-table-num">Hrs Yesterday</th>
+                                    <th class="v2-table-num">Concluded</th>
+                                    <th class="v2-table-num">Worked Yesterday</th>
+                                    <th class="v2-table-num">In Progress</th>
+                                    <th style="width:24px"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var mrow in memberSdRows)
+                                {
+                                    var memExp    = _memberSdExpanded.Contains(mrow.Name);
+                                    var avatarIdx = 1 + (Math.Abs(mrow.Name.GetHashCode()) % 5);
+                                    <tr style="cursor:pointer" @onclick="() => ToggleMemberSd(mrow.Name)">
+                                        <td>
+                                            <div style="display:flex;align-items:center;gap:8px">
+                                                <span class="v2-avatar v2-avatar-sm v2-avatar-grad-@avatarIdx">@Initials(mrow.Name)</span>
+                                                <span style="font-weight:600">@mrow.Name</span>
+                                            </div>
+                                        </td>
+                                        <td class="v2-table-num @(mrow.YesterdaySeconds == 0 ? "v2-hint" : "")">
+                                            @(mrow.YesterdaySeconds > 0 ? FmtH(mrow.YesterdaySeconds) : "—")
+                                        </td>
+                                        <td class="v2-table-num @(mrow.Concluded.Count > 0 ? "v2-text-success" : "v2-hint")">
+                                            @(mrow.Concluded.Count > 0 ? mrow.Concluded.Count.ToString() : "—")
+                                        </td>
+                                        <td class="v2-table-num @(mrow.WorkedYesterday.Count == 0 ? "v2-hint" : "")">
+                                            @(mrow.WorkedYesterday.Count > 0 ? mrow.WorkedYesterday.Count.ToString() : "—")
+                                        </td>
+                                        <td class="v2-table-num @(mrow.InProgress.Count == 0 ? "v2-hint" : "")">
+                                            @(mrow.InProgress.Count > 0 ? mrow.InProgress.Count.ToString() : "—")
+                                        </td>
+                                        <td class="v2-hint" style="text-align:center">@(memExp ? "▲" : "▼")</td>
+                                    </tr>
+                                    @if (memExp)
+                                    {
+                                        <tr>
+                                            <td colspan="6" style="padding:12px 16px 16px 32px;background:var(--v2-surface-2)">
+                                                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px">
+                                                    @if (mrow.Concluded.Count > 0)
+                                                    {
+                                                        <div>
+                                                            <div style="font-size:11px;font-weight:700;color:var(--v2-success);margin-bottom:6px;display:flex;align-items:center;gap:4px">
+                                                                <i class="bi bi-check2-circle"></i> Concluded Yesterday
+                                                            </div>
+                                                            @foreach (var ci in mrow.Concluded)
+                                                            {
+                                                                <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;flex-wrap:wrap">
+                                                                    <a class="v2-key-link v2-table-key" href="@JiraBase/browse/@ci.Key" target="_blank" style="font-size:11px">@ci.Key</a>
+                                                                    <span class="v2-truncate" style="color:var(--v2-ink-2);max-width:220px" title="@ci.Summary">@(ci.Summary.Length > 60 ? ci.Summary[..60] + "…" : ci.Summary)</span>
+                                                                    <span class="v2-pill v2-pill-success" style="font-size:10px;padding:0 5px;flex-shrink:0">done</span>
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    @if (mrow.WorkedYesterday.Count > 0)
+                                                    {
+                                                        <div>
+                                                            <div style="font-size:11px;font-weight:700;color:var(--v2-brand);margin-bottom:6px;display:flex;align-items:center;gap:4px">
+                                                                <i class="bi bi-play-circle"></i> Worked On Yesterday
+                                                            </div>
+                                                            @foreach (var wi in mrow.WorkedYesterday)
+                                                            {
+                                                                var wHrs = wi.Worklogs.Where(w => w.Started.Date >= cutoff).Sum(w => w.TimeSpentSeconds);
+                                                                <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;flex-wrap:wrap">
+                                                                    <a class="v2-key-link v2-table-key" href="@JiraBase/browse/@wi.Key" target="_blank" style="font-size:11px">@wi.Key</a>
+                                                                    <span class="v2-truncate" style="color:var(--v2-ink-2);max-width:200px" title="@wi.Summary">@(wi.Summary.Length > 55 ? wi.Summary[..55] + "…" : wi.Summary)</span>
+                                                                    <span class="v2-pill v2-pill-neutral" style="font-size:10px;padding:0 5px;flex-shrink:0">@FmtH(wHrs)</span>
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    @if (mrow.InProgress.Count > 0)
+                                                    {
+                                                        <div>
+                                                            <div style="font-size:11px;font-weight:700;color:#0284c7;margin-bottom:6px;display:flex;align-items:center;gap:4px">
+                                                                <i class="bi bi-arrow-right-circle"></i> In Progress
+                                                            </div>
+                                                            @foreach (var ip in mrow.InProgress)
+                                                            {
+                                                                <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:12px;flex-wrap:wrap">
+                                                                    <a class="v2-key-link v2-table-key" href="@JiraBase/browse/@ip.Key" target="_blank" style="font-size:11px">@ip.Key</a>
+                                                                    <span class="v2-truncate" style="color:var(--v2-ink-2);max-width:200px" title="@ip.Summary">@(ip.Summary.Length > 55 ? ip.Summary[..55] + "…" : ip.Summary)</span>
+                                                                    @if (ip.DaysSinceLastWorklog >= 1)
+                                                                    {
+                                                                        <span class="v2-pill @(ip.DaysSinceLastWorklog >= 2 ? "v2-pill-danger" : "v2-pill-warn")" style="font-size:10px;padding:0 5px;flex-shrink:0">@ip.DaysSinceLastWorklog d idle</span>
+                                                                    }
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    }
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+
             <!-- Daily Standup Delta -->
             <div class="v2-card" style="margin-bottom:16px">
                 <div class="v2-section-title">
@@ -1890,7 +2190,7 @@
                                                             var pct = IssuePercentDone(ai) ?? 0;
                                                             var isOnHold = ai.Status?.Contains("Hold", StringComparison.OrdinalIgnoreCase) ?? false;
                                                             <tr style="@(isOnHold ? "opacity:0.75;background:#fef2f2" : "")">
-                                                                <td class="v2-table-key" style="white-space:nowrap">@ai.Key</td>
+                                                                <td class="v2-table-key" style="white-space:nowrap"><a href="@JiraBase/browse/@ai.Key" target="_blank" title="@ai.Summary" class="v2-key-link">@ai.Key</a></td>
                                                                 <td><span class="v2-chip v2-chip-@ai.IssueType.ToLower()">@ai.IssueType</span></td>
                                                                 <td class="v2-truncate" style="max-width:280px" title="@ai.Summary">
                                                                     @ai.Summary
@@ -2060,7 +2360,7 @@
                             var epicLbl  = i.EpicName is { Length: > 0 } en && en != "No Epic" ? en : i.EpicKey;
                             <tr class="@(i.StatusCategoryKey == "done" ? "is-done" : "")"
                                 style="background:@sc.bg;border-left:3px solid @sc.border">
-                                <td class="v2-table-key">@i.Key</td>
+                                <td class="v2-table-key"><a href="@JiraBase/browse/@i.Key" target="_blank" title="@i.Summary" class="v2-key-link">@i.Key</a></td>
                                 <td class="v2-truncate" style="max-width:320px" title="@i.Summary">@i.Summary</td>
                                 <td><span class="v2-chip v2-chip-@i.IssueType.ToLower()">@i.IssueType</span></td>
                                 <td>
@@ -2114,6 +2414,8 @@
 </div>
 
 @code {
+    private string JiraBase => Config["Jira:BaseUrl"]?.TrimEnd('/') ?? "#";
+
     // ── State ────────────────────────────────────────────────────────────────
     private string SprintId = "";
     private string SelectedFilterId = "";
@@ -2458,6 +2760,9 @@
     private record EpicFullStats(int Total, int Done, double EstimateHours, double LoggedHours, double RemainingHours);
     private Dictionary<string, EpicFullStats> _fullEpicStats = new();
     private HashSet<string> _loadingFullEpics = new();
+
+    // ── Epic metadata (Committed Date + Customers, fetched once per load) ────
+    private Dictionary<string, EpicMeta> _epicMeta = new();
 
     // Run sequentially — the shared scoped EF DbContext can't handle concurrent operations,
     // and JiraCacheService funnels every call through the same repo.
@@ -2959,8 +3264,11 @@
     // ── Lifecycle ────────────────────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
     {
-        try { MyFilters = await JiraService.GetMyFiltersAsync(); }
-        finally { FiltersLoading = false; }
+        try { MyFilters = await JiraService.GetMyFiltersAsync(); } finally { FiltersLoading = false; }
+
+        var current = await SprintConfigService.GetCurrentAsync();
+        if (current is not null && string.IsNullOrEmpty(SprintId))
+            SprintId = current.SprintId.ToString();
     }
 
     // Account IDs of the engineering team — used when "Engineering team only" is enabled.
@@ -3008,6 +3316,7 @@
         IsLoading = true; ErrorMessage = null; Report = null;
         _fullEpicStats.Clear();
         _loadingFullEpics.Clear();
+        _epicMeta.Clear();
         _epicLoadProgress = 0;
         _epicLoadTotal    = 0;
         try
@@ -3039,6 +3348,13 @@
         // and progress bar remain visible until everything is ready.
         if (Report != null)
         {
+            var epicKeys = Report.EpicSummaries
+                .Select(e => e.Key)
+                .Where(k => !string.IsNullOrEmpty(k))
+                .ToList();
+            try { _epicMeta = await JiraService.FetchEpicMetaAsync(epicKeys); }
+            catch { /* non-fatal: metadata is decorative */ }
+
             try { await LoadAllFullEpicsAsync(); }
             catch { /* individual failures handled inside LoadFullEpicAsync */ }
         }
@@ -3469,6 +3785,94 @@
         .Where(i => i.Created.HasValue && i.Created.Value.Date >= DateTime.Today.AddDays(-1))
         .OrderByDescending(i => i.Created)
         .ToList();
+
+    // ── Daily Standup tables ─────────────────────────────────────────────────
+    private record EpicSdRow(string EpicKey, string EpicName,
+        int Total, int Done, int YesterdaySeconds,
+        List<SprintIssue> CompletedYesterday, List<SprintIssue> WorkedYesterday,
+        List<SprintIssue> InProgress, List<SprintIssue> Stuck);
+
+    private record MemberSdRow(string Name, int YesterdaySeconds,
+        List<SprintIssue> Concluded, List<SprintIssue> WorkedYesterday,
+        List<SprintIssue> InProgress);
+
+    private HashSet<string> _epicSdExpanded   = [];
+    private HashSet<string> _memberSdExpanded = [];
+    private void ToggleEpicSd(string key)    { if (!_epicSdExpanded.Remove(key))   _epicSdExpanded.Add(key); }
+    private void ToggleMemberSd(string name) { if (!_memberSdExpanded.Remove(name)) _memberSdExpanded.Add(name); }
+
+    private static string FirstName(string fullName) =>
+        fullName.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? fullName;
+
+    private List<EpicSdRow> EpicStandupRows
+    {
+        get
+        {
+            var cutoff = DateTime.Today.AddDays(-1);
+            return ActiveIssues
+                .Where(i => !string.IsNullOrEmpty(i.EpicKey))
+                .GroupBy(i => new { i.EpicKey, i.EpicName })
+                .Select(g =>
+                {
+                    var issues = g.ToList();
+                    var completedYesterday = issues
+                        .Where(i => i.StatusCategoryKey == "done" && i.Worklogs.Any(w => w.Started.Date >= cutoff))
+                        .ToList();
+                    var workedYesterday = issues
+                        .Where(i => i.StatusCategoryKey != "done" && i.Worklogs.Any(w => w.Started.Date >= cutoff))
+                        .ToList();
+                    var inProgress = issues
+                        .Where(i => i.StatusCategoryKey == "indeterminate")
+                        .OrderBy(i => i.DaysSinceLastWorklog)
+                        .ToList();
+                    var stuck = inProgress.Where(i => i.DaysSinceLastWorklog >= 1).ToList();
+                    var yesterdaySec = issues.SelectMany(i => i.Worklogs)
+                        .Where(w => w.Started.Date >= cutoff)
+                        .Sum(w => w.TimeSpentSeconds);
+                    return new EpicSdRow(
+                        g.Key.EpicKey, g.Key.EpicName ?? g.Key.EpicKey,
+                        issues.Count, issues.Count(i => i.StatusCategoryKey == "done"),
+                        yesterdaySec, completedYesterday, workedYesterday, inProgress, stuck);
+                })
+                .OrderByDescending(r => r.YesterdaySeconds)
+                .ThenBy(r => r.EpicName)
+                .ToList();
+        }
+    }
+
+    private List<MemberSdRow> MemberStandupRows
+    {
+        get
+        {
+            var cutoff = DateTime.Today.AddDays(-1);
+            return ActiveIssues
+                .Where(i => !string.IsNullOrWhiteSpace(i.Assignee) && i.Assignee != "Unassigned")
+                .Select(i => i.Assignee)
+                .Distinct()
+                .OrderBy(n => n)
+                .Select(person =>
+                {
+                    var mine = ActiveIssues.Where(i => i.Assignee == person).ToList();
+                    var concluded = mine
+                        .Where(i => i.StatusCategoryKey == "done" && i.Worklogs.Any(w => w.Started.Date >= cutoff))
+                        .ToList();
+                    var worked = mine
+                        .Where(i => i.StatusCategoryKey != "done" && i.Worklogs.Any(w => w.Started.Date >= cutoff))
+                        .ToList();
+                    var inProgress = mine
+                        .Where(i => i.StatusCategoryKey == "indeterminate")
+                        .OrderBy(i => i.DaysSinceLastWorklog)
+                        .ToList();
+                    var yesterdaySec = mine.SelectMany(i => i.Worklogs)
+                        .Where(w => w.Started.Date >= cutoff)
+                        .Sum(w => w.TimeSpentSeconds);
+                    return new MemberSdRow(person, yesterdaySec, concluded, worked, inProgress);
+                })
+                .OrderByDescending(r => r.YesterdaySeconds)
+                .ThenBy(r => r.Name)
+                .ToList();
+        }
+    }
 
     // ── On Hold issues (Task 4) ──────────────────────────────────────────────
     private List<SprintIssue> OnHoldIssues => ActiveIssues

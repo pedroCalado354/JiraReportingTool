@@ -268,7 +268,7 @@
     </div>
 
     <!-- ═══ MAIN LAYOUT ════════════════════════════════════════════════ -->
-    <div class="spd-main">
+    <div class="spd-main @(_calendarFullPage ? "cal-fullpage" : "")">
 
         <!-- LEFT: Multi-Epic Task Panel -->
         <div class="spd-task-panel">
@@ -923,6 +923,13 @@
                 }
                 else
                 {
+                    <div class="cal-toolbar">
+                        <button class="btn small cal-fullpage-btn"
+                                @onclick="() => _calendarFullPage = !_calendarFullPage"
+                                title="@(_calendarFullPage ? "Exit full page" : "Expand calendar to full page")">
+                            @(_calendarFullPage ? "⊡ Exit Full Page" : "⛶ Full Page")
+                        </button>
+                    </div>
                     <div class="cal-scroll">
                         <table class="cal-table">
                             <colgroup>
@@ -1255,6 +1262,7 @@
     private List<TeamMemberDto> TeamMembers { get; set; } = new();
     private string? ErrorMessage { get; set; }
     private string? InfoMessage  { get; set; }
+    private bool _calendarFullPage;
 
     // ── Plan CRUD ──
     private int?                  _currentPlanId;
@@ -3244,7 +3252,8 @@ private static decimal ParseJiraDurationToHours(string? input)
             // Merge consecutive days with the same task set into one cell.
             string GetEpicLabel(int taskId)
             {
-                if (_customTasks.TryGetValue(taskId, out var ct)) return ct.Category;
+                if (_customTasks.TryGetValue(taskId, out var ct))
+                    return string.IsNullOrWhiteSpace(ct.Name) ? ct.Category : $"{ct.Category}: {ct.Name}";
                 var jk = GetJiraKeyForTaskId(taskId);
                 if (jk != null && taskKeyToEpicKey.TryGetValue(jk, out var ek))
                 {
@@ -4626,6 +4635,34 @@ private static decimal ParseJiraDurationToHours(string? input)
     }
 
     /* ─── Calendar ─── */
+    .cal-toolbar {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 4px;
+    }
+
+    .cal-fullpage-btn {
+        font-size: 12px;
+        padding: 3px 10px;
+        color: var(--txt-2);
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+    .cal-fullpage-btn:hover { background: var(--surface-2); }
+
+    .spd-main.cal-fullpage {
+        grid-template-columns: 1fr;
+    }
+    .spd-main.cal-fullpage .spd-task-panel {
+        display: none;
+    }
+    .spd-main.cal-fullpage .cal-scroll {
+        height: calc(100vh - 190px);
+    }
+
     .cal-scroll {
         overflow: auto;
         height: 73vh;

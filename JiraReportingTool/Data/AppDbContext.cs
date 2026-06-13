@@ -12,6 +12,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<JiraFilter> JiraFilters => Set<JiraFilter>();
     public DbSet<EpicSummary> EpicSummaries => Set<EpicSummary>();
 
+    // ── Sprint / Epic configuration (drives default inputs on dashboards) ────
+    public DbSet<SprintConfig> SprintConfigs => Set<SprintConfig>();
+
     // ── Sprint Plan CRUD ──────────────────────────────────────────────────────
     public DbSet<SprintPlanHeader>     SprintPlans           => Set<SprintPlanHeader>();
     public DbSet<SprintPlanAllocation> SprintPlanAllocations => Set<SprintPlanAllocation>();

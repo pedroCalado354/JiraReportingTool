@@ -177,9 +177,11 @@ public class SprintIssue
     public DateTime? ResolutionDate { get; set; }
     public DateTime? DueDate        { get; set; }
 
-    [NotMapped] public bool   IsExpanded      { get; set; }
-    [NotMapped] public int    QaRejectedCount { get; set; }
-    [NotMapped] public string JiraId          { get; set; } = "";
+    [NotMapped] public bool      IsExpanded      { get; set; }
+    [NotMapped] public int       QaRejectedCount { get; set; }
+    [NotMapped] public string    JiraId          { get; set; } = "";
+    [NotMapped] public string    Customer        { get; set; } = "";
+    [NotMapped] public DateTime? PrioListDate    { get; set; }
 
     [NotMapped] public int DaysSinceLastWorklog => Worklogs.Any()
         ? Math.Max(0, (int)(DateTime.Today - Worklogs.Max(w => w.Started).Date).TotalDays)
@@ -249,3 +251,6 @@ public class EpicSummary
         ? (string.IsNullOrEmpty(Key) ? "No Epic" : Key)
         : $"{Key} {Name}" ;
 }
+
+// ── Epic Metadata (Committed Date + Customers, from Jira custom fields on the epic) ──
+public record EpicMeta(DateTime? CommittedDate, string CommittedCustomers);
