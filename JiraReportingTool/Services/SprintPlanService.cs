@@ -97,6 +97,18 @@ public class SprintPlanService(AppDbContext db) : ISprintPlanService
     public Task DeleteAsync(int id) =>
         db.SprintPlans.Where(p => p.Id == id).ExecuteDeleteAsync();
 
+    // ── Concurrency: lightweight header-only timestamp lookup ─────────────────
+
+    public async Task<DateTime?> GetUpdatedAtAsync(int id)
+    {
+        var ts = await db.SprintPlans
+            .AsNoTracking()
+            .Where(p => p.Id == id)
+            .Select(p => (DateTime?)p.UpdatedAt)
+            .FirstOrDefaultAsync();
+        return ts;
+    }
+
     // ── Version history ───────────────────────────────────────────────────────
 
     public Task<List<SprintPlanVersion>> GetVersionsAsync(int planId) =>

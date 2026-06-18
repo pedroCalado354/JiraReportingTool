@@ -18,6 +18,9 @@ public interface ISprintPlanService
 
     Task DeleteAsync(int id);
 
+    /// <summary>Returns the plan's last-updated timestamp (header only) for concurrency checks, or null if it no longer exists.</summary>
+    Task<DateTime?> GetUpdatedAtAsync(int id);
+
     /// <summary>Returns all version snapshots for a plan, newest first.</summary>
     Task<List<SprintPlanVersion>> GetVersionsAsync(int planId);
 

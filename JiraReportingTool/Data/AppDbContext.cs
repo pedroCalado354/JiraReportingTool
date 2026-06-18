@@ -15,6 +15,11 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     // ── Sprint / Epic configuration (drives default inputs on dashboards) ────
     public DbSet<SprintConfig> SprintConfigs => Set<SprintConfig>();
 
+    // ── Team roster + shared holidays (editable backoffice config) ───────────
+    public DbSet<RosterMember>       Roster              => Set<RosterMember>();
+    public DbSet<SharedHoliday>      SharedHolidays      => Set<SharedHoliday>();
+    public DbSet<CustomTaskTemplate> CustomTaskTemplates => Set<CustomTaskTemplate>();
+
     // ── Sprint Plan CRUD ──────────────────────────────────────────────────────
     public DbSet<SprintPlanHeader>     SprintPlans           => Set<SprintPlanHeader>();
     public DbSet<SprintPlanAllocation> SprintPlanAllocations => Set<SprintPlanAllocation>();
@@ -122,5 +127,14 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .WithMany()
             .HasForeignKey(l => l.SprintPlanId)
             .OnDelete(DeleteBehavior.Cascade);
+
+        // ── Team roster + shared holidays ────────────────────────────────────
+        modelBuilder.Entity<RosterMember>()
+            .Property(m => m.HoursPerDay)
+            .HasPrecision(4, 2);
+
+        modelBuilder.Entity<SharedHoliday>()
+            .HasIndex(h => h.Date)
+            .IsUnique();
     }
 }

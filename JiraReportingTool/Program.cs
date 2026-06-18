@@ -17,6 +17,7 @@ builder.Services.AddScoped<JiraDbRepository>();
 builder.Services.AddScoped<IJiraService, JiraCacheService>();
 builder.Services.AddScoped<DataSyncService>();
 builder.Services.AddScoped<SprintConfigService>();
+builder.Services.AddScoped<TeamRosterService>();
 builder.Services.AddScoped<ISprintPlanService, SprintPlanService>();
 builder.Services.AddHttpClient<GitHubService>();
 
@@ -27,6 +28,10 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     db.Database.Migrate();
+
+    // Seed the team roster from the historical hard-coded list on first run.
+    var roster = scope.ServiceProvider.GetRequiredService<TeamRosterService>();
+    await roster.SeedDefaultsIfEmptyAsync();
 }
 
 // Configure the HTTP request pipeline.

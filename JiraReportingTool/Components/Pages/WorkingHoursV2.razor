@@ -1,6 +1,8 @@
 @page "/working-hours-v2"
 @rendermode InteractiveServer
 @inject IJiraService JiraService
+@inject TeamRosterService Roster
+@inject SprintConfigService SprintConfig
 @inject IJSRuntime JS
 @using JiraReportingTool.Models
 @using ClosedXML.Excel
@@ -33,6 +35,7 @@
                 <div class="v2-hero-actions">
                     <span class="v2-pill v2-pill-neutral"><i class="bi bi-collection"></i> @SprintReports.Count sprint@(SprintReports.Count == 1 ? "" : "s")</span>
                     <span class="v2-pill v2-pill-neutral"><i class="bi bi-people"></i> @ActiveMemberCount active</span>
+                    <span class="v2-pill @UtilPillClass(AvgUtilization)"><i class="bi bi-speedometer2"></i> @AvgUtilization.ToString("F0")% utilised</span>
                 </div>
             }
         </div>
@@ -53,7 +56,7 @@
         </button>
         @if (SprintReports.Count > 0)
         {
-            <span class="v2-hint" style="margin-left:auto">@FilteredEntryCount log entries · @TotalHours.ToString("F1") h total</span>
+            <span class="v2-hint" style="margin-left:auto">@FilteredEntryCount log entries · @TotalHours.ToString("F1") h logged · @WorkingDayCount working day@(WorkingDayCount == 1 ? "" : "s")</span>
         }
     </div>
 
@@ -62,45 +65,68 @@
         <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle-fill"></i> @ErrorMessage</div>
     }
 
+    @if (SprintReports.Count == 0 && IsLoading)
+    {
+        <!-- skeleton while first load runs -->
+        <div class="wh2-kpi-row">
+            @for (var s = 0; s < 7; s++)
+            {
+                <div class="wh2-kpi">
+                    <div class="v2-skeleton" style="height:12px;width:60%;margin-bottom:10px"></div>
+                    <div class="v2-skeleton" style="height:26px;width:45%"></div>
+                    <div class="v2-skeleton" style="height:10px;width:70%;margin-top:8px"></div>
+                </div>
+            }
+        </div>
+        <div class="v2-skeleton" style="height:280px;margin-top:14px;border-radius:var(--v2-r-md)"></div>
+    }
+
     @if (SprintReports.Count == 0 && !IsLoading)
     {
         <div class="v2-empty">
             <div class="v2-empty-icon"><i class="bi bi-clock"></i></div>
             <div class="v2-empty-title">Enter one or more sprint IDs to begin</div>
-            <div>Load worklog data to see hours by member, day and epic.</div>
+            <div>Load worklog data to see hours by member, day and epic — with capacity utilisation against the team roster.</div>
         </div>
     }
 
     @if (SprintReports.Count > 0)
     {
+        var heatDays = HeatDays; var heatMembers = HeatMembers; var heatMap = MemberDayHours;
+
         <!-- ═══ KPI STRIP ═════════════════════════════════════════════════════ -->
         <div class="wh2-kpi-row">
-            <div class="wh2-kpi wh2-kpi-accent">
+            <div class="wh2-kpi" style="--kpi-accent:var(--v2-brand-grad)">
                 <div class="wh2-kpi-label"><i class="bi bi-clock-fill"></i> Total Hours</div>
                 <div class="wh2-kpi-val">@TotalHours.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
                 <div class="wh2-kpi-sub">filtered logs</div>
             </div>
-            <div class="wh2-kpi">
+            <div class="wh2-kpi" style="--kpi-accent:@UtilAccent(AvgUtilization)">
+                <div class="wh2-kpi-label"><i class="bi bi-speedometer2"></i> Utilisation</div>
+                <div class="wh2-kpi-val">@AvgUtilization.ToString("F0")<span class="wh2-kpi-unit">%</span></div>
+                <div class="wh2-kpi-sub">@TotalHours.ToString("F0") / @TotalCapacityHours.ToString("F0") h capacity</div>
+            </div>
+            <div class="wh2-kpi" style="--kpi-accent:linear-gradient(180deg,#6366f1,#8b5cf6)">
                 <div class="wh2-kpi-label"><i class="bi bi-people-fill"></i> Members</div>
                 <div class="wh2-kpi-val">@ActiveMemberCount</div>
                 <div class="wh2-kpi-sub">contributors</div>
             </div>
-            <div class="wh2-kpi">
+            <div class="wh2-kpi" style="--kpi-accent:linear-gradient(180deg,#8b5cf6,#a855f7)">
                 <div class="wh2-kpi-label"><i class="bi bi-journal-text"></i> Log Entries</div>
                 <div class="wh2-kpi-val">@FilteredEntryCount</div>
                 <div class="wh2-kpi-sub">worklog records</div>
             </div>
-            <div class="wh2-kpi">
+            <div class="wh2-kpi" style="--kpi-accent:linear-gradient(180deg,#a855f7,#d946ef)">
                 <div class="wh2-kpi-label"><i class="bi bi-person-lines-fill"></i> Avg / Member</div>
                 <div class="wh2-kpi-val">@AvgHoursPerMember.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
                 <div class="wh2-kpi-sub">mean per contributor</div>
             </div>
-            <div class="wh2-kpi">
+            <div class="wh2-kpi" style="--kpi-accent:linear-gradient(180deg,#6366f1,#4f46e5)">
                 <div class="wh2-kpi-label"><i class="bi bi-calendar-day"></i> Avg / Day</div>
                 <div class="wh2-kpi-val">@AvgHoursPerDay.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
                 <div class="wh2-kpi-sub">mean per workday</div>
             </div>
-            <div class="wh2-kpi">
+            <div class="wh2-kpi" style="--kpi-accent:linear-gradient(180deg,#7c3aed,#a855f7)">
                 <div class="wh2-kpi-label"><i class="bi bi-graph-up"></i> Peak Day</div>
                 <div class="wh2-kpi-val">@MaxDayHours.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
                 <div class="wh2-kpi-sub">highest single-day</div>
@@ -122,12 +148,22 @@
             </div>
             <div class="wh2-insight-sep"></div>
             <div class="wh2-insight-item">
-                <i class="bi bi-download" style="color:#10b981"></i>
-                <button class="wh2-export-btn" @onclick="ExportToExcel" disabled="@IsExporting">
-                    @if (IsExporting) { <span class="v2-spin" style="width:12px;height:12px"></span> }
-                    Export .xlsx
-                </button>
+                <i class="bi bi-collection-fill" style="color:var(--v2-brand-2)"></i>
+                <span class="wh2-insight-label">Most-active epic</span>
+                <span class="wh2-insight-val">@MostActiveEpic</span>
             </div>
+            <div class="wh2-insight-spacer"></div>
+            @if (SelectedMembers.Count == 1)
+            {
+                <button class="wh2-focus-clear" @onclick="SelectAllMembers" title="Clear member focus">
+                    <i class="bi bi-x-circle"></i> Focused: @SelectedMembers.First()
+                </button>
+            }
+            <button class="wh2-export-btn" @onclick="ExportToExcel" disabled="@IsExporting">
+                @if (IsExporting) { <span class="v2-spin" style="width:12px;height:12px"></span> }
+                else { <i class="bi bi-download"></i> }
+                Export .xlsx
+            </button>
         </div>
 
         <!-- ═══ FILTERS ═══════════════════════════════════════════════════════ -->
@@ -144,8 +180,13 @@
                             <button class="wh2-link-btn" @onclick="ClearMembersFilter">None</button>
                         </div>
                     </div>
+                    @if (AllAuthors.Count > 8)
+                    {
+                        <input class="v2-input v2-input-sm wh2-chip-search" placeholder="Filter members…"
+                               @bind="_memberSearch" @bind:event="oninput" />
+                    }
                     <div class="wh2-chip-list">
-                        @foreach (var author in AllAuthors)
+                        @foreach (var author in AllAuthors.Where(a => MatchSearch(a, _memberSearch)))
                         {
                             var a = author;
                             <button class="wh2-chip @(SelectedMembers.Contains(a) ? "is-on" : "")"
@@ -168,8 +209,13 @@
                             <button class="wh2-link-btn" @onclick="ClearEpicsFilter">None</button>
                         </div>
                     </div>
+                    @if (AllEpics.Count > 8)
+                    {
+                        <input class="v2-input v2-input-sm wh2-chip-search" placeholder="Filter epics…"
+                               @bind="_epicSearch" @bind:event="oninput" />
+                    }
                     <div class="wh2-chip-list">
-                        @foreach (var (key, name) in AllEpics)
+                        @foreach (var (key, name) in AllEpics.Where(e => MatchSearch(e.Key, _epicSearch) || MatchSearch(e.Name, _epicSearch)))
                         {
                             var k = key; var n = name;
                             <button class="wh2-chip wh2-chip-mono @(SelectedEpics.Contains(k) ? "is-on" : "")" title="@n"
@@ -202,22 +248,146 @@
         <!-- ═══ CHARTS ════════════════════════════════════════════════════════ -->
         <div class="wh2-chart-grid">
             <div class="v2-card">
-                <div class="v2-section-title"><i class="bi bi-bar-chart-line" style="color:var(--v2-brand)"></i>Hours per Member</div>
-                <div style="height:@(Math.Clamp(AllAuthors.Count * 28, 200, 480))px;position:relative">
+                <div class="v2-section-title"><i class="bi bi-bar-chart-line" style="color:var(--v2-brand)"></i>Logged vs Capacity per Member</div>
+                <div style="height:@(Math.Clamp(ActiveMemberCount * 30, 220, 520))px;position:relative">
                     <canvas id="chart-hours-member"></canvas>
                 </div>
             </div>
             <div class="v2-card">
-                <div class="v2-section-title"><i class="bi bi-calendar-event" style="color:#6366f1"></i>Hours per Day</div>
-                <div style="height:@(Math.Clamp(AllAuthors.Count * 28, 200, 480))px;position:relative">
+                <div class="v2-section-title"><i class="bi bi-calendar-event" style="color:var(--v2-brand-3)"></i>Hours per Day <span class="v2-section-note">· dashed line = team daily capacity</span></div>
+                <div style="height:300px;position:relative">
                     <canvas id="chart-hours-day"></canvas>
                 </div>
             </div>
             <div class="v2-card">
-                <div class="v2-section-title"><i class="bi bi-pie-chart" style="color:#7c3aed"></i>Hours per Epic</div>
-                <div style="height:@(Math.Clamp(AllAuthors.Count * 28, 200, 480))px;position:relative">
+                <div class="v2-section-title"><i class="bi bi-pie-chart" style="color:var(--v2-brand-2)"></i>Hours per Epic</div>
+                <div style="height:300px;position:relative">
                     <canvas id="chart-hours-epic"></canvas>
                 </div>
+            </div>
+        </div>
+
+        <!-- ═══ ACTIVITY HEATMAP ══════════════════════════════════════════════ -->
+        @if (heatDays.Count > 0 && heatMembers.Count > 0)
+        {
+            <div class="v2-card">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:10px">
+                    <div class="v2-section-title" style="margin:0"><i class="bi bi-grid-3x3-gap-fill" style="color:var(--v2-brand)"></i>Activity Heatmap <span class="v2-section-note">· hours logged per member per day</span></div>
+                    <div class="wh2-heat-legend">
+                        <span>Less</span>
+                        <span class="wh2-heat-swatch wh2-h0"></span>
+                        <span class="wh2-heat-swatch wh2-h1"></span>
+                        <span class="wh2-heat-swatch wh2-h2"></span>
+                        <span class="wh2-heat-swatch wh2-h3"></span>
+                        <span class="wh2-heat-swatch wh2-h4"></span>
+                        <span class="wh2-heat-swatch wh2-h5"></span>
+                        <span>More</span>
+                    </div>
+                </div>
+                <div class="wh2-heat">
+                    <div class="wh2-heat-grid" style="grid-template-columns:150px repeat(@heatDays.Count, minmax(26px, 1fr))">
+                        <!-- header -->
+                        <div class="wh2-heat-corner"></div>
+                        @foreach (var d in heatDays)
+                        {
+                            var wknd = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+                            <div class="wh2-heat-colh @(wknd ? "weekend" : "")" title="@d.ToString("dddd, MMM d")">
+                                <span class="wh2-heat-dow">@d.ToString("ddd")</span>
+                                <span class="wh2-heat-dom">@d.Day</span>
+                            </div>
+                        }
+                        <!-- rows -->
+                        @foreach (var member in heatMembers)
+                        {
+                            var mTotal = heatMap.TryGetValue(member, out var mm) ? mm.Values.Sum() : 0;
+                            <div class="wh2-heat-rowlabel" title="@member — @mTotal.ToString("F1") h total">
+                                <span class="wh2-heat-avatar">@Initials(member)</span>
+                                <span class="v2-truncate">@member</span>
+                            </div>
+                            @foreach (var d in heatDays)
+                            {
+                                var wknd = d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+                                var hrs  = heatMap.TryGetValue(member, out var dm) && dm.TryGetValue(d.Date, out var h) ? h : 0;
+                                <div class="wh2-heat-cell @HeatClass(hrs) @(wknd ? "weekend" : "")"
+                                     title="@member · @d.ToString("ddd MMM d") · @hrs.ToString("F2") h">
+                                    @(hrs > 0 ? hrs.ToString("0.#") : "")
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- ═══ PER-MEMBER SUMMARY ════════════════════════════════════════════ -->
+        <div class="v2-card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+                <div class="v2-section-title" style="margin:0"><i class="bi bi-person-rolodex"></i>Member Summary <span class="v2-section-note">· click a name to focus</span></div>
+                <span class="v2-hint">@WorkingDayCount working day@(WorkingDayCount == 1 ? "" : "s") in range · capacity from roster</span>
+            </div>
+            <div class="v2-table-wrap">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th>Member</th>
+                            <th class="v2-table-num">Logged</th>
+                            <th class="v2-table-num">Active days</th>
+                            <th class="v2-table-num">Avg / active day</th>
+                            <th class="v2-table-num">Capacity</th>
+                            <th style="width:200px">Utilisation</th>
+                            <th>Top epic</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var m in MemberSummaries)
+                        {
+                            <tr>
+                                <td>
+                                    <button class="wh2-member-btn" @onclick="() => FocusMember(m.Name)" title="Focus on @m.Name">
+                                        <span class="v2-avatar v2-avatar-sm">@Initials(m.Name)</span>
+                                        <span style="font-weight:600">@m.Name</span>
+                                    </button>
+                                </td>
+                                <td class="v2-table-num" style="font-weight:700">@m.Hours.ToString("F1")</td>
+                                <td class="v2-table-num">@m.ActiveDays</td>
+                                <td class="v2-table-num">@m.AvgPerActiveDay.ToString("F1")</td>
+                                <td class="v2-table-num v2-text-muted">@m.Capacity.ToString("F0")</td>
+                                <td>
+                                    <div class="wh2-util-row">
+                                        <div class="v2-bar" style="flex:1">
+                                            <div class="v2-bar-fill @UtilBarClass(m.Util)" style="width:@(Math.Clamp(m.Util, 0, 100).ToString("F0"))%"></div>
+                                        </div>
+                                        <span class="wh2-util-pct @UtilTextClass(m.Util)">@m.Util.ToString("F0")%</span>
+                                    </div>
+                                </td>
+                                <td style="white-space:nowrap">
+                                    @if (m.TopEpic != "—")
+                                    {
+                                        <span style="font-size:11px;font-weight:700;color:var(--v2-brand)">@m.TopEpic</span>
+                                    }
+                                    else { <span class="v2-hint">—</span> }
+                                </td>
+                            </tr>
+                        }
+                        @if (MemberSummaries.Count == 0)
+                        {
+                            <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--v2-ink-4)">No members match the current filters.</td></tr>
+                        }
+                    </tbody>
+                    @if (MemberSummaries.Count > 0)
+                    {
+                        <tfoot>
+                            <tr style="background:var(--v2-surface-2);font-weight:700;border-top:2px solid var(--v2-border)">
+                                <td style="padding:8px 14px">Total</td>
+                                <td class="v2-table-num" style="padding:8px 14px">@TotalHours.ToString("F1")</td>
+                                <td colspan="2"></td>
+                                <td class="v2-table-num" style="padding:8px 14px">@TotalCapacityHours.ToString("F0")</td>
+                                <td class="v2-table-num" style="padding:8px 14px">@AvgUtilization.ToString("F0")%</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    }
+                </table>
             </div>
         </div>
 
@@ -245,6 +415,7 @@
                 var epicHours = eg.Rows.Sum(r => r.TimeSpentSeconds) / 3600.0;
                 var epicMembers = eg.Rows.Select(r => r.Author).Distinct().OrderBy(a => a).ToList();
                 var hasEpic  = epicKey != "—";
+                var epicShare = TotalHours > 0 ? epicHours / TotalHours * 100 : 0;
 
                 <div class="wh2-epic-block">
                     <!-- Header row -->
@@ -262,12 +433,15 @@
                         }
 
                         <div class="wh2-epic-meta">
+                            <span class="wh2-epic-share" title="@epicShare.ToString("F0")% of logged hours">
+                                <span class="wh2-epic-share-fill" style="width:@epicShare.ToString("F0")%"></span>
+                            </span>
                             <span class="wh2-epic-stat"><i class="bi bi-journal-text"></i>@eg.Rows.Count entries</span>
                             <span class="wh2-epic-stat wh2-epic-hours"><i class="bi bi-clock"></i>@epicHours.ToString("F1") h</span>
                             <div class="wh2-epic-members">
                                 @foreach (var m in epicMembers.Take(6))
                                 {
-                                    <span class="wh2-avatar" title="@m">@(string.Concat(m.Split(' ').Take(2).Select(p => p.Length > 0 ? p[0].ToString() : "")))</span>
+                                    <span class="wh2-avatar" title="@m">@Initials(m)</span>
                                 }
                                 @if (epicMembers.Count > 6)
                                 {
@@ -295,9 +469,10 @@
                                 <tbody>
                                     @foreach (var wl in eg.Rows.OrderByDescending(r => r.Date).ThenBy(r => r.Author))
                                     {
+                                        var wknd = wl.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
                                         <tr>
                                             <td class="v2-hint" style="white-space:nowrap;font-size:12px">@wl.Date.ToString("yyyy-MM-dd")</td>
-                                            <td class="v2-hint" style="white-space:nowrap;font-size:12px">@wl.Date.ToString("ddd")</td>
+                                            <td class="@(wknd ? "wh2-weekend-day" : "v2-hint")" style="white-space:nowrap;font-size:12px">@wl.Date.ToString("ddd")</td>
                                             <td style="font-weight:600;white-space:nowrap">@wl.Author</td>
                                             <td class="v2-table-num" style="font-weight:700">@((wl.TimeSpentSeconds / 3600.0).ToString("F2"))</td>
                                             <td><span class="v2-table-key">@wl.IssueKey</span></td>
@@ -396,19 +571,26 @@
     /* ── KPI strip ─────────────────────────────────────────────────────── */
     .wh2-kpi-row {
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 10px;
     }
     .wh2-kpi {
-        background: var(--v2-surface);
+        position: relative;
+        background: var(--v2-elevated);
         border: 1px solid var(--v2-border);
-        border-radius: 10px;
-        padding: 14px 16px;
+        border-radius: var(--v2-r-md);
+        padding: 14px 16px 14px 18px;
         box-shadow: var(--v2-sh-xs);
+        overflow: hidden;
+        transition: transform .15s, box-shadow .15s;
     }
-    .wh2-kpi-accent { border-top: 3px solid #10b981; }
+    .wh2-kpi:hover { transform: translateY(-2px); box-shadow: var(--v2-sh-md); }
+    .wh2-kpi::before {
+        content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+        background: var(--kpi-accent, var(--v2-brand-grad));
+    }
     .wh2-kpi-label  { font-size: 11px; font-weight: 600; color: var(--v2-ink-3); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; display: flex; align-items: center; gap: 5px; }
-    .wh2-kpi-val    { font-size: 26px; font-weight: 800; color: var(--v2-ink-1); line-height: 1.1; }
+    .wh2-kpi-val    { font-size: 26px; font-weight: 800; color: var(--v2-ink-1); line-height: 1.1; font-variant-numeric: tabular-nums; }
     .wh2-kpi-unit   { font-size: 14px; font-weight: 600; color: var(--v2-ink-3); margin-left: 2px; }
     .wh2-kpi-sub    { font-size: 11px; color: var(--v2-ink-4); margin-top: 3px; }
 
@@ -417,29 +599,38 @@
         display: flex;
         align-items: center;
         gap: 0;
-        background: var(--v2-surface);
+        background: var(--v2-elevated);
         border: 1px solid var(--v2-border);
-        border-radius: 10px;
+        border-radius: var(--v2-r-md);
         padding: 10px 20px;
         box-shadow: var(--v2-sh-xs);
+        margin-top: 14px;
+        flex-wrap: wrap;
     }
     .wh2-insight-item   { display: flex; align-items: center; gap: 8px; padding: 2px 16px; }
     .wh2-insight-item:first-child { padding-left: 0; }
     .wh2-insight-label  { font-size: 12px; color: var(--v2-ink-3); }
     .wh2-insight-val    { font-size: 13px; font-weight: 700; color: var(--v2-ink-1); }
     .wh2-insight-sep    { width: 1px; height: 22px; background: var(--v2-border); flex-shrink: 0; }
-    .wh2-export-btn {
-        background: none; border: none; cursor: pointer;
-        font-size: 13px; font-weight: 600; color: #15803d;
-        padding: 0; display: flex; align-items: center; gap: 5px;
+    .wh2-insight-spacer { flex: 1; }
+    .wh2-focus-clear {
+        background: var(--v2-brand-soft); border: 1px solid #c7d2fe; cursor: pointer;
+        font-size: 12px; font-weight: 600; color: var(--v2-brand);
+        padding: 4px 10px; border-radius: 999px; display: flex; align-items: center; gap: 5px;
+        margin-right: 14px;
     }
-    .wh2-export-btn:hover:not(:disabled) { color: #166534; text-decoration: underline; }
+    .wh2-focus-clear:hover { background: #e0e7ff; }
+    .wh2-export-btn {
+        background: var(--v2-success-soft); border: 1px solid var(--v2-success-border); cursor: pointer;
+        font-size: 12px; font-weight: 600; color: #15803d;
+        padding: 5px 12px; border-radius: 8px; display: flex; align-items: center; gap: 6px;
+    }
+    .wh2-export-btn:hover:not(:disabled) { background: #d1fae5; }
     .wh2-export-btn:disabled { opacity: .5; cursor: default; }
 
     /* ── Filter card ───────────────────────────────────────────────────── */
-    .wh2-filter-card    { padding: 16px 20px; }
+    .wh2-filter-card    { padding: 16px 20px; margin-top: 16px; }
     .wh2-filter-grid    { display: grid; grid-template-columns: 1fr 1fr 200px; gap: 24px; align-items: start; }
-    .wh2-filter-col     {}
     .wh2-filter-col-sm  { min-width: 0; }
     .wh2-filter-head    { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     .wh2-filter-title   { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--v2-ink-2); display: flex; align-items: center; gap: 5px; }
@@ -448,13 +639,14 @@
     .wh2-link-btn:hover { text-decoration: underline; }
     .wh2-dot-sep        { font-size: 10px; color: var(--v2-ink-4); }
     .wh2-filter-count   { font-size: 11px; color: var(--v2-ink-4); margin-top: 8px; }
+    .wh2-chip-search    { width: 100%; margin-bottom: 8px; }
 
     /* chip list */
     .wh2-chip-list { display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto; padding: 2px 0 4px; }
     .wh2-chip {
         display: inline-flex; align-items: center; gap: 3px;
         padding: 3px 9px;
-        border-radius: 4px;
+        border-radius: 6px;
         border: 1px solid var(--v2-border);
         background: var(--v2-surface);
         color: var(--v2-ink-2);
@@ -464,18 +656,61 @@
         white-space: nowrap;
         user-select: none;
     }
-    .wh2-chip:hover             { border-color: #93c5fd; background: #f0f9ff; color: var(--v2-brand); }
-    .wh2-chip.is-on             { background: #eff6ff; border-color: #93c5fd; color: #1d4ed8; font-weight: 600; }
+    .wh2-chip:hover             { border-color: #c7d2fe; background: var(--v2-brand-soft); color: var(--v2-brand); }
+    .wh2-chip.is-on             { background: var(--v2-brand-soft); border-color: #c7d2fe; color: #4338ca; font-weight: 600; }
     .wh2-chip.wh2-chip-mono     { font-family: monospace; font-size: 10.5px; }
 
     /* ── Chart grid ────────────────────────────────────────────────────── */
-    .wh2-chart-grid { display: grid; grid-template-columns: 1fr 1fr 300px; gap: 12px; }
+    .wh2-chart-grid { display: grid; grid-template-columns: 1fr 1fr 320px; gap: 12px; margin-top: 16px; }
+    @@media (max-width: 1100px) { .wh2-chart-grid { grid-template-columns: 1fr; } }
+
+    /* ── Activity heatmap ──────────────────────────────────────────────── */
+    .wh2-heat { overflow-x: auto; padding-bottom: 4px; }
+    .wh2-heat-grid { display: grid; gap: 3px; align-items: center; min-width: max-content; }
+    .wh2-heat-corner { }
+    .wh2-heat-colh {
+        display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+        font-size: 9px; color: var(--v2-ink-3); font-weight: 600; line-height: 1.3; padding-bottom: 3px;
+    }
+    .wh2-heat-colh .wh2-heat-dom { font-size: 11px; font-weight: 700; color: var(--v2-ink-2); }
+    .wh2-heat-colh.weekend { color: var(--v2-ink-5); }
+    .wh2-heat-colh.weekend .wh2-heat-dom { color: var(--v2-ink-4); }
+    .wh2-heat-rowlabel { font-size: 12px; font-weight: 600; color: var(--v2-ink-2); white-space: nowrap; padding-right: 10px; display: flex; align-items: center; gap: 7px; overflow: hidden; }
+    .wh2-heat-avatar {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 22px; height: 22px; border-radius: 50%;
+        background: var(--v2-brand-grad); color: #fff;
+        font-size: 9px; font-weight: 700; flex-shrink: 0;
+        box-shadow: 0 2px 6px rgba(99,102,241,0.2);
+    }
+    .wh2-heat-cell {
+        height: 30px; border-radius: 5px; background: #eef1f6;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 10px; font-weight: 700; color: #fff;
+        cursor: default; transition: transform .1s, box-shadow .1s;
+    }
+    .wh2-heat-cell:hover { transform: scale(1.12); box-shadow: var(--v2-sh-sm); z-index: 1; }
+    .wh2-heat-cell.weekend { background: #f1f5f9; }
+    .wh2-h0 { background: #eef1f6; }
+    .wh2-h1 { background: #e0e7ff; color: #4338ca; }
+    .wh2-h2 { background: #a5b4fc; color: #312e81; }
+    .wh2-h3 { background: #818cf8; }
+    .wh2-h4 { background: #6366f1; }
+    .wh2-h5 { background: #4f46e5; }
+    .wh2-heat-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--v2-ink-4); }
+    .wh2-heat-swatch { width: 16px; height: 16px; border-radius: 4px; display: inline-block; }
+
+    /* ── Member summary ────────────────────────────────────────────────── */
+    .wh2-member-btn { display: flex; align-items: center; gap: 8px; background: none; border: none; cursor: pointer; padding: 0; color: var(--v2-ink-1); }
+    .wh2-member-btn:hover span:last-child { color: var(--v2-brand); text-decoration: underline; }
+    .wh2-util-row { display: flex; align-items: center; gap: 8px; }
+    .wh2-util-pct { font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 38px; text-align: right; }
 
     /* ── Epic accordion ────────────────────────────────────────────────── */
     .wh2-epic-block {
         border: 1px solid var(--v2-border);
-        border-radius: 8px;
-        background: var(--v2-surface);
+        border-radius: var(--v2-r-sm);
+        background: var(--v2-elevated);
         margin-bottom: 6px;
         overflow: hidden;
         box-shadow: var(--v2-sh-xs);
@@ -490,23 +725,26 @@
     .wh2-chevron   { font-size: 11px; color: var(--v2-ink-3); flex-shrink: 0; width: 12px; }
     .wh2-epic-key  {
         font-family: monospace; font-size: 11px; font-weight: 700;
-        color: var(--v2-brand); background: #eff6ff; border: 1px solid #bfdbfe;
-        border-radius: 3px; padding: 1px 6px; white-space: nowrap; flex-shrink: 0;
+        color: var(--v2-brand); background: var(--v2-brand-soft); border: 1px solid #c7d2fe;
+        border-radius: 4px; padding: 1px 6px; white-space: nowrap; flex-shrink: 0;
     }
     .wh2-epic-name { font-size: 13px; font-weight: 600; color: var(--v2-ink-1); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .wh2-epic-meta { display: flex; align-items: center; gap: 14px; flex-shrink: 0; margin-left: auto; }
+    .wh2-epic-share { width: 60px; height: 6px; border-radius: 999px; background: #eef0f6; overflow: hidden; flex-shrink: 0; }
+    .wh2-epic-share-fill { display: block; height: 100%; border-radius: 999px; background: var(--v2-brand-grad); }
     .wh2-epic-stat { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--v2-ink-3); white-space: nowrap; }
     .wh2-epic-hours { font-weight: 700; color: var(--v2-ink-1); }
     .wh2-epic-members { display: flex; gap: 3px; }
     .wh2-avatar {
         display: inline-flex; align-items: center; justify-content: center;
         width: 22px; height: 22px; border-radius: 50%;
-        background: #e0e7ff; color: #3730a3;
+        background: var(--v2-brand-grad); color: #fff;
         font-size: 9px; font-weight: 700; border: 1.5px solid white;
         flex-shrink: 0;
     }
     .wh2-avatar-more { background: var(--v2-surface-2); color: var(--v2-ink-3); }
     .wh2-epic-body { border-top: 1px solid var(--v2-border); }
+    .wh2-weekend-day { color: var(--v2-warn); font-weight: 600; }
 </style>
 
 @code {
@@ -516,8 +754,9 @@
     private string? ErrorMessage;
     private bool _renderCharts;
 
-    private string _sortColWH = ""; private bool _sortAscWH = true;
-    private void SortWH(string c) { if (_sortColWH == c) _sortAscWH = !_sortAscWH; else { _sortColWH = c; _sortAscWH = true; } }
+    private string _memberSearch = "";
+    private string _epicSearch = "";
+
     private string _sortColDF = ""; private bool _sortAscDF = true;
     private void SortDF(string c) { if (_sortColDF == c) _sortAscDF = !_sortAscDF; else { _sortColDF = c; _sortAscDF = true; } }
 
@@ -540,8 +779,27 @@
     private static string SI2(string c, string sc, bool sa) =>
         sc == c ? (sa ? "v2-sortable v2-sort-asc" : "v2-sortable v2-sort-desc") : "v2-sortable";
 
+    private static bool MatchSearch(string text, string search) =>
+        string.IsNullOrWhiteSpace(search) || (text?.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase) ?? false);
+
     private List<int> ParsedSprintIds = [];
     private List<SprintReport> SprintReports = [];
+
+    // ── Roster (capacity source) ─────────────────────────────────────────────────
+    private List<RosterMember> _roster = [];
+    private List<SharedHoliday> _holidays = [];
+
+    // Matches a Jira author/assignee display name to a roster member name on word boundaries.
+    private static bool AuthorMatchesMember(string? author, string memberName)
+    {
+        if (string.IsNullOrWhiteSpace(author) || string.IsNullOrWhiteSpace(memberName)) return false;
+        var words = author.Split(new[] { ' ', '.', ',', '-', '_', '@', '(', ')', '\t' },
+                                 StringSplitOptions.RemoveEmptyEntries);
+        return words.Any(w => string.Equals(w, memberName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private decimal HoursPerDayFor(string author) =>
+        _roster.FirstOrDefault(r => AuthorMatchesMember(author, r.Name))?.HoursPerDay ?? 6m;
 
     // ── Filters ────────────────────────────────────────────────────────────────
     private HashSet<string> SelectedMembers = [];
@@ -580,6 +838,10 @@
         string Assignee, string EpicKey, string EpicName,
         int? StoryPoints, double HoursLogged, string SprintName);
 
+    private sealed record MemberSummaryRow(
+        string Name, double Hours, int ActiveDays, double AvgPerActiveDay,
+        double Capacity, double Util, string TopEpic);
+
     private List<WorklogRow> AllWorklogs => SprintReports
         .SelectMany(r => r.Issues)
         .SelectMany(i => i.Worklogs.Select(w => new WorklogRow(
@@ -588,29 +850,15 @@
         .OrderByDescending(w => w.Date).ThenBy(w => w.Author)
         .ToList();
 
-    private List<WorklogRow> FilteredWorklogs
-    {
-        get
-        {
-            var q = AllWorklogs.Where(w =>
-                !string.IsNullOrEmpty(w.Author) &&
-                (SelectedMembers.Count == 0 || SelectedMembers.Contains(w.Author)) &&
-                (SelectedEpics.Count == 0   || SelectedEpics.Contains(w.EpicKey)) &&
-                (!DateFrom.HasValue || w.Date >= DateFrom.Value.Date) &&
-                (!DateTo.HasValue   || w.Date <= DateTo.Value.Date));
-            return (_sortColWH switch
-            {
-                "Date"    => _sortAscWH ? q.OrderBy(w => w.Date)                : q.OrderByDescending(w => w.Date),
-                "Day"     => _sortAscWH ? q.OrderBy(w => (int)w.Date.DayOfWeek) : q.OrderByDescending(w => (int)w.Date.DayOfWeek),
-                "Member"  => _sortAscWH ? q.OrderBy(w => w.Author)              : q.OrderByDescending(w => w.Author),
-                "Hours"   => _sortAscWH ? q.OrderBy(w => w.TimeSpentSeconds)    : q.OrderByDescending(w => w.TimeSpentSeconds),
-                "Task"    => _sortAscWH ? q.OrderBy(w => w.IssueKey)            : q.OrderByDescending(w => w.IssueKey),
-                "Summary" => _sortAscWH ? q.OrderBy(w => w.IssueSummary)        : q.OrderByDescending(w => w.IssueSummary),
-                "Epic"    => _sortAscWH ? q.OrderBy(w => w.EpicName)            : q.OrderByDescending(w => w.EpicName),
-                _         => q.OrderByDescending(w => w.Date).ThenBy(w => w.Author),
-            }).ToList();
-        }
-    }
+    private List<WorklogRow> FilteredWorklogs =>
+        AllWorklogs.Where(w =>
+            !string.IsNullOrEmpty(w.Author) &&
+            (SelectedMembers.Count == 0 || SelectedMembers.Contains(w.Author)) &&
+            (SelectedEpics.Count == 0   || SelectedEpics.Contains(w.EpicKey)) &&
+            (!DateFrom.HasValue || w.Date >= DateFrom.Value.Date) &&
+            (!DateTo.HasValue   || w.Date <= DateTo.Value.Date))
+        .OrderByDescending(w => w.Date).ThenBy(w => w.Author)
+        .ToList();
 
     private List<DoneFeatureRow> DoneFeatures
     {
@@ -647,13 +895,68 @@
     private double DoneTotalHours => DoneFeatures.Sum(r => r.HoursLogged);
     private bool   ShowSprintColDF => SprintReports.Count > 1;
 
+    // ── Capacity / working days ──────────────────────────────────────────────────
+    private (DateTime From, DateTime To)? WorklogSpan
+    {
+        get
+        {
+            var dates = FilteredWorklogs.Select(w => w.Date).ToList();
+            if (dates.Count == 0) return null;
+            return (dates.Min(), dates.Max());
+        }
+    }
+
+    // The window capacity/heatmap are computed over. Prefers the sprint window
+    // (set from SprintReport dates on load), falls back to the worklog span, and
+    // is always capped at today so utilisation reflects elapsed — not future — days.
+    private (DateTime From, DateTime To)? AnalysisSpan
+    {
+        get
+        {
+            var span = WorklogSpan;
+            var from = DateFrom?.Date ?? span?.From;
+            var toRaw = DateTo?.Date ?? span?.To;
+            if (from is null || toRaw is null) return null;
+            var to = toRaw.Value > DateTime.Today ? DateTime.Today : toRaw.Value;
+            if (to < from.Value) to = from.Value;
+            return (from.Value, to);
+        }
+    }
+
+    private int WorkingDayCount
+    {
+        get
+        {
+            var span = AnalysisSpan;
+            if (span is null) return 0;
+            var holidaySet = _holidays.Select(h => h.Date.ToDateTime(TimeOnly.MinValue).Date).ToHashSet();
+            var count = 0;
+            for (var d = span.Value.From; d <= span.Value.To; d = d.AddDays(1))
+                if (d.DayOfWeek is not (DayOfWeek.Saturday or DayOfWeek.Sunday) && !holidaySet.Contains(d.Date))
+                    count++;
+            return count;
+        }
+    }
+
+    private double TotalCapacityHours
+    {
+        get
+        {
+            var wd = WorkingDayCount;
+            return FilteredWorklogs.Select(w => w.Author).Distinct()
+                .Sum(a => wd * (double)HoursPerDayFor(a));
+        }
+    }
+
+    private double AvgUtilization => TotalCapacityHours > 0 ? TotalHours / TotalCapacityHours * 100 : 0;
+
     // ── KPI properties ──────────────────────────────────────────────────────────
     private double TotalHours         => FilteredWorklogs.Sum(w => w.TimeSpentSeconds) / 3600.0;
     private int    ActiveMemberCount  => FilteredWorklogs.Select(w => w.Author).Distinct().Count();
     private int    FilteredEntryCount => FilteredWorklogs.Count;
     private double AvgHoursPerMember  => ActiveMemberCount > 0 ? TotalHours / ActiveMemberCount : 0;
 
-    private double AvgHoursPerDay => FilteredWorklogs.GroupBy(w => w.Date).Any()
+    private double AvgHoursPerDay => FilteredWorklogs.Select(w => w.Date).Distinct().Any()
         ? TotalHours / FilteredWorklogs.Select(w => w.Date).Distinct().Count()
         : 0;
 
@@ -674,7 +977,118 @@
         .Select(g => g.Key.ToString())
         .FirstOrDefault() ?? "—";
 
+    private string MostActiveEpic => FilteredWorklogs
+        .Where(w => !string.IsNullOrEmpty(w.EpicKey))
+        .GroupBy(w => w.EpicKey)
+        .OrderByDescending(g => g.Sum(w => w.TimeSpentSeconds))
+        .Select(g => g.Key)
+        .FirstOrDefault() ?? "—";
+
+    // ── Member summary rows ──────────────────────────────────────────────────────
+    private List<MemberSummaryRow> MemberSummaries
+    {
+        get
+        {
+            var wd = WorkingDayCount;
+            return FilteredWorklogs
+                .GroupBy(w => w.Author)
+                .Select(g =>
+                {
+                    var hours      = g.Sum(w => w.TimeSpentSeconds) / 3600.0;
+                    var activeDays = g.Select(w => w.Date).Distinct().Count();
+                    var capacity   = wd * (double)HoursPerDayFor(g.Key);
+                    var topEpic    = g.Where(w => !string.IsNullOrEmpty(w.EpicKey))
+                                      .GroupBy(w => w.EpicKey)
+                                      .OrderByDescending(eg => eg.Sum(w => w.TimeSpentSeconds))
+                                      .Select(eg => eg.Key).FirstOrDefault() ?? "—";
+                    return new MemberSummaryRow(
+                        g.Key, hours, activeDays,
+                        activeDays > 0 ? hours / activeDays : 0,
+                        capacity,
+                        capacity > 0 ? hours / capacity * 100 : 0,
+                        topEpic);
+                })
+                .OrderByDescending(m => m.Hours)
+                .ToList();
+        }
+    }
+
+    // ── Heatmap data ─────────────────────────────────────────────────────────────
+    private List<DateTime> HeatDays
+    {
+        get
+        {
+            var span = AnalysisSpan;
+            if (span is null) return [];
+            var list = new List<DateTime>();
+            for (var d = span.Value.From; d <= span.Value.To && list.Count < 90; d = d.AddDays(1))
+                list.Add(d);
+            return list;
+        }
+    }
+
+    private List<string> HeatMembers => FilteredWorklogs
+        .GroupBy(w => w.Author)
+        .OrderByDescending(g => g.Sum(w => w.TimeSpentSeconds))
+        .Select(g => g.Key)
+        .ToList();
+
+    private Dictionary<string, Dictionary<DateTime, double>> MemberDayHours => FilteredWorklogs
+        .GroupBy(w => w.Author)
+        .ToDictionary(
+            g => g.Key,
+            g => g.GroupBy(w => w.Date.Date)
+                  .ToDictionary(d => d.Key, d => d.Sum(w => w.TimeSpentSeconds) / 3600.0));
+
+    private static string HeatClass(double hours) => hours switch
+    {
+        <= 0  => "wh2-h0",
+        < 2   => "wh2-h1",
+        < 4   => "wh2-h2",
+        < 6   => "wh2-h3",
+        < 8   => "wh2-h4",
+        _     => "wh2-h5",
+    };
+
+    private static string Initials(string name) =>
+        string.Concat((name ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            .Take(2).Select(p => p.Length > 0 ? p[0].ToString() : "")).ToUpper();
+
+    // ── Utilisation styling helpers ──────────────────────────────────────────────
+    private static string UtilBarClass(double util) => util switch
+    {
+        >= 85 and <= 115 => "v2-bar-fill-success",
+        >= 60 and < 130  => "v2-bar-fill-warn",
+        _                => "v2-bar-fill-danger",
+    };
+    private static string UtilTextClass(double util) => util switch
+    {
+        >= 85 and <= 115 => "v2-text-success",
+        >= 60 and < 130  => "v2-text-warn",
+        _                => "v2-text-danger",
+    };
+    private static string UtilPillClass(double util) => util switch
+    {
+        >= 85 and <= 115 => "v2-pill-success",
+        >= 60 and < 130  => "v2-pill-warn",
+        _                => "v2-pill-danger",
+    };
+    private static string UtilAccent(double util) => util switch
+    {
+        >= 85 and <= 115 => "var(--v2-success-grad)",
+        >= 60 and < 130  => "var(--v2-warn-grad)",
+        _                => "var(--v2-danger-grad)",
+    };
+
     // ── Load ────────────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        // Default the sprint input to the dashboard-config sprint that contains today.
+        var current = await SprintConfig.GetCurrentAsync();
+        if (current is not null && string.IsNullOrWhiteSpace(SprintIdsInput))
+            SprintIdsInput = current.SprintId.ToString();
+    }
+
     private async Task HandleKeyUp(KeyboardEventArgs e)
     {
         if (e.Key == "Enter") await LoadData();
@@ -692,13 +1106,30 @@
         IsLoading = true; ErrorMessage = null;
         SprintReports.Clear(); SelectedMembers.Clear();
         DateFrom = null; DateTo = null;
+        _memberSearch = ""; _epicSearch = "";
         StateHasChanged();
 
         try
         {
-            var results    = await Task.WhenAll(ids.Select(id => JiraService.GetDeliveryDataAsync(id)));
+            // All of these hit the one circuit-scoped AppDbContext, so they MUST run
+            // sequentially — concurrent EF operations on a shared context throw.
+            _roster   = await Roster.GetAllAsync();
+            _holidays = await Roster.GetHolidaysAsync();
+
+            var reports = new List<SprintReport>();
+            foreach (var id in ids)
+                reports.Add(await JiraService.GetDeliveryDataAsync(id));
+
             ParsedSprintIds = ids;
-            SprintReports   = [.. results];
+            SprintReports   = reports;
+
+            // Bound the view to the sprint window so capacity/heatmap aren't skewed by
+            // stale worklogs logged on these issues long before the sprint. Users can clear it.
+            var starts = SprintReports.Where(r => r.StartDate.HasValue).Select(r => r.StartDate!.Value.Date).ToList();
+            var ends   = SprintReports.Where(r => r.EndDate.HasValue).Select(r => r.EndDate!.Value.Date).ToList();
+            if (starts.Count > 0) DateFrom = starts.Min();
+            if (ends.Count > 0)   DateTo   = ends.Max();
+
             SelectedMembers = new HashSet<string>(AllAuthors);
             SelectedEpics   = new HashSet<string>(AllEpics.Select(e => e.Key));
             _renderCharts   = true;
@@ -710,6 +1141,7 @@
     // ── Filter actions ──────────────────────────────────────────────────────────
     private void SelectAllMembers()   { SelectedMembers = new HashSet<string>(AllAuthors); OnFilterChanged(); }
     private void ClearMembersFilter() { SelectedMembers.Clear(); OnFilterChanged(); }
+    private void FocusMember(string member) { SelectedMembers = new HashSet<string> { member }; OnFilterChanged(); }
 
     private void ToggleMember(string author, bool selected)
     {
@@ -745,9 +1177,15 @@
 
     private async Task RenderMemberChart(List<WorklogRow> filtered)
     {
+        var wd = WorkingDayCount;
         var byMember = filtered
             .GroupBy(w => w.Author)
-            .Select(g => new { Name = g.Key, Hours = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1) })
+            .Select(g => new
+            {
+                Name     = g.Key,
+                Hours    = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1),
+                Capacity = Math.Round(wd * (double)HoursPerDayFor(g.Key), 1)
+            })
             .OrderByDescending(m => m.Hours).ToList();
         if (byMember.Count == 0) return;
 
@@ -757,14 +1195,22 @@
             data = new
             {
                 labels   = byMember.Select(m => m.Name).ToArray(),
-                datasets = new[]
+                datasets = new object[]
                 {
                     new
                     {
-                        label           = "Hours",
+                        label           = "Logged",
                         data            = byMember.Select(m => m.Hours).ToArray(),
-                        backgroundColor = byMember.Select((_, i) => ChartColor(i, 0.8)).ToArray(),
-                        borderColor     = byMember.Select((_, i) => ChartColor(i, 1.0)).ToArray(),
+                        backgroundColor = "rgba(99,102,241,0.85)",
+                        borderColor     = "rgba(79,70,229,1)",
+                        borderWidth = 1, borderRadius = 4
+                    },
+                    new
+                    {
+                        label           = "Capacity",
+                        data            = byMember.Select(m => m.Capacity).ToArray(),
+                        backgroundColor = "rgba(148,163,184,0.28)",
+                        borderColor     = "rgba(148,163,184,0.5)",
                         borderWidth = 1, borderRadius = 4
                     }
                 }
@@ -772,7 +1218,7 @@
             options = new
             {
                 indexAxis = "y", responsive = true, maintainAspectRatio = false,
-                plugins = new { legend = new { display = false } },
+                plugins = new { legend = new { display = true, position = "top", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 10 } } },
                 scales  = new { x = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } } }
             }
         });
@@ -786,20 +1232,37 @@
             .OrderBy(d => d.Date).ToList();
         if (byDay.Count == 0) return;
 
+        var capacity = Math.Round(TotalCapacityHours / Math.Max(1, WorkingDayCount), 1);
+
         await JS.InvokeVoidAsync("renderChart", "chart-hours-day", new
         {
             type = "bar",
             data = new
             {
                 labels   = byDay.Select(d => d.Date.ToString("MMM d")).ToArray(),
-                datasets = new[]
+                datasets = new object[]
                 {
                     new
                     {
+                        type            = "line",
+                        label           = "Team capacity",
+                        data            = byDay.Select(_ => capacity).ToArray(),
+                        borderColor     = "rgba(124,58,237,0.9)",
+                        borderWidth     = 2,
+                        borderDash      = new[] { 6, 4 },
+                        pointRadius     = 0,
+                        fill            = false,
+                        tension         = 0
+                    },
+                    new
+                    {
+                        type            = "bar",
                         label           = "Hours",
                         data            = byDay.Select(d => d.Hours).ToArray(),
-                        backgroundColor = "rgba(99,102,241,0.75)",
-                        borderColor     = "rgba(99,102,241,1)",
+                        backgroundColor = byDay.Select(d => d.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+                                            ? "rgba(217,119,6,0.55)" : "rgba(99,102,241,0.82)").ToArray(),
+                        borderColor     = byDay.Select(d => d.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+                                            ? "rgba(217,119,6,1)" : "rgba(79,70,229,1)").ToArray(),
                         borderWidth = 1, borderRadius = 4
                     }
                 }
@@ -807,7 +1270,7 @@
             options = new
             {
                 responsive = true, maintainAspectRatio = false,
-                plugins = new { legend = new { display = false } },
+                plugins = new { legend = new { display = true, position = "top", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 10 } } },
                 scales  = new
                 {
                     x = new { grid = new { display = false } },
@@ -837,9 +1300,9 @@
                     new
                     {
                         data            = byEpic.Select(e => e.Hours).ToArray(),
-                        backgroundColor = byEpic.Select((_, i) => ChartColor(i, 0.8)).ToArray(),
-                        borderColor     = byEpic.Select((_, i) => ChartColor(i, 1.0)).ToArray(),
-                        borderWidth = 1, hoverOffset = 4
+                        backgroundColor = byEpic.Select((_, i) => ChartColor(i, 0.85)).ToArray(),
+                        borderColor     = "#ffffff",
+                        borderWidth = 2, hoverOffset = 6
                     }
                 }
             },
@@ -848,29 +1311,31 @@
                 responsive = true, maintainAspectRatio = false,
                 plugins = new
                 {
-                    legend = new { position = "bottom", labels = new { font = new { size = 11 }, padding = 10 } }
+                    legend = new { position = "bottom", labels = new { font = new { size = 11 }, padding = 10, boxWidth = 12 } }
                 },
-                cutout = "60%"
+                cutout = "62%"
             }
         });
     }
 
+    // Cohesive indigo → violet → fuchsia brand categorical scale.
     private static string ChartColor(int index, double alpha)
     {
-        string[] palette =
+        (int R, int G, int B)[] palette =
         [
-            $"rgba(99,102,241,{alpha:F2})",
-            $"rgba(6,214,160,{alpha:F2})",
-            $"rgba(251,133,0,{alpha:F2})",
-            $"rgba(155,93,229,{alpha:F2})",
-            $"rgba(239,35,60,{alpha:F2})",
-            $"rgba(56,176,0,{alpha:F2})",
-            $"rgba(255,183,3,{alpha:F2})",
-            $"rgba(17,138,178,{alpha:F2})",
-            $"rgba(233,104,36,{alpha:F2})",
-            $"rgba(0,169,165,{alpha:F2})",
+            (79, 70, 229),    // indigo-600
+            (124, 58, 237),   // violet-600
+            (99, 102, 241),   // indigo-500
+            (168, 85, 247),   // purple-500
+            (139, 92, 246),   // violet-500
+            (217, 70, 239),   // fuchsia-500
+            (129, 140, 248),  // indigo-400
+            (192, 132, 252),  // purple-400
+            (236, 72, 153),   // pink-500
+            (167, 139, 250),  // violet-400
         ];
-        return palette[index % palette.Length];
+        var (r, g, b) = palette[index % palette.Length];
+        return $"rgba({r},{g},{b},{alpha:F2})";
     }
 
     // ── Export ──────────────────────────────────────────────────────────────────

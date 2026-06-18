@@ -25,6 +25,10 @@ public class SprintPlanHeader
     [MaxLength(2000)]
     public string LoadedEpicKeys { get; set; } = "";
 
+    /// <summary>Comma-separated individual Jira issue keys loaded directly (not via an epic) — re-fetched when the plan is opened.</summary>
+    [MaxLength(4000)]
+    public string LoadedTaskKeys { get; set; } = "";
+
     /// <summary>Comma-separated support-bug epic keys — bugs from these epics populate the Support Bug Time Logged column.</summary>
     [MaxLength(2000)]
     public string SupportBugEpicKeys { get; set; } = "";
@@ -82,6 +86,10 @@ public class SprintPlanCustomTask
 
     [MaxLength(20)]
     public string Color { get; set; } = "";
+
+    /// <summary>Jira epic key for "Feature Bug" tasks — drives the bug-time report. Empty otherwise.</summary>
+    [MaxLength(50)]
+    public string EpicKey { get; set; } = "";
 }
 
 /// <summary>Bank holiday date associated with a sprint plan.</summary>
@@ -139,6 +147,63 @@ public class SprintConfig
     public DateOnly EndDate   { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
+/// <summary>
+/// A team member available for sprint allocation. Editable via the Team Roster admin page
+/// (/team-roster) so onboarding/offboarding and capacity changes no longer require a code change.
+/// </summary>
+public class RosterMember
+{
+    public int Id { get; set; }
+
+    [MaxLength(100)]
+    public string Name { get; set; } = "";
+
+    [MaxLength(50)]
+    public string Team { get; set; } = "";
+
+    /// <summary>Daily capacity in hours (default 6). Lower for part-timers or heavy-meeting roles.</summary>
+    public decimal HoursPerDay { get; set; } = 6m;
+
+    /// <summary>Inactive members are hidden from the planning board but kept for historical plans.</summary>
+    public bool Active { get; set; } = true;
+
+    /// <summary>Controls display order within a team on the board.</summary>
+    public int SortOrder { get; set; }
+}
+
+/// <summary>
+/// A custom-task category available on the Sprint Planning board, managed on the
+/// Sprint Planning Config page. It defines only the category + colour; the board
+/// supplies the per-task name, hours, and (for Feature Bug) the epic key.
+/// </summary>
+public class CustomTaskTemplate
+{
+    public int Id { get; set; }
+
+    [MaxLength(100)]
+    public string Category { get; set; } = "Meeting";
+
+    [MaxLength(20)]
+    public string Color { get; set; } = "#64748b";
+
+    /// <summary>Inactive categories are hidden from the board picker but kept for reference.</summary>
+    public bool Active { get; set; } = true;
+
+    /// <summary>Controls display order in the picker and config list.</summary>
+    public int SortOrder { get; set; }
+}
+
+/// <summary>A bank/public holiday shared across all sprint plans (managed on the Team Roster page).</summary>
+public class SharedHoliday
+{
+    public int Id { get; set; }
+
+    public DateOnly Date { get; set; }
+
+    [MaxLength(100)]
+    public string Name { get; set; } = "";
 }
 
 /// <summary>Audit log entry created each time a task assignment is removed from the calendar during a sprint.</summary>

@@ -1,0 +1,395 @@
+@page "/team-roster"
+@rendermode InteractiveServer
+@using JiraReportingTool.Models
+@inject TeamRosterService RosterService
+
+<div class="tr-root">
+    <div class="tr-header">
+        <div>
+            <h2 class="tr-title">Sprint Planning Config</h2>
+            <p class="tr-sub">Members and per-person daily capacity used by the Sprint Planning board, bank/public holidays shared across all sprint plans, and reusable custom-task definitions.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="tr-info">@_message</div>
+    }
+
+    <!-- ═══ ROSTER ═══════════════════════════════════════════════════ -->
+    <div class="tr-card">
+        <div class="tr-card-head">
+            <span class="tr-card-title">Members <span class="tr-count">@_members.Count</span></span>
+            <button class="btn primary small" @onclick="AddMember">+ Add Member</button>
+        </div>
+
+        <table class="tr-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Team</th>
+                    <th style="width:130px;">Hours / day</th>
+                    <th style="width:90px;text-align:center;">Active</th>
+                    <th style="width:80px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var grp in _members.GroupBy(m => m.Team).OrderBy(g => g.Key))
+                {
+                    <tr class="tr-team-row"><td colspan="5">@(string.IsNullOrWhiteSpace(grp.Key) ? "— No team —" : grp.Key)</td></tr>
+                    @foreach (var m in grp)
+                    {
+                        var member = m;
+                        <tr class="@(member.Active ? "" : "tr-inactive")">
+                            <td><input class="tr-input" @bind="member.Name" /></td>
+                            <td><input class="tr-input" @bind="member.Team" list="tr-teams" /></td>
+                            <td>
+                                <input class="tr-input tr-hours" type="number" min="0" max="24" step="0.5" @bind="member.HoursPerDay" />
+                            </td>
+                            <td style="text-align:center;">
+                                <input type="checkbox" @bind="member.Active" />
+                            </td>
+                            <td>
+                                @if (member.Id == 0)
+                                {
+                                    <button class="btn small" @onclick="() => RemoveUnsavedMember(member)" title="Discard this unsaved row">Remove</button>
+                                }
+                                else if (member.Active)
+                                {
+                                    <button class="btn danger small" @onclick="() => SetActiveAsync(member, false)" disabled="@_isSaving"
+                                            title="Hide from new plans — historical plans keep this member">Deactivate</button>
+                                }
+                                else
+                                {
+                                    <button class="btn small" @onclick="() => SetActiveAsync(member, true)" disabled="@_isSaving">Reactivate</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                }
+            </tbody>
+        </table>
+        <datalist id="tr-teams">
+            @foreach (var t in _members.Select(m => m.Team).Where(t => !string.IsNullOrWhiteSpace(t)).Distinct())
+            {
+                <option value="@t" />
+            }
+        </datalist>
+
+        <div class="tr-actions">
+            <button class="btn primary" @onclick="SaveAllAsync" disabled="@_isSaving">
+                @(_isSaving ? "Saving…" : "💾 Save Roster")
+            </button>
+            <span class="tr-hint">Inactive members are hidden from the planning board but kept for historical plans.</span>
+        </div>
+    </div>
+
+    <!-- ═══ SHARED HOLIDAYS ══════════════════════════════════════════ -->
+    <div class="tr-card">
+        <div class="tr-card-head">
+            <span class="tr-card-title">Shared Holidays <span class="tr-count">@_holidays.Count</span></span>
+        </div>
+
+        <div class="tr-holiday-add">
+            <input class="tr-input" type="date" @bind="_newHolidayDate" />
+            <input class="tr-input" placeholder="Name (e.g. Christmas Day)" @bind="_newHolidayName" />
+            <button class="btn primary small" @onclick="AddHolidayAsync" disabled="@_isSaving">+ Add Holiday</button>
+        </div>
+
+        @if (_holidays.Count == 0)
+        {
+            <p class="tr-empty">No shared holidays yet. These apply to every sprint plan automatically.</p>
+        }
+        else
+        {
+            <table class="tr-table">
+                <thead>
+                    <tr><th style="width:160px;">Date</th><th>Name</th><th style="width:80px;"></th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var h in _holidays)
+                    {
+                        var hol = h;
+                        <tr>
+                            <td>@hol.Date.ToString("ddd, dd MMM yyyy")</td>
+                            <td>@(string.IsNullOrWhiteSpace(hol.Name) ? "—" : hol.Name)</td>
+                            <td><button class="btn danger small" @onclick="() => DeleteHolidayAsync(hol.Id)" disabled="@_isSaving">Delete</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+
+    <!-- ═══ CUSTOM TASK LIBRARY ══════════════════════════════════════ -->
+    <div class="tr-card">
+        <div class="tr-card-head">
+            <span class="tr-card-title">Custom Tasks <span class="tr-count">@_templates.Count</span></span>
+            <button class="btn primary small" @onclick="AddTemplate">+ Add Custom Task</button>
+        </div>
+        <p class="tr-sub" style="margin:0 0 12px;">Categories available on the Sprint Planning board (meetings, on-call, reviews…). On the board you pick a category and enter the name, hours, and — for Feature Bug — the epic.</p>
+
+        <div class="tr-note">
+            <strong>How bug reporting works</strong>
+            <ul>
+                <li><strong>Feature Bug</strong> — when you add the task on the board you enter a <em>Jira epic key</em>. The report pulls the <em>Bug</em> issues inside that epic and reconciles each member's logged time against the planned hours.</li>
+                <li><strong>Support Bug</strong> — does <em>not</em> take a per-task epic. It uses the plan-level <em>“Support Bug Epics”</em> loader on the Sprint Planning board instead.</li>
+                <li>All other categories (Meeting, Review, On-Call, Other) are plain time blocks with no Jira reconciliation.</li>
+            </ul>
+        </div>
+
+        @if (_templates.Count == 0)
+        {
+            <p class="tr-empty">No custom tasks yet. Add one to make its category available on the planning board.</p>
+        }
+        else
+        {
+            <table class="tr-table">
+                <thead>
+                    <tr>
+                        <th style="width:200px;">Category</th>
+                        <th>Color</th>
+                        <th style="width:90px;text-align:center;">Active</th>
+                        <th style="width:80px;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var t in _templates)
+                    {
+                        var tpl = t;
+                        <tr class="@(tpl.Active ? "" : "tr-inactive")">
+                            <td>
+                                <select class="tr-input" @bind="tpl.Category">
+                                    <option value="Meeting">Meeting</option>
+                                    <option value="Support Bug">Support Bug</option>
+                                    <option value="Feature Bug">Feature Bug</option>
+                                    <option value="Review">Review</option>
+                                    <option value="On-Call">On-Call</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </td>
+                            <td>
+                                <div class="tr-color-row">
+                                    @foreach (var sw in Swatches)
+                                    {
+                                        <button type="button"
+                                                class="color-swatch @(string.Equals(tpl.Color, sw, StringComparison.OrdinalIgnoreCase) ? "selected" : "")"
+                                                style="background:@sw" title="@sw"
+                                                @onclick="() => tpl.Color = sw"></button>
+                                    }
+                                    <input type="color" class="color-custom-input" value="@tpl.Color"
+                                           @oninput="e => tpl.Color = e.Value?.ToString() ?? tpl.Color" title="Custom color" />
+                                </div>
+                            </td>
+                            <td style="text-align:center;"><input type="checkbox" @bind="tpl.Active" /></td>
+                            <td>
+                                @if (tpl.Id == 0)
+                                {
+                                    <button class="btn small" @onclick="() => RemoveUnsavedTemplate(tpl)" title="Discard this unsaved row">Remove</button>
+                                }
+                                else
+                                {
+                                    <button class="btn danger small" @onclick="() => DeleteTemplateAsync(tpl.Id)" disabled="@_isSaving">Delete</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+        <div class="tr-actions">
+            <button class="btn primary" @onclick="SaveTemplatesAsync" disabled="@_isSaving">
+                @(_isSaving ? "Saving…" : "💾 Save Custom Tasks")
+            </button>
+            <span class="tr-hint">Inactive custom tasks are hidden from the planning board picker.</span>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<RosterMember>       _members   = new();
+    private List<SharedHoliday>      _holidays  = new();
+    private List<CustomTaskTemplate> _templates = new();
+    private bool _isSaving = false;
+    private string? _message;
+
+    private DateTime? _newHolidayDate = DateTime.Today;
+    private string    _newHolidayName = "";
+
+    private static readonly string[] Swatches =
+    {
+        "#64748b", "#0891b2", "#0d9488", "#6366f1", "#7c3aed",
+        "#2563eb", "#16a34a", "#b45309", "#b91c1c", "#db2777"
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _members   = await RosterService.GetAllAsync();
+        _holidays  = await RosterService.GetHolidaysAsync();
+        _templates = await RosterService.GetCustomTaskTemplatesAsync();
+    }
+
+    private void AddMember()
+    {
+        var maxOrder = _members.Count > 0 ? _members.Max(m => m.SortOrder) : 0;
+        _members.Add(new RosterMember { Name = "", Team = "", HoursPerDay = 6m, Active = true, SortOrder = maxOrder + 1 });
+    }
+
+    private void RemoveUnsavedMember(RosterMember member)
+    {
+        _members.Remove(member);   // never persisted — just drop the row
+    }
+
+    // Soft activate/deactivate: keeps the row so historical sprint plans still resolve this member.
+    private async Task SetActiveAsync(RosterMember member, bool active)
+    {
+        _isSaving = true;
+        _message = null;
+        try
+        {
+            member.Active = active;
+            await RosterService.SaveAsync(member);
+            await ReloadAsync();
+            _message = active
+                ? $"{member.Name} reactivated."
+                : $"{member.Name} deactivated — hidden from new plans, kept in historical ones.";
+        }
+        catch (Exception ex) { _message = $"Update failed: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
+    private async Task SaveAllAsync()
+    {
+        _isSaving = true;
+        _message = null;
+        try
+        {
+            var valid = _members.Where(m => !string.IsNullOrWhiteSpace(m.Name)).ToList();
+            await RosterService.SaveManyAsync(valid);
+            await ReloadAsync();
+            _message = $"Saved {valid.Count} member(s).";
+        }
+        catch (Exception ex) { _message = $"Save failed: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
+    private async Task AddHolidayAsync()
+    {
+        if (_newHolidayDate is null) { _message = "Pick a date first."; return; }
+        _isSaving = true;
+        try
+        {
+            await RosterService.AddHolidayAsync(DateOnly.FromDateTime(_newHolidayDate.Value), _newHolidayName.Trim());
+            _newHolidayName = "";
+            _holidays = await RosterService.GetHolidaysAsync();
+            _message = "Holiday added.";
+        }
+        catch (Exception ex) { _message = $"Could not add holiday: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
+    private async Task DeleteHolidayAsync(int id)
+    {
+        _isSaving = true;
+        try
+        {
+            await RosterService.DeleteHolidayAsync(id);
+            _holidays = await RosterService.GetHolidaysAsync();
+            _message = "Holiday removed.";
+        }
+        finally { _isSaving = false; }
+    }
+
+    // ── Custom task templates ──────────────────────────────────────────────
+    private void AddTemplate()
+    {
+        var maxOrder = _templates.Count > 0 ? _templates.Max(t => t.SortOrder) : 0;
+        _templates.Add(new CustomTaskTemplate
+        {
+            Category = "Meeting", Color = "#64748b", Active = true, SortOrder = maxOrder + 1
+        });
+    }
+
+    private void RemoveUnsavedTemplate(CustomTaskTemplate tpl) => _templates.Remove(tpl);
+
+    private async Task SaveTemplatesAsync()
+    {
+        _isSaving = true;
+        _message = null;
+        try
+        {
+            await RosterService.SaveCustomTaskTemplatesAsync(_templates);
+            await ReloadAsync();
+            _message = $"Saved {_templates.Count} custom task(s).";
+        }
+        catch (Exception ex) { _message = $"Save failed: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
+    private async Task DeleteTemplateAsync(int id)
+    {
+        _isSaving = true;
+        try
+        {
+            await RosterService.DeleteCustomTaskTemplateAsync(id);
+            _templates = await RosterService.GetCustomTaskTemplatesAsync();
+            _message = "Custom task removed.";
+        }
+        catch (Exception ex) { _message = $"Delete failed: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+}
+
+<style>
+    .tr-root { display:flex; flex-direction:column; gap:16px; max-width:900px; }
+    .tr-root * { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Roboto,sans-serif; }
+    .tr-title { font-size:22px; font-weight:700; color:#111827; margin:0; }
+    .tr-sub { font-size:13px; color:#6b7280; margin:4px 0 0; max-width:680px; }
+    .tr-info { padding:10px 16px; border-radius:8px; font-size:13px; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+
+    .tr-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
+    .tr-card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .tr-card-title { font-size:15px; font-weight:700; color:#111827; }
+    .tr-count { display:inline-block; margin-left:6px; background:#f3f4f6; color:#6b7280; border-radius:20px; padding:1px 9px; font-size:12px; font-weight:600; }
+
+    .tr-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .tr-table th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#6b7280; font-weight:600; padding:6px 8px; border-bottom:1px solid #e5e7eb; }
+    .tr-table td { padding:5px 8px; border-bottom:1px solid #f3f4f6; }
+    .tr-team-row td { background:#f8fafc; font-weight:700; color:#374151; font-size:12px; text-transform:uppercase; letter-spacing:0.03em; }
+    .tr-inactive { opacity:0.5; }
+
+    .tr-input { width:100%; padding:6px 9px; border:1px solid #d1d5db; border-radius:7px; background:#f9fafb; font-size:13px; color:#111827; }
+    .tr-input:focus { outline:none; border-color:#2563eb; background:#fff; box-shadow:0 0 0 3px rgba(37,99,235,0.12); }
+    .tr-hours { width:90px; }
+
+    .tr-actions { display:flex; align-items:center; gap:14px; margin-top:14px; }
+    .tr-hint { font-size:12px; color:#9ca3af; }
+    .tr-empty { font-size:13px; color:#9ca3af; margin:4px 0 0; }
+    .tr-note { background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:10px 14px; margin:0 0 14px; font-size:12.5px; color:#1e3a8a; }
+    .tr-note strong { color:#1e40af; }
+    .tr-note ul { margin:6px 0 0; padding-left:18px; }
+    .tr-note li { margin:3px 0; line-height:1.45; }
+    .tr-holiday-add { display:flex; gap:8px; margin-bottom:12px; flex-wrap:wrap; }
+    .tr-holiday-add .tr-input { width:auto; min-width:160px; }
+
+    .btn { padding:8px 15px; border-radius:8px; border:1px solid #d1d5db; background:#f9fafb; color:#374151; font-size:13px; font-weight:600; cursor:pointer; }
+    .btn:hover:not(:disabled) { background:#f3f4f6; }
+    .btn.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
+    .btn.primary:hover:not(:disabled) { background:#1d4ed8; }
+    .btn.danger { background:#fef2f2; border-color:#fca5a5; color:#b91c1c; }
+    .btn.danger:hover:not(:disabled) { background:#fee2e2; }
+    .btn.small { padding:5px 10px; font-size:12px; border-radius:6px; }
+    .btn:disabled { opacity:0.45; cursor:not-allowed; }
+
+    .tr-color-row { display:flex; flex-wrap:wrap; gap:4px; align-items:center; }
+    .color-swatch { width:18px; height:18px; border-radius:5px; border:2px solid transparent; cursor:pointer; padding:0; box-shadow:inset 0 0 0 1px rgba(0,0,0,0.08); transition:transform 0.1s, border-color 0.1s; }
+    .color-swatch:hover { transform:scale(1.12); }
+    .color-swatch.selected { border-color:#1f2937; box-shadow:0 0 0 2px #fff, 0 0 0 3px #1f2937; }
+    .color-custom-input { width:24px; height:24px; padding:0; border:1px solid #d1d5db; border-radius:5px; background:#fff; cursor:pointer; }
+</style>

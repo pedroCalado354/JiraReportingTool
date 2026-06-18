@@ -6,6 +6,8 @@
 @inject IJiraService JiraService
 @inject IJSRuntime JS
 @inject ISprintPlanService PlanService
+@inject TeamRosterService RosterService
+@inject IConfiguration Config
 @using ClosedXML.Excel
 
 <div class="spd-root">
@@ -53,6 +55,17 @@
             </div>
         </div>
         <div class="cfg-group cfg-epic-group">
+            <label>Load Tasks</label>
+            <div class="cfg-epic-row">
+                <input class="input" placeholder="Task keys (e.g. JM-123, JM-456)"
+                       @bind="TaskKeysInput" @bind:event="oninput"
+                       @onkeypress="OnTaskInputKeyPress" />
+                <button class="btn primary" @onclick="LoadTasks" disabled="@_isLoadingTasks">
+                    @(_isLoadingTasks ? "…" : "Load")
+                </button>
+            </div>
+        </div>
+        <div class="cfg-group cfg-epic-group">
             <label>🐛 Bug Epic</label>
             <div class="cfg-epic-row">
                 <input class="input" placeholder="Support bug epic key..."
@@ -61,6 +74,7 @@
                 <button class="btn primary" @onclick="LoadSupportBugEpic">Load</button>
             </div>
         </div>
+        <div class="cfg-divider"></div>
         <div class="cfg-group">
             <label>Weekends</label>
             <button class="btn toggle-btn @(ShowWeekends ? "toggle-on" : "")" @onclick="ToggleWeekends">
@@ -151,6 +165,30 @@
         </div>
     </div>
 
+    <!-- ═══ TEAM CAPACITY BANNER ══════════════════════════════════════ -->
+    @if (SprintEnd >= SprintStart && SprintStart != default)
+    {
+        <div class="spd-cap-banner">
+            <span class="cap-banner-label">Team Load</span>
+            @foreach (var team in GetAllTeams())
+            {
+                var capH   = GetTeamCapacityHours(team);
+                var allocH = GetTeamAllocatedHours(team);
+                var pct    = capH > 0m ? (double)(allocH / capH * 100m) : 0.0;
+                <div class="cap-team @GetCapacityLoadClass(pct)" title="@team — @($"{allocH:0.#}h allocated of {capH:0.#}h capacity ({pct:0}%)")">
+                    <div class="cap-team-top">
+                        <span class="cap-team-name">@team</span>
+                        <span class="cap-team-pct">@($"{pct:0}%")</span>
+                    </div>
+                    <div class="cap-team-bar-wrap">
+                        <div class="cap-team-bar" style="width:@(Math.Min(pct, 100).ToString("F1", CultureInfo.InvariantCulture))%;"></div>
+                    </div>
+                    <div class="cap-team-sub">@($"{allocH:0.#}h / {capH:0.#}h") · @GetTeamMemberCount(team) ppl</div>
+                </div>
+            }
+        </div>
+    }
+
     <!-- ═══ PLAN CRUD BAR ═══════════════════════════════════════════════ -->
     <div class="spd-plan-bar">
         <div class="plan-bar-left">
@@ -170,7 +208,11 @@
             </button>
         </div>
         <div class="plan-bar-right">
-            @if (_currentPlanId.HasValue)
+            @if (IsDirty)
+            {
+                <span class="plan-dirty-badge" title="You have unsaved changes">● Unsaved changes</span>
+            }
+            else if (_currentPlanId.HasValue)
             {
                 <span class="plan-current-badge">@SprintName</span>
             }
@@ -230,39 +272,55 @@
 
     <!-- ═══ TEAM FILTER + ACTIONS ══════════════════════════════════════ -->
     <div class="spd-actions-bar">
-        <div class="team-filters">
-            <span class="filter-label">Team:</span>
-            <button class="team-pill @(ActiveTeamFilter == null ? "active" : "")" @onclick="ClearTeamFilter">
-                All <span class="pill-count">@TeamMembers.Count</span>
-            </button>
-            @foreach (var team in GetAllTeams())
-            {
-                var teamName = team;
-                <button class="team-pill @(ActiveTeamFilter == teamName ? "active" : "")" @onclick="() => SetTeamFilter(teamName)">
-                    @teamName <span class="pill-count">@GetTeamMemberCount(teamName)</span>
+        <div class="filter-groups">
+            <div class="team-filters">
+                <span class="filter-label">Team:</span>
+                <button class="team-pill @(ActiveTeamFilter == null ? "active" : "")" @onclick="ClearTeamFilter">
+                    All <span class="pill-count">@TeamMembers.Count</span>
                 </button>
+                @foreach (var team in GetAllTeams())
+                {
+                    var teamName = team;
+                    <button class="team-pill @(ActiveTeamFilter == teamName ? "active" : "")" @onclick="() => SetTeamFilter(teamName)">
+                        @teamName <span class="pill-count">@GetTeamMemberCount(teamName)</span>
+                    </button>
+                }
+            </div>
+            @if (LoadedEpics.Count > 0)
+            {
+                <div class="team-filters">
+                    <span class="filter-label">Epic:</span>
+                    <button class="team-pill @(ActiveEpicFilters.Count == 0 ? "active" : "")" @onclick="ClearEpicFilter">All</button>
+                    @foreach (var ek in LoadedEpics.Keys)
+                    {
+                        var epicKey = ek;
+                        <button class="team-pill @(ActiveEpicFilters.Contains(epicKey) ? "active" : "")"
+                                @onclick="() => ToggleEpicFilter(epicKey)">@epicKey</button>
+                    }
+                </div>
             }
         </div>
-        <div class="action-buttons">
-            <button class="btn primary" @onclick="AutoAssignAllUnassigned" disabled="@(UnassignedCount == 0)">
-                ⚡ Auto-Assign
-            </button>
-            <button class="btn danger" @onclick="ClearAllAllocations" disabled="@(Allocations.Count == 0)">
-                Clear All
-            </button>
+        <div class="actions-right">
+            <div class="action-buttons">
+                <button class="btn primary" @onclick="AutoAssignAllUnassigned" disabled="@(UnassignedCount == 0)"
+                        title="Assign unassigned tasks — keeping each task's Jira assignee when they're on the roster, else least-loaded member">
+                    ⚡ Auto-Assign
+                </button>
+                <button class="btn" @onclick="ImportJiraAssignees" disabled="@(UnassignedCount == 0)"
+                        title="Schedule unassigned tasks onto the team member matching their current Jira assignee">
+                    👤 Import Assignees
+                </button>
+                <span class="action-divider"></span>
+                <button class="btn danger" @onclick="ClearAllAllocations" disabled="@(Allocations.Count == 0)">
+                    Clear All
+                </button>
+            </div>
             <div class="view-toggle-group">
-                <button class="view-toggle-btn @(ViewMode == "calendar" ? "active" : "")" @onclick="SetCalendarView">
-                    Calendar
-                </button>
-                <button class="view-toggle-btn @(ViewMode == "report" ? "active" : "")" @onclick="SetReportView">
-                    Report
-                </button>
-                <button class="view-toggle-btn @(ViewMode == "daily" ? "active" : "")" @onclick="SetDailyView">
-                    Daily
-                </button>
-                <button class="view-toggle-btn @(ViewMode == "bugs" ? "active" : "")" @onclick="SetBugsView">
-                    🐛 Support Bugs
-                </button>
+                <button class="view-toggle-btn @(ViewMode == "calendar" ? "active" : "")" @onclick="SetCalendarView">Calendar</button>
+                <button class="view-toggle-btn @(ViewMode == "report" ? "active" : "")" @onclick="SetReportView">Report</button>
+                <button class="view-toggle-btn @(ViewMode == "daily" ? "active" : "")" @onclick="SetDailyView">Daily</button>
+                <button class="view-toggle-btn @(ViewMode == "summary" ? "active" : "")" @onclick="SetSummaryView">📊 Summary</button>
+                <button class="view-toggle-btn @(ViewMode == "bugs" ? "active" : "")" @onclick="SetBugsView">🐛 Support Bugs</button>
             </div>
         </div>
     </div>
@@ -280,12 +338,12 @@
                 </div>
             }
 
-            @if (LoadedEpics.Count == 0)
+            @if (LoadedEpics.Count == 0 && LoadedTasks.Count == 0)
             {
                 <div class="empty-state">
                     <div class="empty-icon">📋</div>
-                    <p>Enter an epic key above and click <strong>Load</strong>.</p>
-                    <p class="empty-sub">Multiple epics can be loaded simultaneously.</p>
+                    <p>Load an <strong>Epic</strong> or individual <strong>Tasks</strong> from the bar above.</p>
+                    <p class="empty-sub">Multiple epics and task batches can be loaded together.</p>
                 </div>
             }
             else
@@ -353,6 +411,46 @@
                     </div>
                 }
             }
+            <!-- Individually Loaded Tasks Section -->
+            @if (LoadedTasks.Count > 0)
+            {
+                <div class="epic-section">
+                    <div class="epic-section-header" @onclick="ToggleManualTasks">
+                        <span class="epic-toggle">@(_manualTasksExpanded ? "▾" : "▸")</span>
+                        <span class="epic-key-badge epic-key-badge-tasks">📌 Tasks</span>
+                        <span class="epic-count">@LoadedTasks.Count loaded</span>
+                    </div>
+                    @if (_manualTasksExpanded)
+                    {
+                        <ul class="task-list">
+                            @foreach (var t in LoadedTasks.Values.OrderBy(x => x.Key))
+                            {
+                                var task       = t;
+                                var isSelected = SelectedTask?.Id == task.Id;
+                                var isAssigned = IsTaskAssigned(task.Id);
+                                <li class="task-item @(isSelected ? "selected" : "") @(isAssigned ? "assigned" : "")"
+                                    @onclick="() => SelectTask(task)">
+                                    <div class="task-item-top">
+                                        <span class="task-key-label">@task.Key</span>
+                                        @if (isAssigned)
+                                        {
+                                            <span class="badge-assigned">✓</span>
+                                        }
+                                        <span class="task-est-label">@FormatTaskHours(task)</span>
+                                        <button class="epic-remove-btn" @onclick="() => RemoveLoadedTask(task.Key)" @onclick:stopPropagation="true" title="Remove task">✕</button>
+                                    </div>
+                                    <div class="task-summary-text">@task.Summary</div>
+                                    <div class="task-meta-row">
+                                        <span class="meta-chip meta-status @GetStatusType(task.IssueType)">@task.IssueType</span>
+                                        <span class="meta-chip meta-status @GetStatusClass(task.Status)">@task.Status</span>
+                                    </div>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+            }
+
             <!-- Custom Tasks Section -->
             <div class="custom-section">
                 <div class="custom-section-header" @onclick="ToggleCustomTaskForm">
@@ -363,21 +461,36 @@
                 @if (ShowCustomTaskForm)
                 {
                     <div class="custom-task-form">
-                        <input class="input custom-input" placeholder="Name (e.g. Daily Standup)"
-                               @bind="NewCustomTaskName" @bind:event="oninput" />
-                        <select class="input custom-input" @bind="NewCustomTaskCategory">
-                            <option value="Meeting">Meeting</option>
-                            <option value="Support Bug">Support Bug</option>
-                            <option value="Feature Bug">Feature Bug</option>
-                            <option value="Review">Review</option>
-                            <option value="On-Call">On-Call</option>
-                            <option value="Other">Other</option>
-                        </select>
-                        <div class="custom-form-row">
-                            <input class="input custom-input" type="number" min="0.5" step="0.5"
-                                   placeholder="Hours" @bind="NewCustomTaskHours" />
-                            <button class="btn primary small" @onclick="AddCustomTask">Add</button>
-                        </div>
+                        @if (_customTaskTemplates.Count == 0)
+                        {
+                            <div class="custom-empty-hint">
+                                No custom tasks configured yet. Add them in
+                                <a href="team-roster">Sprint Planning Config</a>.
+                            </div>
+                        }
+                        else
+                        {
+                            var selTpl = _customTaskTemplates.FirstOrDefault(t => t.Id == SelectedTemplateId);
+                            <input class="input custom-input" placeholder="Name (e.g. Daily Standup)"
+                                   @bind="NewCustomTaskName" @bind:event="oninput" />
+                            <select class="input custom-input" value="@SelectedTemplateId" @onchange="OnTemplateChanged">
+                                <option value="0">Select a category…</option>
+                                @foreach (var tpl in _customTaskTemplates)
+                                {
+                                    <option value="@tpl.Id">@tpl.Category</option>
+                                }
+                            </select>
+                            @if (selTpl?.Category == "Feature Bug")
+                            {
+                                <input class="input custom-input" placeholder="Epic key (e.g. PROJ-456)"
+                                       @bind="NewFeatureBugEpicKey" @bind:event="oninput" />
+                            }
+                            <div class="custom-form-row">
+                                <input class="input custom-input" type="number" min="0.5" step="0.5"
+                                       placeholder="Hours" @bind="NewCustomTaskHours" />
+                                <button class="btn primary small" @onclick="AddCustomTask">Add</button>
+                            </div>
+                        }
                     </div>
                 }
 
@@ -390,11 +503,12 @@
                             var isSelCt = SelectedCustomTaskId == ct.Id;
                             var isAssignedCt = IsTaskAssigned(ct.Id);
                             var ctAssignee = isAssignedCt ? GetTaskAssigneeName(ct.Id) : null;
+                            var ctColor = string.IsNullOrWhiteSpace(ct.Color) ? GetCategoryColor(ct.Category) : ct.Color;
                             <li class="task-item custom-task-item @(isSelCt ? "selected" : "") @(isAssignedCt ? "assigned" : "")"
-                                style="border-left-color: @ct.Color"
+                                style="border-left-color: @ctColor"
                                 @onclick="() => SelectCustomTask(ct.Id)">
                                 <div class="task-item-top">
-                                    <span class="custom-cat-badge" style="background: @ct.Color">@ct.Category</span>
+                                    <span class="custom-cat-badge" style="background: @ctColor">@ct.Category</span>
                                     @if (isAssignedCt)
                                     {
                                         <span class="badge-assigned">✓</span>
@@ -415,7 +529,7 @@
 
             <div class="task-panel-hint">
                 Select a task → click a calendar cell to schedule.
-                Max @(MaxHoursPerDay)h/day — tasks split automatically.
+                Each member's daily capacity comes from the roster — tasks split automatically.
             </div>
         </div>
 
@@ -441,7 +555,7 @@
                 <div class="rpt-container">
                     @if (_isRefreshingReport)
                     {
-                        <div class="rpt-loading">Fetching latest data from Jira…</div>
+                        <div class="rpt-loading"><div class="rpt-spinner"></div><span>Fetching latest data from Jira…</span></div>
                     }
                     @if (Allocations.Count == 0)
                     {
@@ -575,7 +689,7 @@
                 <div class="daily-container">
                     @if (_isRefreshingReport)
                     {
-                        <div class="rpt-loading">Fetching latest data from Jira…</div>
+                        <div class="rpt-loading"><div class="rpt-spinner"></div><span>Fetching latest data from Jira…</span></div>
                     }
                     @{
                         var dm = GetDailyMetrics();
@@ -618,7 +732,7 @@
                             .Select(a => TeamMembers.FirstOrDefault(m => m.Id == a.TeamMemberId)?.Name)
                             .Where(n => n != null)
                             .Distinct()
-                            .Where(name => !todayAuthors.Any(a => a.Contains(name!, StringComparison.OrdinalIgnoreCase)))
+                            .Where(name => !todayAuthors.Any(a => AuthorMatchesMember(a, name!)))
                             .OrderBy(n => n)
                             .ToList();
                     }
@@ -780,13 +894,110 @@
                     }
                 </div>
             }
+            else if (ViewMode == "summary")
+            {
+                <!-- ═ SPRINT SUMMARY VIEW (commitment vs completion) ══════════════ -->
+                <div class="daily-container">
+                    @if (_isRefreshingReport)
+                    {
+                        <div class="rpt-loading"><div class="rpt-spinner"></div><span>Fetching latest data from Jira…</span></div>
+                    }
+                    @{
+                        var sm = GetSummaryMetrics();
+                        var taskPct  = Pct(sm.DoneTasks, sm.CommittedTasks);
+                        var hoursPct = Pct(sm.DoneSeconds, sm.CommittedSeconds);
+                        var logPct   = Pct(sm.LoggedSeconds, sm.CommittedSeconds);
+                    }
+                    @if (sm.CommittedTasks == 0)
+                    {
+                        <div class="empty-state">No Jira tasks scheduled yet — assign tasks on the calendar to see the summary.</div>
+                    }
+                    else
+                    {
+                        <div class="daily-kpi-row">
+                            <div class="daily-kpi-card">
+                                <div class="daily-kpi-value @PctClass(taskPct)">@($"{taskPct:0}%")</div>
+                                <div class="daily-kpi-label">Tasks Completed</div>
+                                <div class="daily-kpi-sub">@sm.DoneTasks of @sm.CommittedTasks committed</div>
+                            </div>
+                            <div class="daily-kpi-card">
+                                <div class="daily-kpi-value @PctClass(hoursPct)">@($"{hoursPct:0}%")</div>
+                                <div class="daily-kpi-label">Estimated Work Done</div>
+                                <div class="daily-kpi-sub">@FmtSec((int)sm.DoneSeconds) of @FmtSec((int)sm.CommittedSeconds) committed</div>
+                            </div>
+                            <div class="daily-kpi-card">
+                                <div class="daily-kpi-value kpi-neutral">@($"{logPct:0}%")</div>
+                                <div class="daily-kpi-label">Time Logged vs Commit</div>
+                                <div class="daily-kpi-sub">@FmtSec((int)sm.LoggedSeconds) logged</div>
+                            </div>
+                            <div class="daily-kpi-card">
+                                <div class="daily-kpi-value @(sm.AtRisk > 0 ? "kpi-red" : "kpi-green")">@sm.AtRisk</div>
+                                <div class="daily-kpi-label">At Risk</div>
+                                <div class="daily-kpi-sub">@RemainingWorkingDays working days left</div>
+                            </div>
+                        </div>
+
+                        <div class="daily-section">
+                            <div class="daily-section-title">Commitment vs Completion</div>
+                            <div class="sum-bar-row">
+                                <span class="sum-bar-label">Tasks</span>
+                                <div class="sum-bar-track">
+                                    <div class="sum-bar-fill @PctClass(taskPct)" style="width:@(Math.Min(taskPct,100).ToString("F1", CultureInfo.InvariantCulture))%;"></div>
+                                </div>
+                                <span class="sum-bar-pct">@sm.DoneTasks / @sm.CommittedTasks</span>
+                            </div>
+                            <div class="sum-bar-row">
+                                <span class="sum-bar-label">Effort</span>
+                                <div class="sum-bar-track">
+                                    <div class="sum-bar-fill @PctClass(hoursPct)" style="width:@(Math.Min(hoursPct,100).ToString("F1", CultureInfo.InvariantCulture))%;"></div>
+                                </div>
+                                <span class="sum-bar-pct">@FmtSec((int)sm.DoneSeconds) / @FmtSec((int)sm.CommittedSeconds)</span>
+                            </div>
+                            <div class="sum-status-line">
+                                <span class="sum-chip status-done">@sm.DoneTasks Done</span>
+                                <span class="sum-chip status-in-progress">@sm.InProgressTasks In Progress</span>
+                                <span class="sum-chip status-todo">@sm.NotStartedTasks Not Started</span>
+                            </div>
+                        </div>
+
+                        <div class="daily-section">
+                            <div class="daily-section-title">By Team</div>
+                            <table class="rpt-table">
+                                <thead>
+                                    <tr>
+                                        <th class="rpt-th">Team</th>
+                                        <th class="rpt-th" style="text-align:center;">Tasks Done</th>
+                                        <th class="rpt-th" style="text-align:center;">Task %</th>
+                                        <th class="rpt-th" style="text-align:center;">Effort Done</th>
+                                        <th class="rpt-th" style="text-align:center;">Effort %</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var tr in GetTeamSummaryRows())
+                                    {
+                                        var tPct = Pct(tr.Done, tr.Committed);
+                                        var ePct = Pct((double)tr.DoneHours, (double)tr.CommittedHours);
+                                        <tr class="rpt-row">
+                                            <td class="rpt-td" style="font-weight:600;">@tr.Team</td>
+                                            <td class="rpt-td" style="text-align:center;">@tr.Done / @tr.Committed</td>
+                                            <td class="rpt-td" style="text-align:center;"><span class="risk-badge @GetPctBadge(tPct)">@($"{tPct:0}%")</span></td>
+                                            <td class="rpt-td" style="text-align:center;">@($"{tr.DoneHours:0.#}h / {tr.CommittedHours:0.#}h")</td>
+                                            <td class="rpt-td" style="text-align:center;"><span class="risk-badge @GetPctBadge(ePct)">@($"{ePct:0}%")</span></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            }
             else if (ViewMode == "bugs")
             {
                 <!-- ═ SUPPORT BUGS VIEW ══════════════════════════════════════════ -->
                 <div class="bugs-container">
                     @if (_isRefreshingReport)
                     {
-                        <div class="rpt-loading">Fetching latest data from Jira…</div>
+                        <div class="rpt-loading"><div class="rpt-spinner"></div><span>Fetching latest data from Jira…</span></div>
                     }
                     @{
                         var bugWeeks   = GetWeekRanges();
@@ -924,11 +1135,36 @@
                 else
                 {
                     <div class="cal-toolbar">
-                        <button class="btn small cal-fullpage-btn"
-                                @onclick="() => _calendarFullPage = !_calendarFullPage"
-                                title="@(_calendarFullPage ? "Exit full page" : "Expand calendar to full page")">
-                            @(_calendarFullPage ? "⊡ Exit Full Page" : "⛶ Full Page")
-                        </button>
+                        <div class="cal-legend">
+                            @if (_colorMode == "type")
+                            {
+                                <span class="lg-item"><span class="lg-dot" style="background:#2563eb"></span>Story</span>
+                                <span class="lg-item"><span class="lg-dot" style="background:#0d9488"></span>Task</span>
+                                <span class="lg-item"><span class="lg-dot" style="background:#7c3aed"></span>Bug</span>
+                                <span class="lg-item"><span class="lg-dot" style="background:#64748b"></span>Custom</span>
+                            }
+                            else
+                            {
+                                <span class="lg-item">Coloured by epic</span>
+                            }
+                            <span class="lg-sep"></span>
+                            <span class="lg-item"><span class="lg-dot lg-over"></span>Over capacity</span>
+                        </div>
+                        <div class="cal-toolbar-controls">
+                            <div class="seg-toggle" title="Colour calendar blocks by">
+                                <button class="seg-btn @(_colorMode == "type" ? "seg-on" : "")" @onclick='() => _colorMode = "type"'>Type</button>
+                                <button class="seg-btn @(_colorMode == "epic" ? "seg-on" : "")" @onclick='() => _colorMode = "epic"'>Epic</button>
+                            </div>
+                            <div class="seg-toggle" title="Row density">
+                                <button class="seg-btn @(_density == "comfortable" ? "seg-on" : "")" @onclick='() => _density = "comfortable"'>Comfortable</button>
+                                <button class="seg-btn @(_density == "compact" ? "seg-on" : "")" @onclick='() => _density = "compact"'>Compact</button>
+                            </div>
+                            <button class="btn small cal-fullpage-btn"
+                                    @onclick="() => _calendarFullPage = !_calendarFullPage"
+                                    title="@(_calendarFullPage ? "Exit full page" : "Expand calendar to full page")">
+                                @(_calendarFullPage ? "⊡ Exit Full Page" : "⛶ Full Page")
+                            </button>
+                        </div>
                     </div>
                     <div class="cal-scroll">
                         <table class="cal-table">
@@ -981,17 +1217,29 @@
                                         var mem = member;
                                         var lanedBlocks = GetLanedBlocks(mem.Id);
                                         var maxLanes = GetMaxLanes(mem.Id);
-                                        var rowHeight = Math.Max(72, maxLanes * 34 + 38);
+                                        var laneH    = _density == "compact" ? 24 : 34;
+                                        var topBase  = _density == "compact" ? 18 : 24;
+                                        var rowBase  = _density == "compact" ? 50 : 72;
+                                        var rowExtra = _density == "compact" ? 28 : 38;
+                                        var rowHeight = Math.Max(rowBase, maxLanes * laneH + rowExtra);
                                         var mCap = GetMemberSprintCapacity(mem.Id);
                                         var mAlloc = GetMemberSprintAllocated(mem.Id);
                                         var mPct = mCap > 0m ? (double)(mAlloc / mCap * 100m) : 0.0;
+                                        var loadCls = GetCapacityLoadClass(mPct);
+                                        var isFormer = IsFormerMember(mem.Id);
 
                                         <tr style="height:@(rowHeight)px;">
                                             <td class="cal-sticky-col cal-member-cell">
-                                                <div class="cal-member-name">@mem.Name</div>
-                                                <div class="cal-member-alloc">@($"{mAlloc:0.#}h / {mCap:0.#}h")</div>
+                                                <div class="cal-member-name">
+                                                    @mem.Name
+                                                    @if (isFormer) { <span class="former-tag" title="Not in the active roster — kept for this plan">former</span> }
+                                                </div>
+                                                <div class="cal-member-alloc">
+                                                    @($"{mAlloc:0.#}h / {mCap:0.#}h")
+                                                    <span class="cal-member-pct @loadCls">@($"{mPct:0}%")</span>
+                                                </div>
                                                 <div class="cal-member-bar-wrap">
-                                                    <div class="cal-member-bar @GetCapacityBarClass(mPct)" style="width:@(Math.Min(mPct, 100).ToString("F1", CultureInfo.InvariantCulture))%;"></div>
+                                                    <div class="cal-member-bar @loadCls" style="width:@(Math.Min(mPct, 100).ToString("F1", CultureInfo.InvariantCulture))%;"></div>
                                                 </div>
                                             </td>
 
@@ -1007,12 +1255,15 @@
                                                 var isHolDay = IsHoliday(currentDate);
                                                 var isDayOff = isMemberOff || isHolDay;
                                                 var isToday = currentDate == DateOnly.FromDateTime(DateTime.Today);
-                                                var cellCls = BuildCellClass(allocated, isDayOff, isWe, isToday);
-                                                var usagePct = MaxHoursPerDay > 0m ? (allocated / MaxHoursPerDay) * 100m : 0m;
+                                                var dailyCap = GetMemberDailyHours(mem.Id);
+                                                var cellCls = BuildCellClass(mem.Id, allocated, isDayOff, isWe, isToday);
+                                                var usagePct = dailyCap > 0m ? (allocated / dailyCap) * 100m : 0m;
 
                                                 <td class="@cellCls"
                                                     title="@BuildCellTitle(mem.Id, currentDate, allocated, isDayOff, isHolDay)"
-                                                    @onclick="() => OnCalendarCellClicked(mem.Id, currentDate)">
+                                                    @onclick="() => OnCalendarCellClicked(mem.Id, currentDate)"
+                                                    @ondragover:preventDefault="true"
+                                                    @ondrop="() => OnCellDrop(mem.Id, currentDate)">
 
                                                     @if (isDayOff && !isWe)
                                                     {
@@ -1020,8 +1271,8 @@
                                                     }
                                                     @if (allocated > 0m && !isDayOff)
                                                     {
-                                                        <div class="cell-usage-bar" style="height:@(usagePct.ToString("F1", CultureInfo.InvariantCulture))%;"></div>
-                                                        <div class="cell-hours-label @(allocated >= MaxHoursPerDay ? "full" : "")">@($"{allocated:0.#}h")</div>
+                                                        <div class="cell-usage-bar" style="height:@(Math.Min(usagePct,100m).ToString("F1", CultureInfo.InvariantCulture))%;"></div>
+                                                        <div class="cell-hours-label @(allocated > dailyCap ? "over" : "")">@($"{allocated:0.#}h")</div>
                                                     }
 
                                                     @foreach (var (block, lane) in cellBlocks)
@@ -1029,13 +1280,16 @@
                                                         var blk = block;
                                                         var blkLane = lane;
                                                         var span = GetBlockVisibleSpanSprint(blk);
-                                                        var topOff = blkLane * 34 + 24;
+                                                        var topOff = blkLane * laneH + topBase;
                                                         var wPct = span * 100;
                                                         var blkHours = GetBlockHoursOnDate(blk, currentDate);
 
-                                                        <div class="stacked-block"
+                                                        <div class="stacked-block @(_density == "compact" ? "block-compact" : "")"
+                                                             draggable="true"
+                                                             @ondragstart="() => OnBlockDragStart(blk.GroupId)"
                                                              style="top:@(topOff)px; width:calc(@(wPct)% - 6px); background:@GetBlockColor(blk.TaskId);"
-                                                             title="@GetBlockTooltip(blk)"
+                                                             title="@GetBlockTooltip(blk) — click for details, drag to move"
+                                                             @onclick="() => ShowTaskDetails(blk.TaskId)"
                                                              @onclick:stopPropagation="true">
                                                             <div class="stacked-block-content">
                                                                 <span class="stacked-block-title">@GetTaskShortLabel(blk.TaskId)</span>
@@ -1064,9 +1318,9 @@
             <p class="modal-body">
                 Adding <strong>@_overCapacityPending.TaskLabel</strong> to
                 <strong>@_overCapacityPending.MemberName</strong> exceeds the
-                @MaxHoursPerDay h/day limit — not enough free capacity from
+                @GetMemberDailyHours(_overCapacityPending.MemberId).ToString("0.#") h/day limit — not enough free capacity from
                 @($"{_overCapacityPending.StartDate:dd-MMM}").
-                <br />Schedule anyway (days may exceed @MaxHoursPerDay h)?
+                <br />Schedule anyway (days may exceed the limit)?
             </p>
             <div class="modal-actions">
                 <button class="btn primary" @onclick="ConfirmOverCapacity">Yes, schedule anyway</button>
@@ -1168,6 +1422,85 @@
             </div>
         </div>
     }
+
+    @if (_detailTaskId.HasValue)
+    {
+        var dtId      = _detailTaskId.Value;
+        var dtPlanned = GetTaskPlannedHours(dtId);
+        var dtMembers = GetTaskAssignedMembers(dtId);
+        <div class="modal-backdrop" @onclick="CloseTaskDetails"></div>
+        <div class="modal-dialog modal-dialog-lg td-modal">
+            @if (dtId < 0 && _customTasks.TryGetValue(dtId, out var dtCt))
+            {
+                var dtEpic = GetCustomTaskEpicKey(dtCt);
+                <div class="modal-header-row">
+                    <span class="modal-title"><span class="td-cat-badge" style="background:@dtCt.Color">@dtCt.Category</span> @dtCt.Name</span>
+                    <button class="modal-close-btn" @onclick="CloseTaskDetails">✕</button>
+                </div>
+                <div class="td-grid">
+                    <div class="td-field"><span class="td-label">Category</span><span class="td-value">@dtCt.Category</span></div>
+                    <div class="td-field"><span class="td-label">Planned</span><span class="td-value">@($"{dtCt.Hours:0.#}h")</span></div>
+                    <div class="td-field"><span class="td-label">Scheduled</span><span class="td-value">@($"{dtPlanned:0.#}h")</span></div>
+                    <div class="td-field"><span class="td-label">Assigned to</span><span class="td-value">@(dtMembers.Count > 0 ? string.Join(", ", dtMembers) : "—")</span></div>
+                    @if (!string.IsNullOrEmpty(dtEpic))
+                    {
+                        <div class="td-field"><span class="td-label">Epic</span><span class="td-value"><a href="@JiraBrowseUrl(dtEpic!)" target="_blank">@dtEpic ↗</a></span></div>
+                    }
+                </div>
+            }
+            else
+            {
+                var dtIssue = GetTaskIssue(dtId);
+                var dtKey   = GetJiraKeyForTaskId(dtId);
+                @if (dtIssue is null)
+                {
+                    <div class="modal-header-row">
+                        <span class="modal-title">@(dtKey ?? $"#{dtId}")</span>
+                        <button class="modal-close-btn" @onclick="CloseTaskDetails">✕</button>
+                    </div>
+                    <p class="modal-body">No Jira data loaded for this task yet. Open the <strong>Report</strong> tab to refresh, then try again.</p>
+                    @if (!string.IsNullOrEmpty(dtKey))
+                    {
+                        <div class="td-actions"><a class="btn primary small" href="@JiraBrowseUrl(dtKey)" target="_blank">Open in Jira ↗</a></div>
+                    }
+                }
+                else
+                {
+                    <div class="modal-header-row">
+                        <span class="modal-title"><span class="td-key">@dtIssue.Key</span> @dtIssue.Summary</span>
+                        <button class="modal-close-btn" @onclick="CloseTaskDetails">✕</button>
+                    </div>
+                    <div class="td-grid">
+                        <div class="td-field"><span class="td-label">Status</span><span class="td-value"><span class="rpt-status-chip @GetStatusClass(dtIssue.Status)">@(string.IsNullOrEmpty(dtIssue.Status) ? "—" : dtIssue.Status)</span></span></div>
+                        <div class="td-field"><span class="td-label">Assignee</span><span class="td-value">@dtIssue.Assignee</span></div>
+                        <div class="td-field"><span class="td-label">Type</span><span class="td-value">@(string.IsNullOrEmpty(dtIssue.IssueType) ? "—" : dtIssue.IssueType)</span></div>
+                        <div class="td-field"><span class="td-label">Priority</span><span class="td-value">@dtIssue.Priority</span></div>
+                        <div class="td-field"><span class="td-label">Epic</span>
+                            <span class="td-value">
+                                @if (string.IsNullOrEmpty(dtIssue.EpicKey))
+                                {
+                                    <span>—</span>
+                                }
+                                else
+                                {
+                                    <a href="@JiraBrowseUrl(dtIssue.EpicKey)" target="_blank">@dtIssue.EpicKey</a>
+                                    <span class="td-epic-name">@dtIssue.EpicName</span>
+                                }
+                            </span>
+                        </div>
+                        <div class="td-field"><span class="td-label">Original Est.</span><span class="td-value">@FormatEstimate(dtIssue.OriginalEstimate, dtIssue.OriginalEstimateSeconds)</span></div>
+                        <div class="td-field"><span class="td-label">Time Logged</span><span class="td-value">@FormatEstimate(dtIssue.TimeSpent, dtIssue.TimeSpentSeconds)</span></div>
+                        <div class="td-field"><span class="td-label">Remaining</span><span class="td-value">@FormatEstimate(dtIssue.RemainingEstimate, dtIssue.ComputedRemainingSeconds)</span></div>
+                        <div class="td-field"><span class="td-label">Due</span><span class="td-value">@(dtIssue.DueDate?.ToString("dd MMM yyyy") ?? "—")</span></div>
+                        <div class="td-field"><span class="td-label">Scheduled</span><span class="td-value">@($"{dtPlanned:0.#}h") · @(dtMembers.Count > 0 ? string.Join(", ", dtMembers) : "—")</span></div>
+                    </div>
+                    <div class="td-actions">
+                        <a class="btn primary small" href="@JiraBrowseUrl(dtIssue.Key)" target="_blank">Open in Jira ↗</a>
+                    </div>
+                }
+            }
+        </div>
+    }
 </div>
 
 @code {
@@ -1216,6 +1549,7 @@
         public string Category { get; set; } = "Meeting";
         public decimal Hours { get; set; }
         public string Color { get; set; } = "#8b5cf6";
+        public string EpicKey { get; set; } = "";   // Feature Bug only — epic whose bugs feed the report
     }
 
     // ───────────────────────────────────────────────────────────
@@ -1230,9 +1564,17 @@
     private bool ShowWeekends { get; set; } = false;
     private string ViewMode { get; set; } = "calendar";
     private string? ActiveTeamFilter { get; set; }
+    private string _colorMode = "type";       // calendar block colouring: "type" or "epic"
+    private string _density   = "comfortable"; // "comfortable" or "compact"
 
     private Dictionary<string, EpicLoadState> LoadedEpics { get; set; } = new();
     private string EpicKeyInput { get; set; } = "";
+
+    // Individually-loaded Jira tasks (not via an epic). Keyed by Jira key.
+    private Dictionary<string, SprintIssue> LoadedTasks { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    private string TaskKeysInput { get; set; } = "";
+    private bool _isLoadingTasks = false;
+    private bool _manualTasksExpanded = true;
 
     private Dictionary<string, EpicLoadState> LoadedSupportBugEpics { get; set; } = new();
     private string SupportBugEpicKeyInput { get; set; } = "";
@@ -1251,15 +1593,28 @@
     private int? SelectedCustomTaskId { get; set; }
     private PendingPlacementState? PendingPlacement { get; set; }
 
+    // Drag-to-reschedule: the GroupId of the calendar block currently being dragged.
+    private Guid? _dragGroupId;
+
     // ── Custom Tasks ──
     private Dictionary<int, CustomTaskEntry> _customTasks = new();
     private int _nextCustomTaskId = -1;
     private bool ShowCustomTaskForm { get; set; } = false;
     private string NewCustomTaskName { get; set; } = "";
-    private string NewCustomTaskCategory { get; set; } = "Meeting";
     private decimal NewCustomTaskHours { get; set; } = 1m;
 
+    // Custom-task categories (managed on Sprint Planning Config) + current picker selection.
+    private List<CustomTaskTemplate> _customTaskTemplates = new();
+    private int SelectedTemplateId { get; set; }
+    private string NewFeatureBugEpicKey { get; set; } = "";   // epic key for a picked "Feature Bug" task
+
+    // TeamMembers = the rows the board renders: active roster members, plus any (now-inactive)
+    // members still referenced by a loaded plan so historical plans never lose people.
     private List<TeamMemberDto> TeamMembers { get; set; } = new();
+    // Per-member daily capacity (hours), keyed by the deterministic member Guid. Falls back to the default.
+    private Dictionary<Guid, decimal> _memberHours = new();
+    private List<RosterMember> _allRoster = new();           // full roster incl. inactive (for lookups)
+    private HashSet<Guid> _activeMemberIds = new();          // assignment pool (auto-assign/import targets)
     private string? ErrorMessage { get; set; }
     private string? InfoMessage  { get; set; }
     private bool _calendarFullPage;
@@ -1269,6 +1624,36 @@
     private List<SprintPlanHeader> _savedPlans = new();
     private bool                  _isSaving   = false;
     private int                   _loadPlanId = 0;
+
+    // ── Unsaved-changes tracking ──
+    // Hash of the plan state at last save/load; IsDirty compares it to current state.
+    private string   _savedStateHash = "";
+    private DateTime? _loadedUpdatedAt;          // header timestamp at load, for concurrency detection
+    private bool     _forceSaveOverwrite = false; // set when the user confirms overwriting a newer save
+
+    private bool IsDirty => ComputeStateHash() != _savedStateHash;
+
+    private string ComputeStateHash()
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append(SprintName).Append('|').Append(SprintStart).Append('|').Append(SprintEnd).Append('|');
+        sb.Append(string.Join(",", LoadedEpics.Keys.OrderBy(k => k))).Append('|');
+        sb.Append(string.Join(",", LoadedTasks.Keys.OrderBy(k => k))).Append('|');
+        sb.Append(string.Join(",", LoadedSupportBugEpics.Keys.OrderBy(k => k))).Append('|');
+        foreach (var a in Allocations.OrderBy(a => a.TaskId).ThenBy(a => a.TeamMemberId).ThenBy(a => a.Date))
+            sb.Append(a.TaskId).Append(':').Append(a.TeamMemberId).Append(':').Append(a.Date.DayNumber).Append(':').Append(a.HoursAllocated).Append(';');
+        sb.Append('|');
+        foreach (var ct in _customTasks.Values.OrderBy(c => c.Id))
+            sb.Append(ct.Id).Append(':').Append(ct.Name).Append(':').Append(ct.Hours).Append(':').Append(ct.Category).Append(';');
+        sb.Append('|');
+        foreach (var h in Holidays.OrderBy(d => d)) sb.Append(h.DayNumber).Append(',');
+        sb.Append('|');
+        foreach (var kvp in MemberTimeOff.OrderBy(k => k.Key))
+            foreach (var d in kvp.Value.OrderBy(x => x)) sb.Append(kvp.Key).Append(d.DayNumber).Append(',');
+        return sb.ToString();
+    }
+
+    private void ResetDirtyBaseline() => _savedStateHash = ComputeStateHash();
 
     // ── Plan versions ──
     private List<SprintPlanVersion> _planVersions    = new();
@@ -1299,15 +1684,22 @@
     private bool                       _isLoadingLogs         = false;
     private List<SprintPlanRemovalLog> _removalLogs           = new();
 
-    private const decimal MaxHoursPerDay = 6m;
-    private const decimal HoursPerDay = 6m;
-    private const decimal DaysPerWeek = 5m;
+    private const decimal DefaultHoursPerDay = 6m;   // fallback daily capacity when a member has no roster value
+    private const decimal HoursPerDay = 6m;          // Jira-duration parsing: hours in a Jira "day"
+    private const decimal DaysPerWeek = 5m;          // Jira-duration parsing: days in a Jira "week"
+
+    // Shared (bank) holidays from the roster admin page — merged into every plan's holiday set.
+    private List<SharedHoliday> _sharedHolidays = new();
 
     // ───────────────────────────────────────────────────────────
     // Computed properties
     // ───────────────────────────────────────────────────────────
     private List<SprintIssue> GetAllTasks()
-        => LoadedEpics.Values.SelectMany(e => e.Tasks).ToList();
+        => LoadedEpics.Values.SelectMany(e => e.Tasks)
+            .Concat(LoadedTasks.Values)
+            .GroupBy(t => t.Id)
+            .Select(g => g.First())
+            .ToList();
 
     private bool IsTaskAssigned(int taskId)
         => Allocations.Any(a => a.TaskId == taskId);
@@ -1319,7 +1711,7 @@
         return TeamMembers.FirstOrDefault(m => m.Id == memberId.Value)?.Name;
     }
 
-    private int TotalTaskCount => LoadedEpics.Values.Sum(e => e.Tasks.Count);
+    private int TotalTaskCount => GetAllTasks().Count;
     private int AssignedCount => GetAllTasks().Count(t => IsTaskAssigned(t.Id));
     private int UnassignedCount => TotalTaskCount - AssignedCount;
     private decimal TotalScopeHours => GetAllTasks().Sum(t => GetTaskHours(t));
@@ -1391,17 +1783,91 @@
         }
     }
 
+    // At-risk = incomplete tasks belonging to members whose total remaining work
+    // exceeds their remaining capacity (i.e. the assignee is collectively overbooked).
     private int AtRiskCount
     {
         get
         {
-            var remainingSec = (long)RemainingWorkingDays * 6 * 3600;
-            return GetScheduledIssues()
-                .Count(t => t.StatusCategoryKey != "done"
-                          && t.ComputedRemainingSeconds > 0
-                          && t.ComputedRemainingSeconds > remainingSec);
+            var issuesById = GetScheduledIssues()
+                .GroupBy(t => t.Id)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            var atRisk = 0;
+            var memberIds = Allocations
+                .Where(a => a.TaskId > 0)
+                .Select(a => a.TeamMemberId)
+                .Distinct();
+
+            foreach (var memberId in memberIds)
+            {
+                var memberIssues = Allocations
+                    .Where(a => a.TeamMemberId == memberId && a.TaskId > 0)
+                    .Select(a => a.TaskId)
+                    .Distinct()
+                    .Where(id => issuesById.ContainsKey(id))
+                    .Select(id => issuesById[id])
+                    .Where(t => t.StatusCategoryKey != "done" && t.ComputedRemainingSeconds > 0)
+                    .ToList();
+
+                var totalRemaining = memberIssues.Sum(t => (long)t.ComputedRemainingSeconds);
+                if (totalRemaining > GetMemberRemainingCapacitySeconds(memberId))
+                    atRisk += memberIssues.Count;
+            }
+            return atRisk;
         }
     }
+
+    // ── Sprint summary / closing metrics (commitment vs completion) ──
+    private sealed record SummaryMetrics(
+        int CommittedTasks, int DoneTasks, int InProgressTasks, int NotStartedTasks, int AtRisk,
+        long CommittedSeconds, long DoneSeconds, long LoggedSeconds);
+
+    private record TeamSummaryRow(string Team, int Committed, int Done, decimal CommittedHours, decimal DoneHours);
+
+    // Maps each scheduled Jira task to the team of the member it's assigned to.
+    private string GetTeamForScheduledTask(int taskId)
+    {
+        var memberId = Allocations.FirstOrDefault(a => a.TaskId == taskId)?.TeamMemberId;
+        if (memberId is null) return "Unassigned";
+        return TeamMembers.FirstOrDefault(m => m.Id == memberId.Value)?.Team ?? "Unassigned";
+    }
+
+    private SummaryMetrics GetSummaryMetrics()
+    {
+        var issues = GetScheduledIssues();
+        var committedSec = issues.Sum(t => (long)t.OriginalEstimateSeconds);
+        var doneSec      = issues.Where(t => t.StatusCategoryKey == "done").Sum(t => (long)t.OriginalEstimateSeconds);
+        var loggedSec    = issues.Sum(t => (long)t.TimeSpentSeconds);
+        return new SummaryMetrics(
+            CommittedTasks:  issues.Count,
+            DoneTasks:       issues.Count(t => t.StatusCategoryKey == "done"),
+            InProgressTasks: issues.Count(t => t.StatusCategoryKey == "indeterminate"),
+            NotStartedTasks: issues.Count(t => t.StatusCategoryKey == "new"),
+            AtRisk:          AtRiskCount,
+            CommittedSeconds: committedSec,
+            DoneSeconds:      doneSec,
+            LoggedSeconds:    loggedSec);
+    }
+
+    private List<TeamSummaryRow> GetTeamSummaryRows()
+    {
+        var issues = GetScheduledIssues();
+        return issues
+            .GroupBy(t => GetTeamForScheduledTask(t.Id))
+            .Select(g => new TeamSummaryRow(
+                g.Key,
+                g.Count(),
+                g.Count(t => t.StatusCategoryKey == "done"),
+                g.Sum(t => t.OriginalEstimateSeconds) / 3600m,
+                g.Where(t => t.StatusCategoryKey == "done").Sum(t => t.OriginalEstimateSeconds) / 3600m))
+            .OrderBy(r => r.Team)
+            .ToList();
+    }
+
+    private static double Pct(double part, double whole) => whole <= 0 ? 0 : part / whole * 100;
+    private static string PctClass(double pct) => pct >= 80 ? "kpi-green" : pct >= 40 ? "kpi-amber" : "kpi-red";
+    private static string GetPctBadge(double pct) => pct >= 80 ? "risk-green" : pct >= 40 ? "risk-amber" : "risk-red";
 
     // ── Report completion badge ──
     private static string GetCompletionPct(ReportRow row)
@@ -1451,13 +1917,17 @@
     }
 
     // ── Feasibility ──
+    // Feasibility is now assignee-aware: a task is only "Feasible" if it fits within the
+    // member's remaining capacity AFTER accounting for all their other assigned work.
+    private static bool IsMemberOverbooked(ReportRow row)
+        => row.MemberTotalRemainingSeconds > row.MemberRemainingCapacitySeconds;
+
     private string GetFeasibilityLabel(ReportRow row)
     {
         if (row.IsCustom) return "—";
         if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "✓ Done";
         if (row.ComputedRemainingSeconds == 0) return "No Estimate";
-        return row.ComputedRemainingSeconds <= (long)RemainingWorkingDays * 6 * 3600
-            ? "✓ Feasible" : "✗ Not Feasible";
+        return IsMemberOverbooked(row) ? "✗ Over Capacity" : "✓ Feasible";
     }
 
     private string GetFeasibilityClass(ReportRow row)
@@ -1465,8 +1935,7 @@
         if (row.IsCustom) return "feas-na";
         if (string.Equals(row.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase)) return "feas-done";
         if (row.ComputedRemainingSeconds == 0) return "feas-unknown";
-        return row.ComputedRemainingSeconds <= (long)RemainingWorkingDays * 6 * 3600
-            ? "feas-ok" : "feas-fail";
+        return IsMemberOverbooked(row) ? "feas-fail" : "feas-ok";
     }
 
     // ── Today's Activity ──
@@ -1497,6 +1966,16 @@
             .ToList();
     }
 
+    // Matches a Jira author/assignee display name to a roster member name on word boundaries,
+    // so "Sam" no longer matches "Samuel" and "Rui" no longer matches "Ruiz".
+    private static bool AuthorMatchesMember(string? author, string memberName)
+    {
+        if (string.IsNullOrWhiteSpace(author) || string.IsNullOrWhiteSpace(memberName)) return false;
+        var words = author.Split(new[] { ' ', '.', ',', '-', '_', '@', '(', ')', '\t' },
+                                 StringSplitOptions.RemoveEmptyEntries);
+        return words.Any(w => string.Equals(w, memberName, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static string FmtSec(int seconds)
     {
         if (seconds == 0) return "0h";
@@ -1521,42 +2000,63 @@
         SprintEndDateTime   = DateTime.Today.AddDays(13);
         ApplySprintRange();
 
-        TeamMembers = new()
-        {
-            // Backend
-            new TeamMemberDto(MemberId("Duarte",   "Backend"), "Duarte",   "Backend"),
-            new TeamMemberDto(MemberId("Freire",   "Backend"), "Freire",   "Backend"),
-            new TeamMemberDto(MemberId("Amado",    "Backend"), "Amado",    "Backend"),
-            new TeamMemberDto(MemberId("Rosa",     "Backend"), "Rosa",     "Backend"),
-            new TeamMemberDto(MemberId("Patrick",  "Backend"), "Patrick",  "Backend"),
-            new TeamMemberDto(MemberId("Rui",      "Backend"), "Rui",      "Backend"),
-            new TeamMemberDto(MemberId("Mateus",   "Backend"), "Mateus",   "Backend"),
-            new TeamMemberDto(MemberId("Dasa",     "Backend"), "Dasa",     "Backend"),
-            new TeamMemberDto(MemberId("Shashank", "Backend"), "Shashank", "Backend"),
-            new TeamMemberDto(MemberId("Sangram",  "Backend"), "Sangram",  "Backend"),
-            new TeamMemberDto(MemberId("Ranjit",   "Backend"), "Ranjit",   "Backend"),
-            // Frontend
-            new TeamMemberDto(MemberId("Bruno",    "Frontend"), "Bruno",    "Frontend"),
-            new TeamMemberDto(MemberId("Samuel",   "Frontend"), "Samuel",   "Frontend"),
-            new TeamMemberDto(MemberId("Murilo",   "Frontend"), "Murilo",   "Frontend"),
-            new TeamMemberDto(MemberId("Omar",     "Frontend"), "Omar",     "Frontend"),
-            new TeamMemberDto(MemberId("Vinicius", "Frontend"), "Vinicius", "Frontend"),
-            new TeamMemberDto(MemberId("Ronit",    "Frontend"), "Ronit",    "Frontend"),
-            new TeamMemberDto(MemberId("Tanaya",   "Frontend"), "Tanaya",   "Frontend"),
-            new TeamMemberDto(MemberId("Vijay",    "Frontend"), "Vijay",    "Frontend"),
-            new TeamMemberDto(MemberId("Bhavini",  "Frontend"), "Bhavini",  "Frontend"),
-            // QA
-            new TeamMemberDto(MemberId("Daria",     "QA"), "Daria",     "QA"),
-            new TeamMemberDto(MemberId("Daniel",    "QA"), "Daniel",    "QA"),
-            new TeamMemberDto(MemberId("Jessica",   "QA"), "Jessica",   "QA"),
-            new TeamMemberDto(MemberId("Katarina",  "QA"), "Katarina",  "QA"),
-            new TeamMemberDto(MemberId("Tejaswini", "QA"), "Tejaswini", "QA"),
-            new TeamMemberDto(MemberId("Anushka",   "QA"), "Anushka",   "QA"),
-            new TeamMemberDto(MemberId("Muskan",    "QA"), "Muskan",    "QA"),
-        };
-
-        _savedPlans = await PlanService.GetAllAsync();
+        await LoadRosterAsync();
+        _savedPlans   = await PlanService.GetAllAsync();
+        await LoadSharedHolidaysAsync();
+        _customTaskTemplates = await RosterService.GetActiveCustomTaskTemplatesAsync();
     }
+
+    private async Task LoadSharedHolidaysAsync()
+    {
+        _sharedHolidays   = await RosterService.GetHolidaysAsync();
+        _sharedHolidaySet = _sharedHolidays.Select(h => h.Date).ToHashSet();
+    }
+
+    // Loads the editable roster from the DB and rebuilds the in-memory member list + capacity map.
+    private async Task LoadRosterAsync()
+    {
+        _allRoster = await RosterService.GetAllAsync();   // includes inactive members
+
+        // Capacity is resolved for EVERYONE (active or not) so old plans render correct hours.
+        _memberHours = new();
+        foreach (var r in _allRoster)
+            _memberHours[MemberId(r.Name, r.Team)] = r.HoursPerDay > 0m ? r.HoursPerDay : DefaultHoursPerDay;
+
+        var active = _allRoster.Where(r => r.Active).ToList();
+        _activeMemberIds = active.Select(r => MemberId(r.Name, r.Team)).ToHashSet();
+        ResetTeamMembersToActive();
+    }
+
+    // Rebuilds the rendered member list to just the active roster (used for new/empty plans).
+    private void ResetTeamMembersToActive()
+        => TeamMembers = _allRoster.Where(r => r.Active)
+            .Select(r => new TeamMemberDto(MemberId(r.Name, r.Team), r.Name, r.Team))
+            .ToList();
+
+    // Adds any plan-referenced member that isn't in the active roster (deactivated or renamed),
+    // so a loaded historical plan still shows their allocations.
+    private void MergePlanMembers(SprintPlanHeader plan)
+    {
+        var known = TeamMembers.Select(m => m.Id).ToHashSet();
+        foreach (var a in plan.Allocations)
+        {
+            if (a.MemberId == default || known.Contains(a.MemberId)) continue;
+            var roster = _allRoster.FirstOrDefault(r => MemberId(r.Name, r.Team) == a.MemberId);
+            var team   = roster?.Team ?? "Former Members";
+            var name   = !string.IsNullOrWhiteSpace(a.MemberName) ? a.MemberName : (roster?.Name ?? "Unknown");
+            TeamMembers.Add(new TeamMemberDto(a.MemberId, name, team));
+            known.Add(a.MemberId);
+            if (!_memberHours.ContainsKey(a.MemberId))
+                _memberHours[a.MemberId] = roster?.HoursPerDay > 0m ? roster!.HoursPerDay : DefaultHoursPerDay;
+            // Not added to _activeMemberIds → excluded from auto-assign / import targets.
+        }
+    }
+
+    private bool IsFormerMember(Guid memberId) => !_activeMemberIds.Contains(memberId);
+
+    /// <summary>This member's daily capacity in hours (from the roster), falling back to the default.</summary>
+    private decimal GetMemberDailyHours(Guid memberId)
+        => _memberHours.TryGetValue(memberId, out var h) && h > 0m ? h : DefaultHoursPerDay;
 
     // ───────────────────────────────────────────────────────────
     // Sprint configuration
@@ -1649,6 +2149,84 @@
     }
 
     // ───────────────────────────────────────────────────────────
+    // Individual task loading (by Jira key, not via an epic)
+    // ───────────────────────────────────────────────────────────
+    private static IEnumerable<string> ParseTaskKeys(string input) =>
+        input.Split(new[] { ',', ' ', ';', '\n', '\t', '\r' }, StringSplitOptions.RemoveEmptyEntries)
+             .Select(k => k.Trim().ToUpperInvariant())
+             .Where(k => k.Length > 0)
+             .Distinct();
+
+    private async Task LoadTasks()
+    {
+        ErrorMessage = null;
+        InfoMessage = null;
+
+        var keys = ParseTaskKeys(TaskKeysInput)
+            .Where(k => !LoadedTasks.ContainsKey(k))
+            .ToList();
+        if (keys.Count == 0) { ErrorMessage = "Enter one or more task keys (e.g. JM-123, JM-456)."; return; }
+
+        _isLoadingTasks = true;
+        TaskKeysInput = "";
+        StateHasChanged();
+
+        try
+        {
+            var report = await JiraService.GetIssuesByKeysAsync(keys);
+            var found = report?.Issues ?? new List<SprintIssue>();
+            foreach (var t in found)
+            {
+                if (string.IsNullOrEmpty(t.Key)) continue;
+                _taskCache[t.Id] = t;
+                LoadedTasks[t.Key] = t;
+            }
+
+            var foundKeys = found.Select(t => t.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var missing   = keys.Where(k => !foundKeys.Contains(k)).ToList();
+            InfoMessage = $"Loaded {found.Count} task(s)."
+                        + (missing.Count > 0 ? $" Not found: {string.Join(", ", missing)}." : "");
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load tasks: {ex.Message}"; }
+        finally { _isLoadingTasks = false; }
+    }
+
+    private async Task OnTaskInputKeyPress(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await LoadTasks();
+    }
+
+    private void RemoveLoadedTask(string key)
+    {
+        LoadedTasks.Remove(key);
+        InfoMessage = $"Task {key} removed from the panel.";
+    }
+
+    private void ToggleManualTasks() => _manualTasksExpanded = !_manualTasksExpanded;
+
+    // Helper used by plan loading — fetch a batch of task keys without touching TaskKeysInput
+    private async Task LoadTasksByKeys(IEnumerable<string> keys)
+    {
+        var toFetch = keys
+            .Select(k => k.Trim().ToUpperInvariant())
+            .Where(k => k.Length > 0 && !LoadedTasks.ContainsKey(k))
+            .Distinct()
+            .ToList();
+        if (toFetch.Count == 0) return;
+        try
+        {
+            var report = await JiraService.GetIssuesByKeysAsync(toFetch);
+            foreach (var t in report?.Issues ?? new List<SprintIssue>())
+            {
+                if (string.IsNullOrEmpty(t.Key)) continue;
+                _taskCache[t.Id] = t;
+                LoadedTasks[t.Key] = t;
+            }
+        }
+        catch { }
+    }
+
+    // ───────────────────────────────────────────────────────────
     // Support Bug Epic loading / management
     // ───────────────────────────────────────────────────────────
     private async Task LoadSupportBugEpic()
@@ -1714,12 +2292,28 @@
     // ───────────────────────────────────────────────────────────
     private async Task SavePlanAsync()
     {
-        _isSaving = true;
         ErrorMessage = null;
+
+        // Concurrency guard: warn if the stored plan was updated elsewhere since we loaded it.
+        if (_currentPlanId.HasValue && !_forceSaveOverwrite)
+        {
+            var current = await PlanService.GetUpdatedAtAsync(_currentPlanId.Value);
+            if (current.HasValue && _loadedUpdatedAt.HasValue && current.Value > _loadedUpdatedAt.Value)
+            {
+                _forceSaveOverwrite = true;
+                ErrorMessage = $"This plan was changed elsewhere at {current.Value.ToLocalTime():dd-MMM HH:mm} "
+                             + "(possibly another tab/user). Click Save again to overwrite with your version, "
+                             + "or reload it from the dropdown to keep theirs.";
+                return;
+            }
+        }
+
+        _isSaving = true;
         try
         {
             var epicKeys = string.Join(",", LoadedEpics.Keys);
             var supportBugEpicKeys = string.Join(",", LoadedSupportBugEpics.Keys);
+            var taskKeys = string.Join(",", LoadedTasks.Keys);
             var plan = new SprintPlanHeader
             {
                 Id            = _currentPlanId ?? 0,
@@ -1727,6 +2321,7 @@
                 SprintStart   = SprintStart,
                 SprintEnd     = SprintEnd,
                 LoadedEpicKeys     = epicKeys,
+                LoadedTaskKeys     = taskKeys,
                 SupportBugEpicKeys = supportBugEpicKeys,
                 Allocations   = Allocations.Select(a => new SprintPlanAllocation
                 {
@@ -1748,6 +2343,7 @@
                     Category     = ct.Category,
                     Hours        = ct.Hours,
                     Color        = ct.Color,
+                    EpicKey      = ct.EpicKey,
                 }).ToList(),
                 Holidays = Holidays.Select(d => new SprintPlanHoliday
                 {
@@ -1763,9 +2359,12 @@
             };
 
             var saved = await PlanService.UpsertByNameAsync(plan);
-            _currentPlanId = saved.Id;
-            _savedPlans    = await PlanService.GetAllAsync();
-            _planVersions  = await PlanService.GetVersionsAsync(saved.Id);
+            _currentPlanId      = saved.Id;
+            _savedPlans         = await PlanService.GetAllAsync();
+            _planVersions       = await PlanService.GetVersionsAsync(saved.Id);
+            _loadedUpdatedAt    = saved.UpdatedAt;
+            _forceSaveOverwrite = false;
+            ResetDirtyBaseline();
             InfoMessage = $"Plan '{saved.Name}' saved (#{saved.Id}).";
         }
         catch (Exception ex) { ErrorMessage = $"Save failed: {ex.Message}"; }
@@ -1775,14 +2374,35 @@
     private async Task OnSprintDropdownChanged(ChangeEventArgs e)
     {
         if (!int.TryParse(e.Value?.ToString(), out var id) || id == 0) return;
+        if (IsDirty && !await ConfirmDiscardAsync())
+        {
+            StateHasChanged();   // revert the dropdown to the current plan
+            return;
+        }
         await LoadPlanAsync(id);
     }
 
-    private void NewSprint()
+    // Native browser confirm before discarding unsaved changes.
+    private async Task<bool> ConfirmDiscardAsync()
     {
+        try
+        {
+            return await JS.InvokeAsync<bool>("confirm",
+                "You have unsaved changes that will be lost. Continue without saving?");
+        }
+        catch { return true; }   // if JS is unavailable, don't block the action
+    }
+
+    private async Task NewSprint()
+    {
+        if (IsDirty && !await ConfirmDiscardAsync()) return;
+
         _currentPlanId    = null;
+        _loadedUpdatedAt  = null;
+        _forceSaveOverwrite = false;
         SprintName        = "";
         LoadedEpics.Clear();
+        LoadedTasks.Clear();
         LoadedSupportBugEpics.Clear();
         _taskCache.Clear();
         _taskLabelFallback.Clear();
@@ -1799,6 +2419,8 @@
         PendingPlacement  = null;
         _planVersions     = new();
         _showVersionsPanel = false;
+        ResetTeamMembersToActive();
+        ResetDirtyBaseline();
         InfoMessage = "New sprint ready — set the sprint name and dates, then load epics.";
     }
 
@@ -1811,7 +2433,9 @@
             var plan = await PlanService.GetAsync(id);
             if (plan is null) { ErrorMessage = $"Plan #{id} not found."; return; }
             await ApplyPlanAsync(plan);
-            _planVersions = await PlanService.GetVersionsAsync(id);
+            _planVersions    = await PlanService.GetVersionsAsync(id);
+            _loadedUpdatedAt = plan.UpdatedAt;
+            ResetDirtyBaseline();
             InfoMessage = $"Plan '{plan.Name}' loaded — {plan.Allocations.Count} allocations.";
         }
         catch (Exception ex) { ErrorMessage = $"Load failed: {ex.Message}"; }
@@ -1830,8 +2454,13 @@
         SprintEndDateTime   = plan.SprintEnd.ToDateTime(TimeOnly.MinValue);
         ApplySprintRange();
 
+        // Start from the active roster, then re-add any inactive members this plan references.
+        ResetTeamMembersToActive();
+        MergePlanMembers(plan);
+
         // Reload epics from cache/Jira
         LoadedEpics.Clear();
+        LoadedTasks.Clear();
         LoadedSupportBugEpics.Clear();
         _taskCache.Clear();
         _taskLabelFallback.Clear();
@@ -1841,6 +2470,10 @@
         var epicKeys = plan.LoadedEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
         foreach (var key in epicKeys)
             await LoadEpicByKey(key);
+
+        var taskKeys = (plan.LoadedTaskKeys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries);
+        if (taskKeys.Length > 0)
+            await LoadTasksByKeys(taskKeys);
 
         var supportBugEpicKeys = plan.SupportBugEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
         foreach (var key in supportBugEpicKeys)
@@ -1857,7 +2490,8 @@
             _customTasks[ct.LocalId] = new CustomTaskEntry
             {
                 Id = ct.LocalId, Name = ct.Name,
-                Category = ct.Category, Hours = ct.Hours, Color = ct.Color
+                Category = ct.Category, Hours = ct.Hours, Color = ct.Color,
+                EpicKey = ct.EpicKey
             };
         _nextCustomTaskId = _customTasks.Count > 0 ? _customTasks.Keys.Min() - 1 : -1;
 
@@ -1955,30 +2589,48 @@
     {
         ErrorMessage = null;
         if (string.IsNullOrWhiteSpace(NewCustomTaskName)) { ErrorMessage = "Enter a task name."; return; }
+        var tpl = _customTaskTemplates.FirstOrDefault(t => t.Id == SelectedTemplateId);
+        if (tpl is null) { ErrorMessage = "Select a category first."; return; }
         if (NewCustomTaskHours <= 0m) { ErrorMessage = "Hours must be greater than 0."; return; }
 
-        var color = NewCustomTaskCategory switch
+        // "Feature Bug" tasks carry a Jira epic key so the report can pull that epic's
+        // bugs and reconcile logged time (Support Bug uses the plan-level loader instead).
+        var epicKey = "";
+        if (tpl.Category == "Feature Bug")
         {
-            "Meeting"     => "#8b5cf6",
-            "Support Bug" => "#ef4444",
-            "Feature Bug" => "#ef4444",
-            "Review"      => "#f59e0b",
-            "On-Call"     => "#f97316",
-            _             => "#6366f1"
-        };
+            epicKey = (NewFeatureBugEpicKey ?? "").Trim().ToUpperInvariant();
+            if (!System.Text.RegularExpressions.Regex.IsMatch(epicKey, @"^[A-Z]+-\d+$"))
+            {
+                ErrorMessage = "Enter a valid epic key (e.g. PROJ-456) for this Feature Bug.";
+                return;
+            }
+        }
+
+        var color = string.IsNullOrWhiteSpace(tpl.Color)
+            ? GetCategoryColor(tpl.Category)
+            : tpl.Color;
 
         var id = _nextCustomTaskId--;
         _customTasks[id] = new CustomTaskEntry
         {
-            Id = id, Name = NewCustomTaskName,
-            Category = NewCustomTaskCategory,
+            Id = id, Name = NewCustomTaskName.Trim(),
+            Category = tpl.Category,
             Hours = NewCustomTaskHours,
-            Color = color
+            Color = color,
+            EpicKey = epicKey
         };
 
-        InfoMessage = $"'{NewCustomTaskName}' added. Click it to select, then click a calendar cell.";
+        InfoMessage = $"'{NewCustomTaskName.Trim()}' added. Click it to select, then click a calendar cell.";
+        SelectedTemplateId = 0;
         NewCustomTaskName = "";
         NewCustomTaskHours = 1m;
+        NewFeatureBugEpicKey = "";
+    }
+
+    private void OnTemplateChanged(ChangeEventArgs e)
+    {
+        SelectedTemplateId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        NewFeatureBugEpicKey = "";
     }
 
     private void RemoveCustomTask(int id)
@@ -2005,10 +2657,55 @@
         return "";
     }
 
+    // ── Block colouring (calm work-type palette; red is reserved for over-capacity) ──
+    // Calm, muted palette — deliberately no red/amber so those stay meaningful for problems.
+    private static readonly string[] WorkPalette =
+        { "#2563eb", "#0d9488", "#7c3aed", "#0891b2", "#6366f1", "#db2777", "#ca8a04", "#475569" };
+
+    private static int StableIndex(string s, int mod)
+    {
+        if (mod <= 0) return 0;
+        int h = 0;
+        foreach (var c in s) h = (h * 31 + c) & 0x7fffffff;
+        return h % mod;
+    }
+
+    private static string GetCategoryColor(string category) => category switch
+    {
+        "Meeting"     => "#64748b",
+        "Support Bug" => "#0891b2",
+        "Feature Bug" => "#0d9488",
+        "Review"      => "#6366f1",
+        "On-Call"     => "#7c3aed",
+        _             => "#475569"
+    };
+
+    private static string GetTypeColor(string? issueType)
+    {
+        var t = (issueType ?? "").ToLowerInvariant();
+        if (t.Contains("sub")) return "#0891b2";
+        return t switch
+        {
+            "story" => "#2563eb",
+            "task"  => "#0d9488",
+            "bug"   => "#7c3aed",
+            "epic"  => "#6366f1",
+            _       => "#475569"
+        };
+    }
+
     private string GetBlockColor(int taskId)
     {
-        if (_customTasks.TryGetValue(taskId, out var ct)) return ct.Color;
-        return "#3b82f6";
+        if (_customTasks.TryGetValue(taskId, out var ct))
+            return string.IsNullOrWhiteSpace(ct.Color) ? GetCategoryColor(ct.Category) : ct.Color;
+
+        if (_colorMode == "epic")
+        {
+            var epic = GetEpicKeyForAllocation(taskId);
+            if (!string.IsNullOrEmpty(epic)) return WorkPalette[StableIndex(epic, WorkPalette.Length)];
+        }
+        var issue = _taskCache.TryGetValue(taskId, out var ci) ? ci : null;
+        return GetTypeColor(issue?.IssueType);
     }
 
     private void CancelPlacement()
@@ -2028,7 +2725,9 @@
             : "Time Off Mode OFF.";
     }
 
-    private bool IsHoliday(DateOnly date) => Holidays.Contains(date);
+    // A day is a holiday if it's in this plan's holidays OR the shared (bank) holiday list.
+    private bool IsHoliday(DateOnly date) => Holidays.Contains(date) || _sharedHolidaySet.Contains(date);
+    private HashSet<DateOnly> _sharedHolidaySet = new();
 
     private bool IsMemberTimeOff(Guid memberId, DateOnly date)
         => MemberTimeOff.TryGetValue(memberId, out var days) && days.Contains(date);
@@ -2170,17 +2869,18 @@
         {
             if (!IsDayOff(memberId, date))
             {
+                var dailyHours = GetMemberDailyHours(memberId);
                 decimal capacity;
                 if (forceOverCapacity)
                 {
-                    // Ignore existing allocations — allow day to exceed 6h limit
-                    capacity = MaxHoursPerDay;
+                    // Ignore existing allocations — allow day to exceed the member's daily limit
+                    capacity = dailyHours;
                 }
                 else
                 {
                     var committed = GetAllocatedHoursFromList(memberId, date, Allocations);
                     var pending   = provisional is not null ? GetAllocatedHoursFromList(memberId, date, provisional) : 0m;
-                    capacity = Math.Max(0m, MaxHoursPerDay - committed - pending);
+                    capacity = Math.Max(0m, dailyHours - committed - pending);
                 }
 
                 if (capacity > 0m)
@@ -2276,8 +2976,20 @@
     }
 
     // ───────────────────────────────────────────────────────────
-    // Auto-Assign: assign all unassigned tasks by capacity
+    // Auto-Assign: assign all unassigned tasks
     // ───────────────────────────────────────────────────────────
+
+    /// <summary>Finds the active roster member whose name matches a Jira assignee display name.</summary>
+    private TeamMemberDto? MatchMemberByAssignee(string? jiraAssignee)
+    {
+        if (string.IsNullOrWhiteSpace(jiraAssignee) ||
+            string.Equals(jiraAssignee, "Unassigned", StringComparison.OrdinalIgnoreCase))
+            return null;
+        return TeamMembers.FirstOrDefault(m => AuthorMatchesMember(jiraAssignee, m.Name));
+    }
+
+    // Auto-assign: keep a task with its existing Jira assignee when that person is on the
+    // (filtered) roster; otherwise fall back to the least-loaded member.
     private void AutoAssignAllUnassigned()
     {
         ErrorMessage = null;
@@ -2292,32 +3004,88 @@
 
         if (unassigned.Count == 0) { InfoMessage = "No unassigned tasks with estimates."; return; }
 
+        var pool = TeamMembers
+            .Where(m => _activeMemberIds.Contains(m.Id))
+            .Where(m => string.IsNullOrEmpty(ActiveTeamFilter) || m.Team == ActiveTeamFilter)
+            .ToList();
+
         var provisional = new List<TaskAllocation>();
         var assigned    = 0;
+        var keptAssignee = 0;
 
         foreach (var (task, hours) in unassigned)
         {
-            // Pick the member with the most remaining sprint capacity
-            var bestMember = (string.IsNullOrEmpty(ActiveTeamFilter)
-                    ? TeamMembers
-                    : TeamMembers.Where(m => m.Team == ActiveTeamFilter))
-                .OrderByDescending(m => GetMemberSprintRemaining(m.Id, provisional))
-                .FirstOrDefault();
+            // 1) Prefer the task's current Jira assignee if they're in the pool with capacity left.
+            var jiraMember = MatchMemberByAssignee(task.Assignee);
+            var inPool     = jiraMember is not null && pool.Any(m => m.Id == jiraMember.Id);
 
-            if (bestMember is null) break;
-            if (GetMemberSprintRemaining(bestMember.Id, provisional) <= 0m) continue;
+            TeamMemberDto? target = null;
+            if (inPool && GetMemberSprintRemaining(jiraMember!.Id, provisional) > 0m)
+            {
+                target = jiraMember;
+                keptAssignee++;
+            }
+            else
+            {
+                // 2) Otherwise the member with the most remaining sprint capacity.
+                target = pool
+                    .OrderByDescending(m => GetMemberSprintRemaining(m.Id, provisional))
+                    .FirstOrDefault();
+            }
 
-            var startDate = GetNextAvailableDay(bestMember.Id, SprintStart, provisional);
+            if (target is null) break;
+            if (GetMemberSprintRemaining(target.Id, provisional) <= 0m) continue;
+
+            var startDate = GetNextAvailableDay(target.Id, SprintStart, provisional);
             if (startDate is null) continue;
 
-            var newAllocs = ScheduleTask(task.Id, bestMember.Id, hours, startDate.Value, provisional);
+            var newAllocs = ScheduleTask(task.Id, target.Id, hours, startDate.Value, provisional);
             if (newAllocs.Count > 0) { provisional.AddRange(newAllocs); assigned++; }
         }
 
         Allocations.AddRange(provisional);
         InfoMessage = assigned > 0
-            ? $"Auto-assigned {assigned} task(s) to the team."
+            ? $"Auto-assigned {assigned} task(s)" + (keptAssignee > 0 ? $" — {keptAssignee} kept their Jira assignee." : ".")
             : "Could not assign any tasks — insufficient capacity.";
+    }
+
+    // Schedule only the unassigned tasks whose Jira assignee maps to a roster member,
+    // each onto that member. Tasks with no matching assignee are left untouched.
+    private void ImportJiraAssignees()
+    {
+        ErrorMessage = null;
+        InfoMessage = null;
+
+        var candidates = GetAllTasks()
+            .Where(t => !IsTaskAssigned(t.Id) && GetTaskHours(t) > 0m)
+            .Select(t => (Task: t, Hours: GetTaskHours(t), Member: MatchMemberByAssignee(t.Assignee)))
+            .Where(x => x.Member is not null && _activeMemberIds.Contains(x.Member!.Id))
+            .OrderByDescending(x => x.Hours)
+            .ToList();
+
+        if (candidates.Count == 0)
+        {
+            InfoMessage = "No unassigned tasks have a Jira assignee matching the roster.";
+            return;
+        }
+
+        var provisional = new List<TaskAllocation>();
+        var imported    = 0;
+        var unmatched   = new List<string>();
+
+        foreach (var (task, hours, member) in candidates)
+        {
+            var startDate = GetNextAvailableDay(member!.Id, SprintStart, provisional);
+            if (startDate is null) { unmatched.Add(task.Key); continue; }
+
+            var newAllocs = ScheduleTask(task.Id, member.Id, hours, startDate.Value, provisional);
+            if (newAllocs.Count > 0) { provisional.AddRange(newAllocs); imported++; }
+            else unmatched.Add(task.Key);
+        }
+
+        Allocations.AddRange(provisional);
+        InfoMessage = $"Imported {imported} task(s) onto their Jira assignee"
+                    + (unmatched.Count > 0 ? $". No capacity for: {string.Join(", ", unmatched)}." : ".");
     }
 
     private DateOnly? GetNextAvailableDay(Guid memberId, DateOnly from, List<TaskAllocation>? provisional = null)
@@ -2327,7 +3095,7 @@
             if (IsDayOff(memberId, date)) continue;
             var committed = GetAllocatedHoursFromList(memberId, date, Allocations);
             var pending   = provisional is not null ? GetAllocatedHoursFromList(memberId, date, provisional) : 0m;
-            if (committed + pending < MaxHoursPerDay) return date;
+            if (committed + pending < GetMemberDailyHours(memberId)) return date;
         }
         return null;
     }
@@ -2350,7 +3118,7 @@
     private decimal GetRemainingHours(Guid memberId, DateOnly date)
     {
         if (IsDayOff(memberId, date)) return 0m;
-        return Math.Max(0m, MaxHoursPerDay - GetAllocatedHours(memberId, date));
+        return Math.Max(0m, GetMemberDailyHours(memberId) - GetAllocatedHours(memberId, date));
     }
 
     private decimal GetMemberSprintCapacity(Guid memberId)
@@ -2358,7 +3126,7 @@
         if (SprintEnd < SprintStart || SprintStart == default) return 0m;
         return Enumerable.Range(0, SprintEnd.DayNumber - SprintStart.DayNumber + 1)
             .Select(i => SprintStart.AddDays(i))
-            .Count(d => !IsDayOff(memberId, d)) * MaxHoursPerDay;
+            .Count(d => !IsDayOff(memberId, d)) * GetMemberDailyHours(memberId);
     }
 
     private decimal GetMemberSprintAllocated(Guid memberId)
@@ -2399,10 +3167,26 @@
 
     private void SetTeamFilter(string team)   { ActiveTeamFilter = team; }
     private void ClearTeamFilter()            { ActiveTeamFilter = null; }
+
+    // ── Calendar epic filter (multi-select; empty set = show all) ──
+    private HashSet<string> ActiveEpicFilters { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    private void ToggleEpicFilter(string epicKey)
+    {
+        if (!ActiveEpicFilters.Add(epicKey)) ActiveEpicFilters.Remove(epicKey);
+    }
+
+    private void ClearEpicFilter() => ActiveEpicFilters.Clear();
+
+    // A block passes when no epic filter is active, or its task's epic is selected.
+    private bool BlockPassesEpicFilter(int taskId)
+        => ActiveEpicFilters.Count == 0
+        || ActiveEpicFilters.Contains(GetEpicKeyForAllocation(taskId));
     private void SetCalendarView()            { ViewMode = "calendar"; }
     private async Task SetReportView()        { ViewMode = "report"; await RefreshReportDataAsync(); }
-    private async Task SetDailyView()         { ViewMode = "daily";  await RefreshReportDataAsync(); }
-    private async Task SetBugsView()          { ViewMode = "bugs";   await RefreshReportDataAsync(); }
+    private async Task SetDailyView()         { ViewMode = "daily";   await RefreshReportDataAsync(); }
+    private async Task SetSummaryView()       { ViewMode = "summary"; await RefreshReportDataAsync(); }
+    private async Task SetBugsView()          { ViewMode = "bugs";    await RefreshReportDataAsync(); }
 
     // ── Report / Daily shared data ──
     // Keyed by Jira issue key (e.g. "JM-14506") — populated on Report/Daily view switch.
@@ -2458,6 +3242,7 @@
         _isRefreshingReport = true;
         _reportIssues.Clear();
         StateHasChanged();
+        await Task.Yield();   // let the spinner paint before the (possibly cached/fast) fetch
         try
         {
             // Fetch all issues for every loaded epic (broader than GetEpicReportAsync —
@@ -2470,6 +3255,23 @@
                     foreach (var issue in epicReport.Issues)
                         if (!string.IsNullOrEmpty(issue.Key))
                             _reportIssues[issue.Key] = issue;
+                }
+                catch { }
+            }
+
+            // Refresh individually-loaded tasks (not covered by an epic fetch above)
+            if (LoadedTasks.Count > 0)
+            {
+                try
+                {
+                    var taskReport = await JiraService.GetIssuesByKeysAsync(LoadedTasks.Keys.ToList());
+                    foreach (var issue in taskReport.Issues)
+                        if (!string.IsNullOrEmpty(issue.Key))
+                        {
+                            _reportIssues[issue.Key] = issue;
+                            LoadedTasks[issue.Key]   = issue;
+                            _taskCache[issue.Id]     = issue;
+                        }
                 }
                 catch { }
             }
@@ -2514,7 +3316,7 @@
             _featureBugIssuesByEpic.Clear();
             var featureBugKeys = _customTasks.Values
                 .Where(ct => ct.Category == "Feature Bug")
-                .Select(ct => ExtractEpicKeyFromTitle(ct.Name))
+                .Select(GetCustomTaskEpicKey)
                 .Where(k => k != null).Select(k => k!)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -2558,6 +3360,12 @@
         public string    FeatureBugEpicKey        { get; init; } = "";
         public int       BugTotalEstimateSeconds  { get; init; }
         public int       BugTotalLoggedSeconds    { get; init; }
+
+        // ── Capacity-aware feasibility (set per member after rows are built) ──
+        /// <summary>Assignee's remaining sprint capacity in seconds (working days left × 6h, excluding their days off).</summary>
+        public long MemberRemainingCapacitySeconds { get; set; }
+        /// <summary>Sum of remaining work across all of the assignee's incomplete Jira tasks.</summary>
+        public long MemberTotalRemainingSeconds    { get; set; }
     }
 
     private List<ReportRow> GetReportRowsForMember(Guid memberId)
@@ -2591,7 +3399,7 @@
                     }
                     else if (ct.Category == "Feature Bug")
                     {
-                        var epicKey = ExtractEpicKeyFromTitle(ct.Name);
+                        var epicKey = GetCustomTaskEpicKey(ct);
                         rows.Add(new ReportRow
                         {
                             IsCustom = true, Title = ct.Name,
@@ -2657,6 +3465,18 @@
             }
         }
 
+        // Annotate every row with this member's capacity vs. total remaining work,
+        // so feasibility reflects collective overbooking — not each task in isolation.
+        var capSec = GetMemberRemainingCapacitySeconds(memberId);
+        var totalRemaining = rows
+            .Where(r => !r.IsCustom && !string.Equals(r.StatusCategoryKey, "done", StringComparison.OrdinalIgnoreCase))
+            .Sum(r => (long)r.ComputedRemainingSeconds);
+        foreach (var r in rows)
+        {
+            r.MemberRemainingCapacitySeconds = capSec;
+            r.MemberTotalRemainingSeconds    = totalRemaining;
+        }
+
         return rows
             .OrderBy(r => r.IsCustom ? 3 : r.StatusCategoryKey switch
             {
@@ -2668,6 +3488,20 @@
             .ToList();
     }
 
+    /// <summary>Remaining sprint capacity for a member, in seconds: working days from
+    /// today (or sprint start, whichever is later) to sprint end, excluding that member's
+    /// days off, multiplied by the 6h/day limit.</summary>
+    private long GetMemberRemainingCapacitySeconds(Guid memberId)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        if (SprintEnd == default || SprintEnd < today) return 0;
+        var from = today > SprintStart ? today : SprintStart;
+        var workingDays = Enumerable.Range(0, SprintEnd.DayNumber - from.DayNumber + 1)
+            .Select(i => from.AddDays(i))
+            .Count(d => !IsDayOff(memberId, d));
+        return (long)(workingDays * GetMemberDailyHours(memberId) * 3600m);
+    }
+
     private int GetSupportBugLoggedSeconds(string memberName)
     {
         if (_supportBugIssues.Count == 0 || string.IsNullOrEmpty(memberName)) return 0;
@@ -2675,7 +3509,7 @@
         return _supportBugIssues.Values
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStart
-                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+                     && AuthorMatchesMember(w.Author, memberName))
             .Sum(w => w.TimeSpentSeconds);
     }
 
@@ -2686,7 +3520,7 @@
         var worklogs = _supportBugIssues.Values
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStart
-                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+                     && AuthorMatchesMember(w.Author, memberName))
             .ToList();
         return worklogs.Count > 0 ? worklogs.Max(w => w.Started) : (DateTime?)null;
     }
@@ -2698,6 +3532,11 @@
         return match.Success ? match.Groups[1].Value : null;
     }
 
+    // Feature Bug epic: the stored EpicKey field, falling back to a key embedded in the
+    // name for plans created before the field existed.
+    private static string? GetCustomTaskEpicKey(CustomTaskEntry ct)
+        => !string.IsNullOrWhiteSpace(ct.EpicKey) ? ct.EpicKey : ExtractEpicKeyFromTitle(ct.Name);
+
     private int GetFeatureBugLoggedSeconds(string memberName, string epicKey)
     {
         if (!_featureBugIssuesByEpic.TryGetValue(epicKey, out var issues) || string.IsNullOrEmpty(memberName)) return 0;
@@ -2705,7 +3544,7 @@
         return issues
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStart
-                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+                     && AuthorMatchesMember(w.Author, memberName))
             .Sum(w => w.TimeSpentSeconds);
     }
 
@@ -2716,7 +3555,7 @@
         var worklogs = issues
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStart
-                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+                     && AuthorMatchesMember(w.Author, memberName))
             .ToList();
         return worklogs.Count > 0 ? worklogs.Max(w => w.Started) : (DateTime?)null;
     }
@@ -2845,6 +3684,7 @@
                 GroupId = g.Key, TaskId = g.First().TaskId, TeamMemberId = memberId,
                 From = g.Min(a => a.Date), To = g.Max(a => a.Date)
             })
+            .Where(b => BlockPassesEpicFilter(b.TaskId))
             .OrderBy(b => b.From).ThenBy(b => b.To)
             .ToList();
 
@@ -2879,6 +3719,38 @@
             })
             .OrderBy(b => b.From)
             .ToList();
+
+    // ── Drag-to-reschedule ──
+    private void OnBlockDragStart(Guid groupId) => _dragGroupId = groupId;
+
+    // Drop a dragged block onto another member/day: move the whole task group there,
+    // preserving its total hours and re-splitting across days from the new start date.
+    private void OnCellDrop(Guid memberId, DateOnly date)
+    {
+        var groupId = _dragGroupId;
+        _dragGroupId = null;
+        if (groupId is null || TimeOffMode) return;
+
+        var groupAllocs = Allocations.Where(a => a.GroupId == groupId.Value).ToList();
+        if (groupAllocs.Count == 0) return;
+
+        var taskId     = groupAllocs[0].TaskId;
+        var totalHours = groupAllocs.Sum(a => a.HoursAllocated);
+        var currentStart = groupAllocs.Min(a => a.Date);
+
+        // No-op when dropped on its existing member + start day.
+        if (groupAllocs[0].TeamMemberId == memberId && currentStart == date) return;
+
+        Allocations.RemoveAll(a => a.GroupId == groupId.Value);
+
+        var moved = ScheduleTask(taskId, memberId, totalHours, date);
+        if (moved.Sum(a => a.HoursAllocated) < totalHours)   // not enough free capacity → force the full move
+            moved = ScheduleTask(taskId, memberId, totalHours, date, forceOverCapacity: true);
+        Allocations.AddRange(moved);
+
+        var memberName = TeamMembers.FirstOrDefault(m => m.Id == memberId)?.Name ?? "member";
+        InfoMessage = $"Moved '{GetTaskShortLabel(taskId)}' to {memberName} starting {date:dd-MMM}.";
+    }
 
     private void RemoveBlock(Guid groupId)
     {
@@ -2959,12 +3831,14 @@
     // ───────────────────────────────────────────────────────────
     // CSS class builders
     // ───────────────────────────────────────────────────────────
-    private string BuildCellClass(decimal allocated, bool isDayOff, bool isWeekend, bool isToday)
+    private string BuildCellClass(Guid memberId, decimal allocated, bool isDayOff, bool isWeekend, bool isToday)
     {
         if (isDayOff) return isWeekend ? "cell stacked-cell weekend-cell" : "cell stacked-cell cell-dayoff";
+        var dailyCap = GetMemberDailyHours(memberId);
         var baseClass = "cell stacked-cell";
-        if (isToday) baseClass += " cell-today";
-        else if (allocated >= MaxHoursPerDay) baseClass += " cell-full";
+        if (allocated > dailyCap) baseClass += " cell-over";       // red — genuinely over capacity
+        else if (isToday) baseClass += " cell-today";
+        else if (allocated >= dailyCap) baseClass += " cell-full"; // at capacity — calm/neutral
         else if (allocated > 0m) baseClass += " cell-partial";
         return baseClass;
     }
@@ -2977,7 +3851,7 @@
             return isOff ? $"Click to remove time off: {date:dd-MMM}" : $"Click to mark time off: {date:dd-MMM}";
         }
         if (isDayOff) return isHoliday ? "Holiday — no capacity" : "Time off — no capacity";
-        var remaining = Math.Max(0m, MaxHoursPerDay - allocated);
+        var remaining = Math.Max(0m, GetMemberDailyHours(memberId) - allocated);
         return $"{allocated:0.#}h allocated · {remaining:0.#}h remaining";
     }
 
@@ -2998,6 +3872,15 @@
         _      => "bar-low"
     };
 
+    // Team-load banner colouring: over-allocated (red), tight (amber), healthy (green), under-used (gray).
+    private string GetCapacityLoadClass(double pct) => pct switch
+    {
+        > 100  => "cap-over",
+        >= 85  => "cap-tight",
+        >= 50  => "cap-healthy",
+        _      => "cap-under"
+    };
+
     // ───────────────────────────────────────────────────────────
     // Task label helpers
     // ───────────────────────────────────────────────────────────
@@ -3010,6 +3893,30 @@
     }
 
     // Block tooltip: for custom tasks shows actual sprint-allocated hours (not configured size).
+    // ── Task-detail modal (calendar block click) ──
+    private int? _detailTaskId;
+    private void ShowTaskDetails(int taskId) => _detailTaskId = taskId;
+    private void CloseTaskDetails() => _detailTaskId = null;
+
+    private SprintIssue? GetTaskIssue(int taskId)
+    {
+        var jk = GetJiraKeyForTaskId(taskId);
+        if (jk != null && _reportIssues.TryGetValue(jk, out var ri)) return ri;
+        if (_taskCache.TryGetValue(taskId, out var ci)) return ci;
+        return null;
+    }
+
+    private decimal GetTaskPlannedHours(int taskId)
+        => Allocations.Where(a => a.TaskId == taskId && a.Date >= SprintStart && a.Date <= SprintEnd)
+                      .Sum(a => a.HoursAllocated);
+
+    private List<string> GetTaskAssignedMembers(int taskId)
+        => Allocations.Where(a => a.TaskId == taskId)
+            .Select(a => TeamMembers.FirstOrDefault(m => m.Id == a.TeamMemberId)?.Name)
+            .Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().Cast<string>().ToList();
+
+    private string JiraBrowseUrl(string key) => $"{Config["Jira:BaseUrl"]?.TrimEnd('/')}/browse/{key}";
+
     private string GetBlockTooltip(CalendarBlock blk)
     {
         if (_customTasks.TryGetValue(blk.TaskId, out var ct))
@@ -3718,7 +4625,7 @@ private static decimal ParseJiraDurationToHours(string? input)
         return _supportBugIssues.Values
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= fromDt && w.Started <= toDt
-                     && w.Author.Contains(memberName, StringComparison.OrdinalIgnoreCase))
+                     && AuthorMatchesMember(w.Author, memberName))
             .Sum(w => w.TimeSpentSeconds);
     }
 
@@ -3745,7 +4652,7 @@ private static decimal ParseJiraDurationToHours(string? input)
 
         return TeamMembers
             .Where(m => membersWithPlan.Contains(m.Id)
-                     || authorsWithLog.Any(a => a.Contains(m.Name, StringComparison.OrdinalIgnoreCase)))
+                     || authorsWithLog.Any(a => AuthorMatchesMember(a, m.Name)))
             .ToList();
     }
 
@@ -3882,6 +4789,10 @@ private static decimal ParseJiraDurationToHours(string? input)
     .plan-unsaved-badge {
         background: #fef3c7; color: #b45309; border: 1px solid #fde68a;
         border-radius: 20px; padding: 2px 12px; font-size: 12px; font-weight: 600;
+    }
+    .plan-dirty-badge {
+        background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa;
+        border-radius: 20px; padding: 2px 12px; font-size: 12px; font-weight: 700;
     }
     .plan-select { width: 280px; }
 
@@ -4033,6 +4944,98 @@ private static decimal ParseJiraDurationToHours(string? input)
     .stat-red { border-color: #fca5a5; background: #fef2f2; }
     .stat-red .stat-value { color: #991b1b; }
 
+    /* ─── Team Capacity Banner ─── */
+    .spd-cap-banner {
+        display: flex;
+        align-items: stretch;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding: 10px 14px;
+        background: #fff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+
+    .cap-banner-label {
+        align-self: center;
+        font-size: 11px;
+        font-weight: 700;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding-right: 4px;
+    }
+
+    .cap-team {
+        flex: 1 1 140px;
+        min-width: 130px;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 8px 10px;
+        background: #f9fafb;
+    }
+
+    .cap-team-top {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 6px;
+    }
+
+    .cap-team-name { font-size: 13px; font-weight: 600; color: #111827; }
+    .cap-team-pct  { font-size: 13px; font-weight: 700; }
+
+    .cap-team-bar-wrap {
+        height: 6px;
+        background: #e5e7eb;
+        border-radius: 4px;
+        overflow: hidden;
+        margin: 5px 0 4px;
+    }
+
+    .cap-team-bar { height: 100%; border-radius: 4px; transition: width 0.2s; }
+    .cap-team-sub { font-size: 10px; color: #9ca3af; }
+
+    .cap-under   { border-color: #cbd5e1; }
+    .cap-under   .cap-team-pct { color: #64748b; }
+    .cap-under   .cap-team-bar { background: #94a3b8; }
+
+    .cap-healthy { border-color: #bbf7d0; background: #f0fdf4; }
+    .cap-healthy .cap-team-pct { color: #15803d; }
+    .cap-healthy .cap-team-bar { background: #16a34a; }
+
+    .cap-tight   { border-color: #fde68a; background: #fffbeb; }
+    .cap-tight   .cap-team-pct { color: #b45309; }
+    .cap-tight   .cap-team-bar { background: #f59e0b; }
+
+    .cap-over    { border-color: #fca5a5; background: #fef2f2; }
+    .cap-over    .cap-team-pct { color: #b91c1c; }
+    .cap-over    .cap-team-bar { background: #dc2626; }
+
+    /* Individually-loaded tasks badge */
+    .epic-key-badge-tasks { background: #ecfdf5; color: #047857; border-color: #a7f3d0; }
+
+    /* Draggable calendar blocks */
+    .stacked-block { cursor: grab; }
+    .stacked-block:active { cursor: grabbing; }
+
+    /* ─── Summary view ─── */
+    .sum-bar-row { display:flex; align-items:center; gap:12px; margin:10px 0; padding:0 14px; }
+    .sum-bar-row:first-of-type { margin-top:14px; }
+    .sum-bar-label { width:56px; flex-shrink:0; font-size:12px; font-weight:600; color:#6b7280; }
+    .sum-bar-track { flex:1; max-width:560px; height:10px; background:#eef0f3; border-radius:6px; overflow:hidden; }
+    .sum-bar-fill { height:100%; border-radius:6px; transition:width 0.2s; }
+    .sum-bar-fill.kpi-green { background:#16a34a; }
+    .sum-bar-fill.kpi-amber { background:#f59e0b; }
+    .sum-bar-fill.kpi-red   { background:#dc2626; }
+    .sum-bar-pct { min-width:130px; font-size:12px; font-weight:700; color:#374151; white-space:nowrap; }
+    .sum-status-line { display:flex; gap:8px; margin:12px 0 14px; padding:0 14px; flex-wrap:wrap; }
+    .sum-chip { font-size:12px; font-weight:600; padding:3px 10px; border-radius:14px; }
+    .sum-chip.status-done { background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; }
+    .sum-chip.status-in-progress { background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+    .sum-chip.status-todo { background:#f3f4f6; color:#6b7280; border:1px solid #e5e7eb; }
+
     /* ─── Actions Bar ─── */
     .spd-actions-bar {
         display: flex;
@@ -4045,6 +5048,19 @@ private static decimal ParseJiraDurationToHours(string? input)
         border: 1px solid #e5e7eb;
         border-radius: 10px;
         box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+        position: sticky;        /* keep team filter, actions & view switcher reachable while scrolling */
+        top: 0;
+        z-index: 30;
+    }
+
+    /* Right cluster: mutating actions, then a gap, then the view switcher (navigation) */
+    .actions-right { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .action-divider { width: 1px; height: 22px; background: #e5e7eb; margin: 0 2px; }
+
+    .filter-groups {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
     }
 
     .team-filters {
@@ -4058,6 +5074,7 @@ private static decimal ParseJiraDurationToHours(string? input)
         font-size: 12px;
         font-weight: 600;
         color: #6b7280;
+        min-width: 38px;
     }
 
     .team-pill {
@@ -4403,16 +5420,34 @@ private static decimal ParseJiraDurationToHours(string? input)
     /* ─── Workload View ─── */
     /* ─── Report / Daily shared ─── */
     .rpt-loading {
-        padding: 8px 14px;
-        background: #eff6ff;
-        border-bottom: 1px solid #bfdbfe;
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        background: rgba(255, 255, 255, 0.88);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
         color: #1d4ed8;
-        font-size: 12px;
+        font-size: 13px;
         font-weight: 600;
     }
 
+    .rpt-spinner {
+        width: 34px;
+        height: 34px;
+        border: 3px solid #bfdbfe;
+        border-top-color: #2563eb;
+        border-radius: 50%;
+        animation: rpt-spin 0.7s linear infinite;
+    }
+
+    @@keyframes rpt-spin { to { transform: rotate(360deg); } }
+
     /* ─── Report View ─── */
     .rpt-container {
+        position: relative;
         background: #fff;
         border: 1px solid #e5e7eb;
         border-radius: 12px;
@@ -4537,11 +5572,12 @@ private static decimal ParseJiraDurationToHours(string? input)
     .status-blocked { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
     .status-on-hold { background: #fdf4ff; color: #7e22ce; border: 1px solid #e9d5ff; }
 
-    .daily-empty-note  { font-size: 12px; color: #9ca3af; padding: 6px 0; }
-    .daily-no-activity { font-size: 11px; color: #9ca3af; margin-top: 8px; padding: 4px 0; }
+    .daily-empty-note  { font-size: 13px; color: #6b7280; padding: 14px; }
+    .daily-no-activity { font-size: 12px; color: #6b7280; padding: 10px 14px; border-top: 1px solid #f3f4f6; background: #fafbfc; }
 
     /* ─── Daily View ─── */
     .daily-container {
+        position: relative;
         background: #f8fafc;
         border: 1px solid #e5e7eb;
         border-radius: 12px;
@@ -4618,28 +5654,52 @@ private static decimal ParseJiraDurationToHours(string? input)
     .daily-status-grid {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
-        padding: 12px 14px;
+        gap: 10px;
+        padding: 14px;
     }
 
     .daily-status-item {
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
+        background: #f8fafc;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        padding: 6px 10px 6px 8px;
     }
 
     .daily-status-count {
-        font-weight: 700;
+        font-weight: 800;
         font-size: 14px;
         color: #1f2937;
+        min-width: 18px;
+        text-align: center;
     }
 
     /* ─── Calendar ─── */
     .cal-toolbar {
         display: flex;
-        justify-content: flex-end;
-        margin-bottom: 4px;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
     }
+    .cal-toolbar-controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    /* Legend */
+    .cal-legend { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11px; color: #6b7280; }
+    .lg-item { display: inline-flex; align-items: center; gap: 5px; }
+    .lg-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+    .lg-over { background: repeating-linear-gradient(45deg,#fecaca,#fecaca 3px,#dc2626 3px,#dc2626 6px); }
+    .lg-sep { width: 1px; height: 14px; background: #e5e7eb; }
+
+    /* Segmented toggle */
+    .seg-toggle { display: inline-flex; border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; background: #fff; }
+    .seg-btn { border: none; background: #fff; color: #6b7280; font-size: 12px; font-weight: 600; padding: 5px 11px; cursor: pointer; }
+    .seg-btn + .seg-btn { border-left: 1px solid #e5e7eb; }
+    .seg-btn:hover { background: #f3f4f6; }
+    .seg-on { background: #eff6ff; color: #1d4ed8; }
 
     .cal-fullpage-btn {
         font-size: 12px;
@@ -4704,6 +5764,8 @@ private static decimal ParseJiraDurationToHours(string? input)
         background: #e2e8f0;
         vertical-align: bottom;
         border-bottom: 2px solid #cbd5e1;
+        top: 0;          /* frozen top-left corner (left comes from .cal-sticky-col) */
+        z-index: 16;
     }
 
     .cal-head-sub {
@@ -4725,7 +5787,9 @@ private static decimal ParseJiraDurationToHours(string? input)
         background: #e2e8f0;
         border-bottom: 2px solid #cbd5e1;
         vertical-align: bottom;
-        position: relative;
+        position: sticky;   /* freeze the date row on vertical scroll */
+        top: 0;
+        z-index: 11;
     }
 
     .cal-th-day  { font-size: 10px; color: #9ca3af; font-weight: 500; }
@@ -4818,6 +5882,26 @@ private static decimal ParseJiraDurationToHours(string? input)
     .bar-high { background: #b45309; }
     .bar-over { background: #b91c1c; }
 
+    /* Capacity heatmap (member column) — matches the team-load banner language */
+    .cal-member-bar.cap-under   { background: #94a3b8; }
+    .cal-member-bar.cap-healthy { background: #16a34a; }
+    .cal-member-bar.cap-tight   { background: #f59e0b; }
+    .cal-member-bar.cap-over    { background: #dc2626; }
+    .cal-member-pct { font-weight: 700; margin-left: 4px; }
+    .cal-member-pct.cap-under   { color: #64748b; }
+    .cal-member-pct.cap-healthy { color: #15803d; }
+    .cal-member-pct.cap-tight   { color: #b45309; }
+    .cal-member-pct.cap-over    { color: #b91c1c; }
+
+    .former-tag {
+        font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+        color: #92400e; background: #fef3c7; border: 1px solid #fde68a;
+        border-radius: 4px; padding: 0 4px; margin-left: 4px;
+    }
+
+    /* Compact density */
+    .stacked-block.block-compact { height: 20px; font-size: 9px; padding: 0 4px; border-radius: 4px; }
+
     /* Calendar cells */
     .cell {
         border: 1px solid #e2e8f0;
@@ -4850,8 +5934,9 @@ private static decimal ParseJiraDurationToHours(string? input)
     }
 
     .cell-today { background: #fef9c3; }
-    .cell-full  { background: #fee2e2; }
-    .cell-partial { background: #dcfce7; }
+    .cell-full  { background: #eef2ff; }   /* at capacity — calm, not alarming */
+    .cell-partial { background: #f0fdf4; }
+    .cell-over  { background: #fee2e2; }   /* over capacity — red, the only alarming state */
 
     .cell-off-label {
         position: absolute;
@@ -4876,17 +5961,17 @@ private static decimal ParseJiraDurationToHours(string? input)
 
     .cell-hours-label {
         position: absolute;
-        top: 4px;
+        top: 3px;
         left: 50%;
         transform: translateX(-50%);
-        font-size: 10px;
-        color: #374151;
-        font-weight: 600;
+        font-size: 9px;
+        color: #9ca3af;          /* de-emphasised — the fill bar already encodes load */
+        font-weight: 500;
         white-space: nowrap;
         z-index: 1;
     }
 
-        .cell-hours-label.full { color: #dc2626; }
+        .cell-hours-label.over { color: #dc2626; font-weight: 700; }  /* only call out over-capacity */
 
     /* Stacked blocks */
     .stacked-block {
@@ -4939,9 +6024,13 @@ private static decimal ParseJiraDurationToHours(string? input)
         padding: 1px 4px;
         flex-shrink: 0;
         line-height: 1.4;
+        opacity: 0;                       /* reveal on hover/focus to keep the resting state calm */
+        transition: opacity 0.12s;
     }
 
         .btn-remove:hover { background: rgba(255,255,255,0.4); }
+        .stacked-block:hover .btn-remove,
+        .stacked-block:focus-within .btn-remove { opacity: 1; }
 
     /* ─── Custom Tasks Section ─── */
     .custom-section {
@@ -4991,6 +6080,14 @@ private static decimal ParseJiraDurationToHours(string? input)
         gap: 6px;
         align-items: center;
     }
+
+    .custom-empty-hint {
+        font-size: 12px;
+        color: #6b7280;
+        line-height: 1.5;
+    }
+
+        .custom-empty-hint a { color: #2563eb; font-weight: 600; }
 
     .custom-input {
         width: 100%;
@@ -5132,6 +6229,29 @@ private static decimal ParseJiraDurationToHours(string? input)
 
     .modal-header-row .modal-title { margin-bottom: 0; }
 
+    /* ─── Task-detail modal ─── */
+    .td-modal .modal-title { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 15px; }
+    .td-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 700; color: #2563eb; }
+    .td-cat-badge { color: #fff; font-size: 11px; font-weight: 700; border-radius: 5px; padding: 2px 8px; }
+
+    .td-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px 24px;
+        margin-bottom: 18px;
+    }
+
+    .td-field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .td-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; color: #9ca3af; }
+    .td-value { font-size: 13px; color: #111827; font-weight: 500; word-break: break-word; }
+    .td-value a { color: #2563eb; text-decoration: none; }
+    .td-value a:hover { text-decoration: underline; }
+    .td-epic-name { color: #6b7280; margin-left: 6px; font-weight: 400; }
+    .td-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+    /* Tables inside the scrollable Daily view shouldn't have sticky headers (they overlap) */
+    .daily-section .rpt-th { position: static; }
+
     .modal-close-btn {
         background: none;
         border: none;
@@ -5255,7 +6375,9 @@ private static decimal ParseJiraDurationToHours(string? input)
 
     /* ─── Support Bugs View ─── */
     .bugs-container {
+        position: relative;
         overflow-x: auto;
+        min-height: 120px;
     }
 
     .bugs-table {
