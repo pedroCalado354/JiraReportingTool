@@ -7,6 +7,12 @@ using JiraReportingTool.Models;
 public interface IJiraService
 {
     Task<string> GetIssue(string issueKey);
+
+    /// <summary>
+    /// Resolves the dynamic field ID for the "Customers Jimpisoft" custom field
+    /// from /rest/api/3/field. Cached after the first call. Returns null if not found.
+    /// </summary>
+    Task<string?> GetCustomerFieldIdAsync();
     Task<JiraEpicReport> GetEpicReportAsync(string epicKey);
     Task<SprintReport> GetSprintReportAsync(string projectKey, int sprintId);
     Task<SprintReport> GetDeliveryDataAsync(int sprintId);

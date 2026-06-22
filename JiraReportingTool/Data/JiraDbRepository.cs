@@ -13,6 +13,11 @@ public class JiraDbRepository(AppDbContext db)
 
     public async Task<JiraEpicReport?> GetEpicReportServiceAsync(string epicKey)
         => await db.JiraEpicReports
+            // No-tracking read: the circuit-scoped DbContext is long-lived, so a tracking
+            // query here would merge freshly-loaded rows into stale tracked child collections
+            // (e.g. after a /sync replaced them in another context), duplicating issues.
+            // Identity resolution still dedupes the Include join.
+            .AsNoTrackingWithIdentityResolution()
             .Include(e => e.Issues).ThenInclude(i => i.Worklogs)
             .FirstOrDefaultAsync(e => e.Key == epicKey);
 
@@ -53,6 +58,8 @@ public class JiraDbRepository(AppDbContext db)
 
     public async Task<SprintReport?> GetSprintReportAsync(string reportIdentifier)
         => await db.SprintReports
+            // No-tracking read — see GetEpicReportServiceAsync for the long-lived-context rationale.
+            .AsNoTrackingWithIdentityResolution()
             .Include(s => s.Issues).ThenInclude(i => i.Worklogs)
             .FirstOrDefaultAsync(s => s.ReportIdentifier == reportIdentifier);
 

@@ -21,6 +21,9 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
     public Task<string> GetIssue(string issueKey)
         => api.GetIssue(issueKey);
 
+    public Task<string?> GetCustomerFieldIdAsync()
+        => api.GetCustomerFieldIdAsync();
+
     public Task<List<EpicSummary>> GetEpicsInSprintAsync(int sprintId)
         => api.GetEpicsInSprintAsync(sprintId);
 

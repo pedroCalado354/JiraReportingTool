@@ -334,6 +334,9 @@
 
     private string _activeTab = "jssupport";
 
+    // Dynamic field ID for "Customers Jimpisoft" — resolved once before fetching internal issues.
+    private string? _customerFieldId;
+
     // ── Sort state ───────────────────────────────────────────────────────────────
     private string _sortColJS = "Key";  private bool _sortAscJS  = true;
     private string _sortColInt = "Key"; private bool _sortAscInt = true;
@@ -401,6 +404,8 @@
         _activeTab = "internal";
         StateHasChanged();
 
+        _customerFieldId ??= await JiraService.GetCustomerFieldIdAsync();
+
         var results = await Task.WhenAll(keys.Select(k => FetchIssueAsync(k, includeLinks: true)));
         foreach (var (issue, error) in results)
         {
@@ -465,6 +470,13 @@
                     .ToList();
                 issue.Organisation = string.Join(", ", names);
             }
+
+            // Customers Jimpisoft — dynamic custom field (object with a "value" property)
+            if (_customerFieldId != null &&
+                fields.TryGetProperty(_customerFieldId, out var custEl) &&
+                custEl.ValueKind == System.Text.Json.JsonValueKind.Object &&
+                custEl.TryGetProperty("value", out var custVal))
+                issue.Customer = custVal.GetString() ?? "";
 
             // Worklogs
             if (fields.TryGetProperty("worklog", out var worklog) &&
@@ -585,7 +597,7 @@
 
     private void BuildInternalLinksSheet(IXLWorksheet ws, List<JiraIssueViewModel> internalIssues)
     {
-        string[] headers = ["Internal Issue", "Link Type", "Key", "Summary", "Status", "URL"];
+        string[] headers = ["Internal Issue", "Customer", "Link Type", "Key", "Summary", "Status", "URL"];
 
         static void StyleHeader(IXLCell c)
         {
@@ -618,7 +630,8 @@
             sepRange.Style.Font.FontColor = XLColor.FromHtml("#2d5a27");
             sepRange.Style.Border.BottomBorder = XLBorderStyleValues.Thin;
             sepRange.Style.Border.BottomBorderColor = XLColor.FromHtml("#2d5a27");
-            ws.Cell(row, 1).Value = $"  {parent.Key}  —  {parent.Summary}  ({parent.Links.Count} linked)";
+            var custSuffix = string.IsNullOrEmpty(parent.Customer) ? "" : $"  ·  {parent.Customer}";
+            ws.Cell(row, 1).Value = $"  {parent.Key}  —  {parent.Summary}{custSuffix}  ({parent.Links.Count} linked)";
             ws.Row(row).Height = 20;
             row++;
             shade = false;
@@ -630,6 +643,7 @@
 
                 int col = 1;
                 ws.Cell(row, col++).Value = parent.Key;
+                ws.Cell(row, col++).Value = parent.Customer;
                 ws.Cell(row, col++).Value = linked.LinkType;
                 ws.Cell(row, col++).Value = linked.Key;
                 ws.Cell(row, col++).Value = linked.Summary;
@@ -644,7 +658,7 @@
                     urlCell.Style.Font.Underline = XLFontUnderlineValues.Single;
                 }
 
-                var statusCell = ws.Cell(row, 5);
+                var statusCell = ws.Cell(row, 6);
                 statusCell.Style.Fill.BackgroundColor = linked.StatusCategoryKey switch
                 {
                     "indeterminate" => XLColor.FromHtml("#d1ecf1"),
@@ -664,7 +678,7 @@
             totRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
             totRange.Style.Font.Bold = true;
             ws.Cell(row, 1).Value = "TOTAL LINKED";
-            ws.Cell(row, 2).Value = internalIssues.Sum(i => i.Links.Count);
+            ws.Cell(row, 3).Value = internalIssues.Sum(i => i.Links.Count);
             ws.Row(row).Height = 18;
         }
 
@@ -672,11 +686,12 @@
         ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorderColor = XLColor.FromHtml("#2d5a27");
 
         ws.Column(1).Width = 16; // Internal Issue
-        ws.Column(2).Width = 16; // Link Type
-        ws.Column(3).Width = 16; // Key
-        ws.Column(4).Width = 55; // Summary
-        ws.Column(5).Width = 20; // Status
-        ws.Column(6).Width = 55; // URL
+        ws.Column(2).Width = 26; // Customer
+        ws.Column(3).Width = 16; // Link Type
+        ws.Column(4).Width = 16; // Key
+        ws.Column(5).Width = 55; // Summary
+        ws.Column(6).Width = 20; // Status
+        ws.Column(7).Width = 55; // URL
     }
 
     private void BuildOrgSheet(IXLWorksheet ws, List<JiraIssueViewModel> issues)
@@ -807,6 +822,7 @@
         public string Assignee          { get; set; } = "Unassigned";
         public string Created           { get; set; } = "";
         public string Organisation      { get; set; } = "";
+        public string Customer          { get; set; } = "";
         public string Url               { get; set; } = "";
         public List<WorklogItem>     Worklogs { get; set; } = [];
         public List<LinkedIssueItem> Links    { get; set; } = [];

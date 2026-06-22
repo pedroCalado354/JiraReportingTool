@@ -213,6 +213,55 @@
             </div>
         </div>
 
+        <!-- ═══ SHARED FILTER BAR (applies to every detail table) ═══════════════ -->
+        <div class="v2-section" style="margin-bottom:0;padding-top:0">
+            <div class="v2-filter-bar">
+                <div class="v2-filter-group">
+                    <span class="v2-label">Search</span>
+                    <input class="v2-input v2-input-sm" style="min-width:180px" placeholder="Key or summary…"
+                           @bind="FilterSearch" @bind:event="oninput" />
+                </div>
+                <div class="v2-filter-sep"></div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Assignee</span>
+                    <select class="v2-select v2-input-sm" @bind="FilterAssignee">
+                        <option value="">All</option>
+                        @foreach (var a in AssigneeOptions) { <option value="@a">@a</option> }
+                    </select>
+                </div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Status</span>
+                    <select class="v2-select v2-input-sm" @bind="FilterStatus">
+                        <option value="">All</option>
+                        <option value="indeterminate">In Progress</option>
+                        <option value="done">Done</option>
+                        <option value="new">To Do</option>
+                    </select>
+                </div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Priority</span>
+                    <select class="v2-select v2-input-sm" @bind="FilterPriority">
+                        <option value="">All</option>
+                        @foreach (var p in PriorityOptions) { <option value="@p">@p</option> }
+                    </select>
+                </div>
+                <div class="v2-filter-group">
+                    <span class="v2-label">Type</span>
+                    <select class="v2-select v2-input-sm" @bind="FilterType">
+                        <option value="">All</option>
+                        @foreach (var t in TypeOptions) { <option value="@t">@t</option> }
+                    </select>
+                </div>
+                @if (HasActiveFilter)
+                {
+                    <button class="v2-btn v2-btn-ghost" style="padding:6px 12px;font-size:12px" @onclick="ClearFilters">
+                        <i class="bi bi-x-lg"></i>Clear
+                    </button>
+                }
+                <span class="v2-filter-count">@QFilteredIssues.Count of @QAllIssues.Count items</span>
+            </div>
+        </div>
+
         @if (MainTab == "overview")
         {
 
@@ -343,7 +392,7 @@
                         </thead>
                         <tbody>
                             @{ var rank = 1; }
-                            @foreach (var row in ApplySortCB(m.AssigneeBreakdown))
+                            @foreach (var row in ApplySortCB(FilterBreakdown(m.AssigneeBreakdown)))
                             {
                                 <tr>
                                     <td style="color:var(--v2-ink-4);font-weight:700">@rank</td>
@@ -501,10 +550,10 @@
                     <div class="v2-kpi-value">@FormatHours(QAvgFixHours)</div>
                     <div class="v2-kpi-sub">across @QResolvedBugs resolved bugs</div>
                 </div>
-                <div class="v2-kpi @(QQaRejectedBugs > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi @(QQaRejectedTickets > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
                     <div class="v2-kpi-head"><i class="bi bi-x-octagon"></i>QA rejections</div>
-                    <div class="v2-kpi-value">@QQaRejectionsTotal<span class="v2-kpi-of">/ @QQaRejectedBugs bugs</span></div>
-                    <div class="v2-kpi-sub">@($"{QQaRejectionRate:F1}%") of bugs rejected</div>
+                    <div class="v2-kpi-value">@QQaRejectionsTotal<span class="v2-kpi-of">/ @QQaRejectedTickets tickets</span></div>
+                    <div class="v2-kpi-sub">@($"{QQaRejectionRate:F1}%") of tickets rejected</div>
                 </div>
                 <div class="v2-kpi @(QStaleOpenBugs > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
                     <div class="v2-kpi-head"><i class="bi bi-hourglass"></i>Stale bugs</div>
@@ -614,14 +663,14 @@
                         <div class="v2-section-title"><i class="bi bi-shield-fill-check"></i>QA Rejection insights</div>
                         <div class="v2-stat-row">
                             <span class="v2-num-lg @(QQaRejectionRate > 30 ? "v2-text-danger" : QQaRejectionRate > 10 ? "v2-text-warn" : "v2-text-success")">@($"{QQaRejectionRate:F1}%")</span>
-                            <span class="v2-num-suffix">of bugs rejected at least once</span>
+                            <span class="v2-num-suffix">of tickets rejected at least once</span>
                         </div>
                         <div class="v2-bar v2-tall-bar" style="margin:10px 0 16px">
                             <div class="v2-bar-fill @(QQaRejectionRate > 30 ? "v2-bar-fill-danger" : QQaRejectionRate > 10 ? "v2-bar-fill-warn" : "v2-bar-fill-success")" style="width:@Math.Min(QQaRejectionRate, 100)%"></div>
                         </div>
                         <div class="v2-row"><span class="v2-row-label">Total rejections logged</span><span class="v2-row-value">@QQaRejectionsTotal</span></div>
-                        <div class="v2-row"><span class="v2-row-label">Bugs with rejections</span><span class="v2-row-value">@QQaRejectedBugs of @QTotalBugs</span></div>
-                        <div class="v2-row"><span class="v2-row-label">Avg rejections / bug</span><span class="v2-row-value">@($"{(QQaRejectedBugs == 0 ? 0 : (double)QQaRejectionsTotal / QQaRejectedBugs):F1}")</span></div>
+                        <div class="v2-row"><span class="v2-row-label">Tickets with rejections</span><span class="v2-row-value">@QQaRejectedTickets of @QTotalIssues</span></div>
+                        <div class="v2-row"><span class="v2-row-label">Avg rejections / ticket</span><span class="v2-row-value">@($"{(QQaRejectedTickets == 0 ? 0 : (double)QQaRejectionsTotal / QQaRejectedTickets):F1}")</span></div>
                     </div>
                 </div>
             }
@@ -631,12 +680,22 @@
                     <table class="v2-table">
                         <thead>
                             <tr>
-                                <th>Key</th><th>Summary</th><th>Priority</th><th>Status</th><th>Assignee</th>
-                                <th class="v2-table-num">Days open</th><th class="v2-table-num">Logged</th><th class="v2-table-num">QA rej.</th>
+                                <th class="@SI("Key", _sortBug, _ascBug)" @onclick='() => SortBug("Key")'>Key</th>
+                                <th class="@SI("Summary", _sortBug, _ascBug)" @onclick='() => SortBug("Summary")'>Summary</th>
+                                <th class="@SI("Priority", _sortBug, _ascBug)" @onclick='() => SortBug("Priority")'>Priority</th>
+                                <th class="@SI("Status", _sortBug, _ascBug)" @onclick='() => SortBug("Status")'>Status</th>
+                                <th class="@SI("Assignee", _sortBug, _ascBug)" @onclick='() => SortBug("Assignee")'>Assignee</th>
+                                <th class="v2-table-num @SI("Days", _sortBug, _ascBug)" @onclick='() => SortBug("Days")'>Days open</th>
+                                <th class="v2-table-num @SI("Log", _sortBug, _ascBug)" @onclick='() => SortBug("Log")'>Logged</th>
+                                <th class="v2-table-num @SI("Qa", _sortBug, _ascBug)" @onclick='() => SortBug("Qa")'>QA rej.</th>
                             </tr>
                         </thead>
                         <tbody>
-                            @foreach (var b in QAllBugs.OrderBy(x => QStatusOrder(x.StatusCategoryKey)).ThenByDescending(x => QPriorityOrder(x.Priority)).ThenByDescending(x => QDaysOpen(x)))
+                            @if (QFilteredBugs.Count == 0)
+                            {
+                                <tr><td colspan="8" style="text-align:center;padding:20px" class="v2-text-muted">No bugs match the current filters.</td></tr>
+                            }
+                            @foreach (var b in ApplySortBug(QFilteredBugs))
                             {
                                 <tr class="@(b.StatusCategoryKey == "done" ? "is-done" : "")">
                                     <td class="v2-table-key">@b.Key</td>
@@ -716,20 +775,22 @@
                     <table class="v2-table">
                         <thead>
                             <tr>
-                                <th>Assignee</th>
-                                <th class="v2-table-num">Bugs</th>
-                                <th class="v2-table-num">Open</th>
-                                <th class="v2-table-num">Resolved</th>
-                                <th class="v2-table-num">Bug Hours</th>
-                                <th style="min-width:150px">Bug Effort</th>
-                                <th class="v2-table-num">Stale</th>
-                                <th class="v2-table-num">QA Rej. Tickets</th>
+                                <th class="@SI("Name", _sortMem, _ascMem)" style="width:100%" @onclick='() => SortMem("Name")'>Assignee</th>
+                                <th class="v2-table-num @SI("Bugs", _sortMem, _ascMem)" @onclick='() => SortMem("Bugs")'>Bugs</th>
+                                <th class="v2-table-num @SI("Open", _sortMem, _ascMem)" @onclick='() => SortMem("Open")'>Open</th>
+                                <th class="v2-table-num @SI("Resolved", _sortMem, _ascMem)" @onclick='() => SortMem("Resolved")'>Resolved</th>
+                                <th class="v2-table-num @SI("Hrs", _sortMem, _ascMem)" @onclick='() => SortMem("Hrs")'>Bug Hours</th>
+                                <th class="@SI("Effort", _sortMem, _ascMem)" style="min-width:150px" @onclick='() => SortMem("Effort")'>Bug Effort</th>
+                                <th class="v2-table-num @SI("Stale", _sortMem, _ascMem)" @onclick='() => SortMem("Stale")'>Stale</th>
+                                <th class="v2-table-num @SI("Qa", _sortMem, _ascMem)" @onclick='() => SortMem("Qa")'>QA Rej. Tickets</th>
                             </tr>
                         </thead>
                         <tbody>
                             @{
+                                // All member tables below respect the shared filter (QFilteredIssues)
+                                var memberSource = QFilteredIssues;
                                 // Worklogs → who logged what on bugs vs tasks
-                                var memberLogMap = QAllIssues
+                                var memberLogMap = memberSource
                                     .SelectMany(i => i.Worklogs
                                         .Where(w => !string.IsNullOrEmpty(w.Author))
                                         .Select(w => (Author: w.Author, IsBug: IsBugIssue(i), Hours: w.TimeSpentSeconds / 3600.0)))
@@ -743,16 +804,21 @@
                                     .Where(kv => kv.Value.BugHrs > 0)
                                     .Select(kv => kv.Key)
                                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                                var bugAssignees = QAllIssues
+                                var bugAssignees = memberSource
                                     .Where(i => IsBugIssue(i) && !string.IsNullOrEmpty(i.Assignee) && i.Assignee != "Unassigned")
                                     .Select(i => i.Assignee!)
                                     .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                                var allMemberNames = bugAssignees.Union(bugLoggers);
+                                // Include assignees of any QA-rejected ticket (any issue type), even if they have no bugs
+                                var qaRejAssignees = memberSource
+                                    .Where(i => i.QaRejectedCount > 0 && !string.IsNullOrEmpty(i.Assignee) && i.Assignee != "Unassigned")
+                                    .Select(i => i.Assignee!)
+                                    .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                                var allMemberNames = bugAssignees.Union(bugLoggers).Union(qaRejAssignees);
 
                                 var memberRows = allMemberNames
                                     .Select(name =>
                                     {
-                                        var assigned = QAllIssues.Where(i => string.Equals(i.Assignee, name, StringComparison.OrdinalIgnoreCase)).ToList();
+                                        var assigned = memberSource.Where(i => string.Equals(i.Assignee, name, StringComparison.OrdinalIgnoreCase)).ToList();
                                         var bugs = assigned.Where(IsBugIssue).ToList();
                                         var openBugs = bugs.Where(b => b.StatusCategoryKey != "done").ToList();
                                         var resolvedBugs = bugs.Where(b => b.StatusCategoryKey == "done").ToList();
@@ -767,19 +833,30 @@
                                             TotalHrs     = logs.TotalHrs,
                                             BugEffort    = logs.TotalHrs == 0 ? 0.0 : logs.BugHrs / logs.TotalHrs * 100,
                                             Stale        = openBugs.Count(b => b.DaysSinceLastWorklog >= 2),
-                                            QaRejTickets = bugs.Count(b => b.QaRejectedCount > 0),
+                                            QaRejTickets = assigned.Count(i => i.QaRejectedCount > 0),
                                         };
                                     })
                                     .Where(r => r.BugCount > 0 || r.BugHrs > 0 || r.QaRejTickets > 0)
-                                    .OrderByDescending(r => r.BugCount)
-                                    .ThenByDescending(r => r.BugEffort)
                                     .ToList();
+
+                                var memberRowsSorted = _sortMem switch
+                                {
+                                    "Name"     => _ascMem ? memberRows.OrderBy(r => r.Name)      : memberRows.OrderByDescending(r => r.Name),
+                                    "Bugs"     => _ascMem ? memberRows.OrderBy(r => r.BugCount)  : memberRows.OrderByDescending(r => r.BugCount),
+                                    "Open"     => _ascMem ? memberRows.OrderBy(r => r.Open)      : memberRows.OrderByDescending(r => r.Open),
+                                    "Resolved" => _ascMem ? memberRows.OrderBy(r => r.Resolved)  : memberRows.OrderByDescending(r => r.Resolved),
+                                    "Hrs"      => _ascMem ? memberRows.OrderBy(r => r.BugHrs)    : memberRows.OrderByDescending(r => r.BugHrs),
+                                    "Effort"   => _ascMem ? memberRows.OrderBy(r => r.BugEffort) : memberRows.OrderByDescending(r => r.BugEffort),
+                                    "Stale"    => _ascMem ? memberRows.OrderBy(r => r.Stale)     : memberRows.OrderByDescending(r => r.Stale),
+                                    "Qa"       => _ascMem ? memberRows.OrderBy(r => r.QaRejTickets) : memberRows.OrderByDescending(r => r.QaRejTickets),
+                                    _          => memberRows.OrderByDescending(r => r.BugCount).ThenByDescending(r => r.BugEffort),
+                                };
                             }
                             @if (!memberRows.Any())
                             {
-                                <tr><td colspan="8" style="text-align:center;padding:20px" class="v2-text-muted">No bugs found in this epic.</td></tr>
+                                <tr><td colspan="8" style="text-align:center;padding:20px" class="v2-text-muted">No team members match the current filters.</td></tr>
                             }
-                            @foreach (var r in memberRows)
+                            @foreach (var r in memberRowsSorted)
                             {
                                 <tr>
                                     <td>
@@ -808,24 +885,32 @@
                         </tbody>
                         @if (memberRows.Count > 1)
                         {
+                            var tBugs = memberRows.Sum(r => r.BugCount);
+                            var tOpen = memberRows.Sum(r => r.Open);
+                            var tResolved = memberRows.Sum(r => r.Resolved);
+                            var tBugHrs = memberRows.Sum(r => r.BugHrs);
+                            var tTotalHrs = memberRows.Sum(r => r.TotalHrs);
+                            var tEffort = tTotalHrs == 0 ? 0.0 : tBugHrs / tTotalHrs * 100;
+                            var tStale = memberRows.Sum(r => r.Stale);
+                            var tQa = memberRows.Sum(r => r.QaRejTickets);
                             <tfoot>
                                 <tr style="font-weight:700;background:var(--v2-surface-2)">
                                     <td>Total</td>
-                                    <td class="v2-table-num">@QTotalBugs</td>
-                                    <td class="v2-table-num v2-text-warn">@QOpenBugs</td>
-                                    <td class="v2-table-num"><strong style="color:var(--v2-success)">@QResolvedBugs</strong></td>
-                                    <td class="v2-table-num v2-text-muted">@FormatHours(QBugLoggedHours)</td>
+                                    <td class="v2-table-num">@tBugs</td>
+                                    <td class="v2-table-num v2-text-warn">@tOpen</td>
+                                    <td class="v2-table-num"><strong style="color:var(--v2-success)">@tResolved</strong></td>
+                                    <td class="v2-table-num v2-text-muted">@FormatHours(tBugHrs)</td>
                                     <td>
                                         <div style="display:flex;align-items:center;gap:6px">
                                             <div class="v2-bar" style="flex:1;height:6px">
-                                                <div class="v2-bar-fill @(QBugEffortShare > 50 ? "v2-bar-fill-danger" : QBugEffortShare > 25 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
-                                                     style="width:@Math.Min(QBugEffortShare, 100)%"></div>
+                                                <div class="v2-bar-fill @(tEffort > 50 ? "v2-bar-fill-danger" : tEffort > 25 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                                                     style="width:@Math.Min(tEffort, 100)%"></div>
                                             </div>
-                                            <span class="v2-row-value" style="font-size:11px;min-width:34px;text-align:right">@($"{QBugEffortShare:F0}%")</span>
+                                            <span class="v2-row-value" style="font-size:11px;min-width:34px;text-align:right">@($"{tEffort:F0}%")</span>
                                         </div>
                                     </td>
-                                    <td class="v2-table-num v2-text-muted">@(QStaleOpenBugs > 0 ? QStaleOpenBugs.ToString() : "—")</td>
-                                    <td class="v2-table-num v2-text-muted">@(QQaRejectedBugs > 0 ? QQaRejectedBugs.ToString() : "—")</td>
+                                    <td class="v2-table-num v2-text-muted">@(tStale > 0 ? tStale.ToString() : "—")</td>
+                                    <td class="v2-table-num v2-text-muted">@(tQa > 0 ? tQa.ToString() : "—")</td>
                                 </tr>
                             </tfoot>
                         }
@@ -835,44 +920,58 @@
                 <!-- ── QA Rejected Tickets ────────────────────────────────────── -->
                 <div class="v2-section-title v2-mt-lg">
                     <i class="bi bi-x-octagon-fill" style="color:#ef4444"></i>QA Rejected Tickets
-                    <span class="v2-hint" style="margin-left:8px;font-weight:400">tickets that transitioned to "QA REJECTED" · ordered by assignee, status</span>
+                    <span class="v2-hint" style="margin-left:8px;font-weight:400">tickets that transitioned to "QA REJECTED"</span>
                 </div>
                 <div class="v2-table-wrap">
                     <table class="v2-table">
                         <thead>
                             <tr>
-                                <th>Key</th>
-                                <th>Summary</th>
-                                <th>Assignee</th>
-                                <th>Priority</th>
-                                <th>Status</th>
-                                <th class="v2-table-num">QA Rej.</th>
-                                <th class="v2-table-num">Days open</th>
-                                <th class="v2-table-num">Logged</th>
+                                <th class="@SI("Key", _sortQa, _ascQa)" @onclick='() => SortQa("Key")'>Key</th>
+                                <th class="@SI("Summary", _sortQa, _ascQa)" @onclick='() => SortQa("Summary")'>Summary</th>
+                                <th class="@SI("Worked", _sortQa, _ascQa)" @onclick='() => SortQa("Worked")'>Worked by</th>
+                                <th class="@SI("Priority", _sortQa, _ascQa)" @onclick='() => SortQa("Priority")'>Priority</th>
+                                <th class="@SI("Status", _sortQa, _ascQa)" @onclick='() => SortQa("Status")'>Status</th>
+                                <th class="v2-table-num @SI("Qa", _sortQa, _ascQa)" @onclick='() => SortQa("Qa")'>QA Rej.</th>
+                                <th class="v2-table-num @SI("Days", _sortQa, _ascQa)" @onclick='() => SortQa("Days")'>Days open</th>
+                                <th class="v2-table-num @SI("Log", _sortQa, _ascQa)" @onclick='() => SortQa("Log")'>Logged</th>
                             </tr>
                         </thead>
                         <tbody>
                             @{
-                                var qaRejList = QAllIssues
-                                    .Where(i => i.QaRejectedCount > 0)
-                                    .OrderBy(i => i.Assignee)
-                                    .ThenBy(i => i.Status)
-                                    .ToList();
+                                var qaRejList = ApplySortQa(QFilteredIssues.Where(i => i.QaRejectedCount > 0)).ToList();
                             }
                             @if (!qaRejList.Any())
                             {
-                                <tr><td colspan="8" style="text-align:center;padding:20px" class="v2-text-muted">No tickets found with QA REJECTED status transitions.</td></tr>
+                                <tr><td colspan="8" style="text-align:center;padding:20px" class="v2-text-muted">No tickets found with QA REJECTED status transitions matching the filters.</td></tr>
                             }
                             @foreach (var t in qaRejList)
                             {
                                 <tr class="@(t.StatusCategoryKey == "done" ? "is-done" : "")">
                                     <td class="v2-table-key">@t.Key</td>
                                     <td class="v2-truncate" style="max-width:320px">@t.Summary</td>
+                                    @{ var contribs = QContributors(t); }
                                     <td>
-                                        <div style="display:flex;align-items:center;gap:6px">
-                                            <span class="v2-avatar v2-avatar-grad-2" style="width:22px;height:22px;font-size:9px">@Initials(t.Assignee)</span>
-                                            <span>@t.Assignee</span>
-                                        </div>
+                                        @if (contribs.Count == 0)
+                                        {
+                                            var fallback = string.IsNullOrWhiteSpace(t.Assignee) ? "Unassigned" : t.Assignee;
+                                            <div style="display:flex;align-items:center;gap:6px">
+                                                <span class="v2-avatar v2-avatar-grad-2" style="width:22px;height:22px;font-size:9px">@Initials(fallback)</span>
+                                                <span>@fallback</span>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div style="display:flex;flex-direction:column;gap:4px">
+                                                @foreach (var c in contribs)
+                                                {
+                                                    <div style="display:flex;align-items:center;gap:6px">
+                                                        <span class="v2-avatar v2-avatar-grad-2" style="width:22px;height:22px;font-size:9px">@Initials(c.Name)</span>
+                                                        <span>@c.Name</span>
+                                                        <span class="v2-text-muted" style="font-size:11px">@FormatHours(c.Seconds / 3600.0)</span>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
                                     </td>
                                     <td><span class="v2-chip v2-chip-pri-@t.Priority.ToLower()">@t.Priority</span></td>
                                     <td><span class="v2-pill v2-pill-@(t.StatusCategoryKey == "done" ? "success" : t.StatusCategoryKey == "indeterminate" ? "brand" : "warn")">@t.Status</span></td>
@@ -894,35 +993,6 @@
             <div class="v2-section-title">
                 <i class="bi bi-list-ul"></i>All issues
                 <span class="v2-section-note">@FilteredIssues.Count of @(EpicData?.Issues.Count ?? 0)</span>
-            </div>
-
-            <div class="v2-filter-bar">
-                <div class="v2-filter-group">
-                    <span class="v2-label">Status</span>
-                    <select class="v2-select v2-input-sm" @bind="FilterStatus">
-                        <option value="">All</option>
-                        <option value="indeterminate">In Progress</option>
-                        <option value="done">Done</option>
-                        <option value="new">To Do</option>
-                    </select>
-                </div>
-                <div class="v2-filter-sep"></div>
-                <div class="v2-filter-group">
-                    <span class="v2-label">Type</span>
-                    <select class="v2-select v2-input-sm" @bind="FilterType">
-                        <option value="">All</option>
-                        @foreach (var t in TypeOptions) { <option value="@t">@t</option> }
-                    </select>
-                </div>
-                <div class="v2-filter-sep"></div>
-                <div class="v2-filter-group">
-                    <span class="v2-label">Assignee</span>
-                    <select class="v2-select v2-input-sm" @bind="FilterAssignee">
-                        <option value="">All</option>
-                        @foreach (var a in AssigneeOptions) { <option value="@a">@a</option> }
-                    </select>
-                </div>
-                <span class="v2-filter-count">@FilteredIssues.Count items</span>
             </div>
 
             <div class="v2-table-wrap">
@@ -990,22 +1060,53 @@
     private string QualityTab = "overview";
     private bool   ShowScoreBreakdown;
 
-    // Filters for issue list
-    private string FilterStatus   = "";
+    // ── Shared filters (applied across every detail table on the page) ────────
+    private string FilterStatus   = "";   // StatusCategoryKey: ""|new|indeterminate|done
     private string FilterType     = "";
     private string FilterAssignee = "";
+    private string FilterPriority = "";
+    private string FilterSearch   = "";
 
-    private List<SprintIssue> FilteredIssues => (EpicData?.Issues ?? new())
-        .Where(i => string.IsNullOrEmpty(FilterStatus)   || i.StatusCategoryKey == FilterStatus)
-        .Where(i => string.IsNullOrEmpty(FilterType)     || i.IssueType == FilterType)
-        .Where(i => string.IsNullOrEmpty(FilterAssignee) || i.Assignee == FilterAssignee)
-        .ToList();
+    private bool HasActiveFilter =>
+        !string.IsNullOrEmpty(FilterStatus)   || !string.IsNullOrEmpty(FilterType) ||
+        !string.IsNullOrEmpty(FilterAssignee) || !string.IsNullOrEmpty(FilterPriority) ||
+        !string.IsNullOrWhiteSpace(FilterSearch);
+
+    private void ClearFilters()
+    {
+        FilterStatus = ""; FilterType = ""; FilterAssignee = "";
+        FilterPriority = ""; FilterSearch = "";
+    }
+
+    private bool MatchesFilter(SprintIssue i)
+    {
+        if (!string.IsNullOrEmpty(FilterStatus)   && i.StatusCategoryKey != FilterStatus) return false;
+        if (!string.IsNullOrEmpty(FilterType)     && !string.Equals(i.IssueType, FilterType, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.IsNullOrEmpty(FilterAssignee) && !string.Equals(i.Assignee, FilterAssignee, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.IsNullOrEmpty(FilterPriority) && !string.Equals(i.Priority, FilterPriority, StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.IsNullOrWhiteSpace(FilterSearch))
+        {
+            var q = FilterSearch.Trim();
+            var hit = (i.Key?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                   || (i.Summary?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false);
+            if (!hit) return false;
+        }
+        return true;
+    }
+
+    // Issues tab still binds to FilteredIssues; it now shares the page-wide filter
+    private List<SprintIssue> FilteredIssues => QFilteredIssues;
 
     private IEnumerable<string> TypeOptions => (EpicData?.Issues ?? new())
+        .Where(i => !string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase))
         .Select(i => i.IssueType).Where(t => !string.IsNullOrEmpty(t)).Distinct().OrderBy(t => t);
 
     private IEnumerable<string> AssigneeOptions => (EpicData?.Issues ?? new())
         .Select(i => i.Assignee).Where(a => !string.IsNullOrEmpty(a)).Distinct().OrderBy(a => a);
+
+    private IEnumerable<string> PriorityOptions => (EpicData?.Issues ?? new())
+        .Select(i => i.Priority).Where(p => !string.IsNullOrEmpty(p)).Distinct()
+        .OrderByDescending(p => QPriorityOrder(p));
 
     // ── Health score (composite) ─────────────────────────────────────────────
     private int HealthScore
@@ -1282,10 +1383,59 @@
                          .ThenByDescending(i => i.ComputedRemainingSeconds),
     };
 
+    // Contributor breakdown respects the assignee + search filter (status/priority/type don't map to aggregate rows)
+    private IEnumerable<TaskAssigneeRow> FilterBreakdown(IEnumerable<TaskAssigneeRow> src)
+    {
+        var q = FilterSearch?.Trim() ?? "";
+        return src.Where(r =>
+            (string.IsNullOrEmpty(FilterAssignee) || string.Equals(r.Assignee, FilterAssignee, StringComparison.OrdinalIgnoreCase)) &&
+            (string.IsNullOrWhiteSpace(q) || (r.Assignee?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)));
+    }
+
+    // Quality → Bugs list
+    private string _sortBug = ""; private bool _ascBug = true;
+    private void SortBug(string c) { if (_sortBug == c) _ascBug = !_ascBug; else { _sortBug = c; _ascBug = true; } }
+    private IEnumerable<SprintIssue> ApplySortBug(IEnumerable<SprintIssue> src) => _sortBug switch
+    {
+        "Key"      => _ascBug ? src.OrderBy(i => i.Key)                      : src.OrderByDescending(i => i.Key),
+        "Summary"  => _ascBug ? src.OrderBy(i => i.Summary)                  : src.OrderByDescending(i => i.Summary),
+        "Priority" => _ascBug ? src.OrderBy(i => QPriorityOrder(i.Priority)) : src.OrderByDescending(i => QPriorityOrder(i.Priority)),
+        "Status"   => _ascBug ? src.OrderBy(i => i.Status)                   : src.OrderByDescending(i => i.Status),
+        "Assignee" => _ascBug ? src.OrderBy(i => i.Assignee)                 : src.OrderByDescending(i => i.Assignee),
+        "Days"     => _ascBug ? src.OrderBy(i => QDaysOpen(i))               : src.OrderByDescending(i => QDaysOpen(i)),
+        "Log"      => _ascBug ? src.OrderBy(i => i.TimeSpentSeconds)         : src.OrderByDescending(i => i.TimeSpentSeconds),
+        "Qa"       => _ascBug ? src.OrderBy(i => i.QaRejectedCount)          : src.OrderByDescending(i => i.QaRejectedCount),
+        _          => src.OrderBy(i => QStatusOrder(i.StatusCategoryKey)).ThenByDescending(i => QPriorityOrder(i.Priority)).ThenByDescending(i => QDaysOpen(i)),
+    };
+
+    // Quality → QA Rejected tickets
+    private string _sortQa = ""; private bool _ascQa = true;
+    private void SortQa(string c) { if (_sortQa == c) _ascQa = !_ascQa; else { _sortQa = c; _ascQa = true; } }
+    private IEnumerable<SprintIssue> ApplySortQa(IEnumerable<SprintIssue> src) => _sortQa switch
+    {
+        "Key"      => _ascQa ? src.OrderBy(i => i.Key)                      : src.OrderByDescending(i => i.Key),
+        "Summary"  => _ascQa ? src.OrderBy(i => i.Summary)                  : src.OrderByDescending(i => i.Summary),
+        "Worked"   => _ascQa ? src.OrderBy(i => QTopContributor(i))         : src.OrderByDescending(i => QTopContributor(i)),
+        "Priority" => _ascQa ? src.OrderBy(i => QPriorityOrder(i.Priority)) : src.OrderByDescending(i => QPriorityOrder(i.Priority)),
+        "Status"   => _ascQa ? src.OrderBy(i => i.Status)                   : src.OrderByDescending(i => i.Status),
+        "Qa"       => _ascQa ? src.OrderBy(i => i.QaRejectedCount)          : src.OrderByDescending(i => i.QaRejectedCount),
+        "Days"     => _ascQa ? src.OrderBy(i => QDaysOpen(i))               : src.OrderByDescending(i => QDaysOpen(i)),
+        "Log"      => _ascQa ? src.OrderBy(i => i.TimeSpentSeconds)         : src.OrderByDescending(i => i.TimeSpentSeconds),
+        _          => src.OrderBy(i => QTopContributor(i)).ThenBy(i => i.Status),
+    };
+
+    // Quality → By Team Member (rows are an anonymous type, sorted inline in markup)
+    private string _sortMem = ""; private bool _ascMem = false;
+    private void SortMem(string c) { if (_sortMem == c) _ascMem = !_ascMem; else { _sortMem = c; _ascMem = false; } }
+
     // ── Quality tab derived data ──────────────────────────────────────────────
     private List<SprintIssue> QAllIssues => (EpicData?.Issues ?? [])
         .Where(i => !string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase))
         .ToList();
+
+    // Filter-aware views — used by the detail tables (KPI cards stay epic-wide on QAllIssues)
+    private List<SprintIssue> QFilteredIssues => QAllIssues.Where(MatchesFilter).ToList();
+    private List<SprintIssue> QFilteredBugs   => QFilteredIssues.Where(IsBugIssue).ToList();
 
     private List<SprintIssue> QAllBugs => QAllIssues.Where(IsBugIssue).ToList();
     private List<SprintIssue> QOpenBugList => QAllBugs.Where(b => b.StatusCategoryKey != "done").ToList();
@@ -1324,9 +1474,9 @@
         }
     }
 
-    private int QQaRejectionsTotal => QAllBugs.Sum(b => b.QaRejectedCount);
-    private int QQaRejectedBugs => QAllBugs.Count(b => b.QaRejectedCount > 0);
-    private double QQaRejectionRate => QTotalBugs == 0 ? 0 : QQaRejectedBugs * 100.0 / QTotalBugs;
+    private int QQaRejectionsTotal => QAllIssues.Sum(i => i.QaRejectedCount);
+    private int QQaRejectedTickets => QAllIssues.Count(i => i.QaRejectedCount > 0);
+    private double QQaRejectionRate => QTotalIssues == 0 ? 0 : QQaRejectedTickets * 100.0 / QTotalIssues;
 
     private int QAvgBugAgeDays => QOpenBugList.Count == 0 ? 0 : (int)Math.Round(QOpenBugList.Average(b => (double)QDaysOpen(b)));
     private int QOldestBugDays => QOpenBugList.Count == 0 ? 0 : QOpenBugList.Max(QDaysOpen);
@@ -1371,6 +1521,24 @@
     {
         var start = i.Created ?? DateTime.Today;
         return Math.Max(0, (int)(DateTime.Today - start.Date).TotalDays);
+    }
+
+    // Everyone who logged time on the issue, with their total seconds, most hours first
+    private static List<(string Name, int Seconds)> QContributors(SprintIssue i)
+        => i.Worklogs
+            .Where(w => !string.IsNullOrWhiteSpace(w.Author))
+            .GroupBy(w => w.Author)
+            .Select(g => (Name: g.Key, Seconds: g.Sum(w => w.TimeSpentSeconds)))
+            .OrderByDescending(x => x.Seconds)
+            .ToList();
+
+    // Primary contributor name (for sorting); falls back to the assignee when no worklogs exist
+    private static string QTopContributor(SprintIssue i)
+    {
+        var contribs = QContributors(i);
+        return contribs.Count > 0
+            ? contribs[0].Name
+            : (string.IsNullOrWhiteSpace(i.Assignee) ? "Unassigned" : i.Assignee);
     }
 
     private static string FormatHours(double h)

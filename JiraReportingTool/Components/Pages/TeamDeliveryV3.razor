@@ -3,7 +3,9 @@
 @inject IJiraService JiraService
 @inject IConfiguration Config
 @inject SprintConfigService SprintConfigService
+@inject IJSRuntime JS
 @using JiraReportingTool.Models
+@using ClosedXML.Excel
 
 <PageTitle>Team Delivery — Command Center</PageTitle>
 
@@ -226,15 +228,15 @@
                 <div class="v2-kpi-sub" style="margin-top:4px">@($"{DoneHours:F0}h") logged on done · @($"{DoneAndInReviewHours:F0}h") proj. incl. in review</div>
             </div>
 
-            <!-- Task Completion (non-bug) -->
-            <div class="v2-kpi @(NonBugCompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
+            <!-- Task Completion (issue type Task & Sub-task only) -->
+            <div class="v2-kpi @(TaskCompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-check2-all"></i>Task Completion</div>
-                <div class="v2-kpi-value">@((int)NonBugCompletionPct)%</div>
+                <div class="v2-kpi-value">@((int)TaskCompletionPct)%</div>
                 <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(NonBugCompletionBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
-                         style="width:@Math.Min((int)NonBugCompletionPct,100)%"></div>
+                    <div class="v2-bar-fill @(TaskCompletionBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@Math.Min((int)TaskCompletionPct,100)%"></div>
                 </div>
-                <div class="v2-kpi-sub">@NonBugDoneCount of @NonBugIssues.Count done · @NonBugInProgressCount active · excl. bugs</div>
+                <div class="v2-kpi-sub">@TaskDoneCount of @TaskOnlyIssues.Count done · @TaskInProgressCount active · tasks & sub-tasks only</div>
             </div>
 
             <!-- Story Points -->
@@ -397,6 +399,10 @@
                 <button class="v2-tab @(ActiveTab=="epics" ? "is-active" : "")" @onclick='() => ActiveTab="epics"'>
                     <i class="bi bi-collection"></i>Epics
                 </button>
+                <button class="v2-tab @(ActiveTab=="calendar" ? "is-active" : "")" @onclick='() => ActiveTab="calendar"'>
+                    <i class="bi bi-calendar3"></i>Calendar
+                    @if (EpicsWithCommittedDate.Count > 0) { <span class="v2-tab-badge">@EpicsWithCommittedDate.Count</span> }
+                </button>
                 <button class="v2-tab @(ActiveTab=="tasks" ? "is-active" : "")" @onclick='() => ActiveTab="tasks"'>
                     <i class="bi bi-list-task"></i>Tasks
                 </button>
@@ -465,6 +471,65 @@
                             <span class="v2-row-value" style="width:42px;text-align:right">@t.Value</span>
                         </div>
                     }
+                </div>
+            </div>
+
+            <!-- Task Completion by Scope: initial vs added during sprint -->
+            <div class="v2-card v2-card-lg v2-mt-lg">
+                <div class="v2-section-title">
+                    <i class="bi bi-arrows-collapse" style="color:#0ea5e9"></i>
+                    Task Completion by Scope
+                    <span class="v2-section-note">issue tasks &amp; sub-tasks · initial sprint scope vs work added after start</span>
+                </div>
+                @{
+                    var initStat = StatFor(TaskInitialIssues);
+                    var addStat  = StatFor(TaskAddedIssues);
+                    var totTasks = TaskOnlyIssues.Count;
+                    int sharePct(int n) => totTasks == 0 ? 0 : (int)Math.Round(n * 100.0 / totTasks);
+                }
+                <div class="v2-grid-2" style="gap:16px;margin-top:6px">
+                    <div class="v2-scope-panel">
+                        <div class="v2-scope-head">
+                            <div>
+                                <div class="v2-scope-title">Initial Scope</div>
+                                <div class="v2-scope-sub">planned at sprint start</div>
+                            </div>
+                            <div class="v2-scope-pct" style="color:var(--v2-success)">@((int)initStat.Pct)%</div>
+                        </div>
+                        <div class="v2-bar"><div class="v2-bar-fill v2-bar-fill-success" style="width:@Math.Min((int)initStat.Pct,100)%"></div></div>
+                        <div class="v2-scope-stats">
+                            <span><strong>@initStat.Done</strong> done</span>
+                            <span><strong>@initStat.Active</strong> active</span>
+                            <span><strong>@initStat.ToDo</strong> to do</span>
+                            <span class="v2-scope-total">@initStat.Total tasks · @sharePct(initStat.Total)% of all</span>
+                        </div>
+                    </div>
+                    <div class="v2-scope-panel">
+                        <div class="v2-scope-head">
+                            <div>
+                                <div class="v2-scope-title">Added During Sprint</div>
+                                <div class="v2-scope-sub">scope changes after start</div>
+                            </div>
+                            <div class="v2-scope-pct" style="color:var(--v2-brand)">@((int)addStat.Pct)%</div>
+                        </div>
+                        <div class="v2-bar"><div class="v2-bar-fill" style="width:@Math.Min((int)addStat.Pct,100)%"></div></div>
+                        <div class="v2-scope-stats">
+                            <span><strong>@addStat.Done</strong> done</span>
+                            <span><strong>@addStat.Active</strong> active</span>
+                            <span><strong>@addStat.ToDo</strong> to do</span>
+                            <span class="v2-scope-total">@addStat.Total tasks · @sharePct(addStat.Total)% of all</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="v2-scope-compare">
+                    <span><strong>@totTasks</strong> total tasks</span>
+                    <span class="v2-scope-dot">·</span>
+                    <span>Initial completion <strong style="color:var(--v2-success)">@((int)initStat.Pct)%</strong></span>
+                    <span class="v2-scope-dot">vs</span>
+                    <span>Added completion <strong style="color:var(--v2-brand)">@((int)addStat.Pct)%</strong></span>
+                    @{ var gap = (int)Math.Round(initStat.Pct - addStat.Pct); }
+                    <span class="v2-scope-dot">·</span>
+                    <span>@(gap == 0 ? "even" : gap > 0 ? $"initial ahead by {gap} pts" : $"added ahead by {-gap} pts")</span>
                 </div>
             </div>
 
@@ -604,6 +669,10 @@
                 <span class="v2-hint" style="margin-left:auto">
                     @FilteredEpicRows.Count of @EpicRows.Count epic@(EpicRows.Count == 1 ? "" : "s")
                 </span>
+                <button class="v2-btn v2-btn-ghost" @onclick="ExportEpicsToXlsxAsync"
+                        disabled="@(EpicRows.Count == 0)" title="Export all sprint epics to Excel">
+                    <i class="bi bi-file-earmark-spreadsheet"></i> Export .xlsx
+                </button>
             </div>
 
             @if (!FilteredEpicRows.Any())
@@ -614,7 +683,7 @@
                     <div>Try clearing them to see all epics.</div>
                 </div>
             }
-            <div class="v2-grid-2">
+            <div style="display:flex;flex-direction:column;gap:16px">
                 @foreach (var ep in FilteredEpicRows.OrderByDescending(e => e.InProgress + e.ToDo).ThenByDescending(e => e.Total))
                 {
                     var donePct        = ep.Total > 0 ? ep.Done * 100 / ep.Total : 0;
@@ -929,6 +998,94 @@
                         }
                     </div>
                 }
+            </div>
+        }
+        else if (ActiveTab == "calendar")
+        {
+            var firstDay    = new DateTime(_calYear, _calMonth, 1);
+            var daysInMonth = DateTime.DaysInMonth(_calYear, _calMonth);
+            var startOffset = ((int)firstDay.DayOfWeek + 6) % 7;
+            var totalCells  = startOffset + daysInMonth;
+            var calRows     = (int)Math.Ceiling(totalCells / 7.0);
+            var isCurMonth  = _calYear == DateTime.Today.Year && _calMonth == DateTime.Today.Month;
+            var epicsByDay  = EpicsWithCommittedDate
+                .Where(e => e.Committed.Year == _calYear && e.Committed.Month == _calMonth)
+                .GroupBy(e => e.Committed.Day)
+                .ToDictionary(g => g.Key, g => g.ToList());
+            var monthTotal  = epicsByDay.Values.Sum(l => l.Count);
+
+            <div class="v2-card v2-card-lg v2-cal-root">
+                <div class="v2-section-title">
+                    <i class="bi bi-calendar3" style="color:var(--v2-brand)"></i>
+                    Epic Committed Dates
+                    <span class="v2-section-note">epics plotted on their committed delivery date</span>
+                </div>
+                <div class="v2-cal-header">
+                    <button class="v2-btn v2-btn-ghost v2-cal-nav" @onclick="CalPrevMonth">&#8249;</button>
+                    <span class="v2-cal-month-label">@firstDay.ToString("MMMM yyyy")</span>
+                    <button class="v2-btn v2-btn-ghost v2-cal-nav" @onclick="CalNextMonth">&#8250;</button>
+                    @if (monthTotal > 0)
+                    {
+                        <span class="v2-cal-badge">@monthTotal epic@(monthTotal == 1 ? "" : "s") committed</span>
+                    }
+                    else
+                    {
+                        <span class="v2-cal-empty-month">No epics committed in this month</span>
+                    }
+                    <span class="v2-hint" style="margin-left:auto">@EpicsWithCommittedDate.Count with a committed date</span>
+                </div>
+                <div class="v2-cal-grid-wrap">
+                    <table class="v2-cal-table">
+                        <thead>
+                            <tr>
+                                @foreach (var dow in new[] { "Mon","Tue","Wed","Thu","Fri","Sat","Sun" })
+                                {
+                                    <th class="v2-cal-th">@dow</th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @for (int r = 0; r < calRows; r++)
+                            {
+                                <tr>
+                                    @for (int c = 0; c < 7; c++)
+                                    {
+                                        var idx       = r * 7 + c;
+                                        var dayNum    = idx - startOffset + 1;
+                                        var isValid   = dayNum >= 1 && dayNum <= daysInMonth;
+                                        var isToday   = isValid && isCurMonth && dayNum == DateTime.Today.Day;
+                                        var isWeekend = c >= 5;
+                                        var dayEpics  = isValid && epicsByDay.TryGetValue(dayNum, out var de) ? de : new List<EpicCalItem>();
+
+                                        <td class="v2-cal-cell @(!isValid ? "v2-cal-blank" : "") @(isWeekend ? "v2-cal-weekend" : "") @(isToday ? "v2-cal-today" : "")">
+                                            @if (isValid)
+                                            {
+                                                <div class="v2-cal-daynum @(isToday ? "v2-cal-daynum-today" : "")">@dayNum</div>
+                                                @foreach (var ep in dayEpics.OrderBy(e => EpicCalState(e)).ThenBy(e => e.Key))
+                                                {
+                                                    var state = EpicCalState(ep);
+                                                    var pct   = ep.Total > 0 ? ep.Done * 100 / ep.Total : 0;
+                                                    var committedStr = ep.Committed.ToString("d MMM yyyy");
+                                                    <a class="v2-cal-chip v2-cal-chip-@state"
+                                                       href="@JiraBase/browse/@ep.Key" target="_blank" rel="noopener noreferrer"
+                                                       title="@ep.Key — @ep.Name&#10;@ep.Done/@ep.Total done (@pct%)&#10;Committed: @committedStr">
+                                                        <span class="v2-cal-chip-key">@ep.Key</span>
+                                                        <span class="v2-cal-chip-sum">@(ep.Name.Length > 28 ? ep.Name[..28] + "…" : ep.Name)</span>
+                                                    </a>
+                                                }
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <div style="display:flex;gap:16px;margin-top:12px;font-size:11px;color:var(--v2-ink-3)">
+                    <span><span class="v2-dot" style="background:#16a34a;margin-right:4px"></span>Complete</span>
+                    <span><span class="v2-dot" style="background:var(--v2-brand);margin-right:4px"></span>Upcoming / in progress</span>
+                    <span><span class="v2-dot" style="background:var(--v2-danger);margin-right:4px"></span>Past committed date, not done</span>
+                </div>
             </div>
         }
         else if (ActiveTab == "members")
@@ -2446,15 +2603,35 @@
         : DoneCount * 100.0 / ActiveIssues.Count;
     private bool   CompletionBehind => Report != null && Report.SprintProgressPct - CompletionPct > 12;
 
-    // ── Non-bug task completion ──────────────────────────────────────────────
-    private List<SprintIssue> NonBugIssues => ActiveIssues
-        .Where(i => !string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase))
-        .ToList();
-    private int    NonBugDoneCount       => NonBugIssues.Count(i => i.StatusCategoryKey == "done");
-    private int    NonBugInProgressCount => NonBugIssues.Count(i => i.StatusCategoryKey == "indeterminate");
-    private double NonBugCompletionPct   => NonBugIssues.Count == 0 ? 0
-        : NonBugDoneCount * 100.0 / NonBugIssues.Count;
-    private bool   NonBugCompletionBehind => Report != null && Report.SprintProgressPct - NonBugCompletionPct > 12;
+    // ── Task completion (issue type Task & Sub-task only) ────────────────────
+    private static bool IsTaskType(SprintIssue i) =>
+        string.Equals(i.IssueType, "Task",     StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(i.IssueType, "Sub-task", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(i.IssueType, "Subtask",  StringComparison.OrdinalIgnoreCase);
+
+    private List<SprintIssue> TaskOnlyIssues => ActiveIssues.Where(IsTaskType).ToList();
+    private int    TaskDoneCount       => TaskOnlyIssues.Count(i => i.StatusCategoryKey == "done");
+    private int    TaskInProgressCount => TaskOnlyIssues.Count(i => i.StatusCategoryKey == "indeterminate");
+    private double TaskCompletionPct   => TaskOnlyIssues.Count == 0 ? 0
+        : TaskDoneCount * 100.0 / TaskOnlyIssues.Count;
+    private bool   TaskCompletionBehind => Report != null && Report.SprintProgressPct - TaskCompletionPct > 12;
+
+    // ── Scope split: initial scope vs added-during-sprint (tasks & sub-tasks) ─
+    private DateTime? SprintStartDate => Report?.StartDate?.Date;
+
+    private List<SprintIssue> TaskAddedIssues => SprintStartDate == null ? new()
+        : TaskOnlyIssues.Where(i => i.Created.HasValue && i.Created.Value.Date >= SprintStartDate.Value).ToList();
+
+    private List<SprintIssue> TaskInitialIssues => SprintStartDate == null ? TaskOnlyIssues
+        : TaskOnlyIssues.Where(i => !(i.Created.HasValue && i.Created.Value.Date >= SprintStartDate.Value)).ToList();
+
+    private record ScopeSplitStat(int Total, int Done, int Active, int ToDo, double Pct);
+    private static ScopeSplitStat StatFor(List<SprintIssue> src) => new(
+        Total:  src.Count,
+        Done:   src.Count(i => i.StatusCategoryKey == "done"),
+        Active: src.Count(i => i.StatusCategoryKey == "indeterminate"),
+        ToDo:   src.Count(i => i.StatusCategoryKey == "new"),
+        Pct:    src.Count == 0 ? 0 : Math.Round(src.Count(i => i.StatusCategoryKey == "done") * 100.0 / src.Count, 1));
 
     private double DoneHours => ActiveIssues
         .Where(i => i.StatusCategoryKey == "done")
@@ -2756,6 +2933,24 @@
         if (!ExpandedEpics.Add(key)) ExpandedEpics.Remove(key);
     }
 
+    // ── Calendar tab (epics plotted on their committed date) ─────────────────
+    private int _calYear  = DateTime.Today.Year;
+    private int _calMonth = DateTime.Today.Month;
+    private void CalPrevMonth() { if (_calMonth == 1) { _calMonth = 12; _calYear--; } else _calMonth--; }
+    private void CalNextMonth() { if (_calMonth == 12) { _calMonth = 1; _calYear++; } else _calMonth++; }
+
+    private record EpicCalItem(string Key, string Name, DateTime Committed, int Done, int Total);
+
+    private List<EpicCalItem> EpicsWithCommittedDate => EpicRows
+        .Where(e => e.Key != "—" && _epicMeta.TryGetValue(e.Key, out var m) && m.CommittedDate.HasValue)
+        .Select(e => new EpicCalItem(e.Key, e.Name, _epicMeta[e.Key].CommittedDate!.Value.Date, e.Done, e.Total))
+        .ToList();
+
+    private static string EpicCalState(EpicCalItem e) =>
+        e.Total > 0 && e.Done >= e.Total ? "done"
+        : e.Committed.Date < DateTime.Today ? "overdue"
+        : "active";
+
     // ── Full-epic stats (all sprints, auto-loaded per epic after LoadData) ───
     private record EpicFullStats(int Total, int Done, double EstimateHours, double LoggedHours, double RemainingHours);
     private Dictionary<string, EpicFullStats> _fullEpicStats = new();
@@ -2898,6 +3093,108 @@
     {
         _epicsFilterKey = "";
         _epicsFilterMember = "";
+    }
+
+    // ── Epics → Excel export (all sprint epics) ──────────────────────────────
+    private async Task ExportEpicsToXlsxAsync()
+    {
+        var rows = EpicRows
+            .Where(e => e.Key != "—")
+            .OrderBy(e => e.Name)
+            .ToList();
+        if (rows.Count == 0) return;
+
+        using var wb = new XLWorkbook();
+        var ws = wb.Worksheets.Add("Epics");
+
+        string[] headers =
+        [
+            "Epic Key", "Epic Name", "Committed Date", "Committed Customers",
+            "Total", "Done", "In Progress", "To Do", "Completion %",
+            "Estimate (h)", "Logged (h)", "Remaining (h)"
+        ];
+
+        for (int i = 0; i < headers.Length; i++)
+        {
+            var hc = ws.Cell(1, i + 1);
+            hc.Value = headers[i];
+            hc.Style.Font.Bold = true;
+            hc.Style.Font.FontColor = XLColor.White;
+            hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+            hc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            hc.Style.Alignment.Vertical   = XLAlignmentVerticalValues.Center;
+        }
+        ws.Row(1).Height = 22;
+        ws.SheetView.FreezeRows(1);
+
+        int row = 2;
+        foreach (var e in rows)
+        {
+            _epicMeta.TryGetValue(e.Key, out var meta);
+            var donePct = e.Total > 0 ? Math.Round(e.Done * 100.0 / e.Total, 1) : 0;
+
+            int col = 1;
+            var keyCell = ws.Cell(row, col++);
+            keyCell.Value = e.Key;
+            keyCell.SetHyperlink(new XLHyperlink($"{JiraBase}/browse/{e.Key}"));
+            keyCell.Style.Font.FontColor = XLColor.FromHtml("#4f46e5");
+            keyCell.Style.Font.Underline = XLFontUnderlineValues.Single;
+
+            ws.Cell(row, col++).Value = e.Name;
+
+            var dateCell = ws.Cell(row, col++);
+            if (meta?.CommittedDate is { } cd)
+            {
+                dateCell.Value = cd;
+                dateCell.Style.DateFormat.Format = "yyyy-mm-dd";
+                if (cd.Date < DateTime.Today && e.Done < e.Total)
+                    dateCell.Style.Font.FontColor = XLColor.FromHtml("#dc2626");
+            }
+            else dateCell.Value = "—";
+
+            ws.Cell(row, col++).Value = string.IsNullOrEmpty(meta?.CommittedCustomers) ? "—" : meta!.CommittedCustomers;
+            ws.Cell(row, col++).Value = e.Total;
+            ws.Cell(row, col++).Value = e.Done;
+            ws.Cell(row, col++).Value = e.InProgress;
+            ws.Cell(row, col++).Value = e.ToDo;
+
+            var pctCell = ws.Cell(row, col++);
+            pctCell.Value = donePct / 100.0;
+            pctCell.Style.NumberFormat.Format = "0%";
+
+            ws.Cell(row, col++).Value = Math.Round(e.EstimateHours, 1);
+            ws.Cell(row, col++).Value = Math.Round(e.LoggedHours, 1);
+            ws.Cell(row, col++).Value = Math.Round(e.RemainingHours, 1);
+
+            row++;
+        }
+
+        // Totals
+        var totRange = ws.Range(row, 1, row, headers.Length);
+        totRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#eef2ff");
+        totRange.Style.Font.Bold = true;
+        ws.Cell(row, 1).Value = "TOTAL";
+        ws.Cell(row, 5).Value = rows.Sum(e => e.Total);
+        ws.Cell(row, 6).Value = rows.Sum(e => e.Done);
+        ws.Cell(row, 7).Value = rows.Sum(e => e.InProgress);
+        ws.Cell(row, 8).Value = rows.Sum(e => e.ToDo);
+        ws.Cell(row, 10).Value = Math.Round(rows.Sum(e => e.EstimateHours), 1);
+        ws.Cell(row, 11).Value = Math.Round(rows.Sum(e => e.LoggedHours), 1);
+        ws.Cell(row, 12).Value = Math.Round(rows.Sum(e => e.RemainingHours), 1);
+
+        ws.Column(1).Width = 14;
+        ws.Column(2).Width = 42;
+        ws.Column(3).Width = 15;
+        ws.Column(4).Width = 30;
+        for (int c = 5; c <= 12; c++) ws.Column(c).Width = 12;
+        ws.Range(1, 1, row, headers.Length).Style.Border.OutsideBorder = XLBorderStyleValues.Medium;
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        var b64 = Convert.ToBase64String(ms.ToArray());
+        const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+        await JS.InvokeVoidAsync("downloadBase64File", b64,
+            $"SprintEpics_{DateTime.Today:yyyyMMdd}.xlsx", mime);
     }
 
     // Epic projection — based on the epic's burn rate so far + bug arrival rate

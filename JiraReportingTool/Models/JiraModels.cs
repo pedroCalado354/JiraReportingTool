@@ -178,7 +178,7 @@ public class SprintIssue
     public DateTime? DueDate        { get; set; }
 
     [NotMapped] public bool      IsExpanded      { get; set; }
-    [NotMapped] public int       QaRejectedCount { get; set; }
+    public int                   QaRejectedCount { get; set; }
     [NotMapped] public string    JiraId          { get; set; } = "";
     [NotMapped] public string    Customer        { get; set; } = "";
     [NotMapped] public DateTime? PrioListDate    { get; set; }

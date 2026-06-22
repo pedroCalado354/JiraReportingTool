@@ -135,16 +135,19 @@
             </div>
 
         </div>
-        @if (IsFiltered)
-        {
-            <div class="sb-filter-active-bar">
-                <span>Showing @TotalCount of @_bugs.Count bugs</span>
-                <button class="sb-btn sb-btn-ghost" style="padding:2px 10px;font-size:11px" @onclick="ClearFilters">Clear filters</button>
-            </div>
-        }
-
         <!-- ═══════════════════ FILTER BAR ═══════════════════ -->
-        <div class="sb-filters-panel">
+        <div class="sb-section">
+            <div class="sb-section-header" @onclick="() => _showFilters = !_showFilters">
+                <span class="sb-section-toggle">@(_showFilters ? "▾" : "▸")</span>
+                <span class="sb-section-title">Filters</span>
+                <span class="sb-section-sub">@FilterSubtitle</span>
+                @if (IsFiltered)
+                {
+                    <button class="sb-filter-clear-link sb-section-clear" @onclick="ClearFilters" @onclick:stopPropagation="true">Clear all</button>
+                }
+            </div>
+            @if (_showFilters)
+            {
 
             <!-- ── Row 1: checkbox lists + date ranges ─────────────── -->
             <div class="sb-filter-grid">
@@ -155,8 +158,13 @@
                         <span class="sb-filter-label">Assignee</span>
                         @if (_selectedAssignees.Count > 0)
                         {
-                            <button class="sb-filter-clear-link" @onclick="() => _selectedAssignees.Clear()">Clear</button>
+                            <span class="sb-filter-count">@_selectedAssignees.Count</span>
                         }
+                        <div class="sb-filter-col-actions">
+                            <button class="sb-filter-clear-link" @onclick="SelectAllAssignees">All</button>
+                            <span class="sb-filter-action-sep">·</span>
+                            <button class="sb-filter-clear-link" @onclick="() => _selectedAssignees.Clear()">None</button>
+                        </div>
                     </div>
                     <div class="sb-check-list">
                         @foreach (var name in AllAssignees)
@@ -177,8 +185,13 @@
                         <span class="sb-filter-label">Status</span>
                         @if (_selectedStatuses.Count > 0)
                         {
-                            <button class="sb-filter-clear-link" @onclick="() => _selectedStatuses.Clear()">Clear</button>
+                            <span class="sb-filter-count">@_selectedStatuses.Count</span>
                         }
+                        <div class="sb-filter-col-actions">
+                            <button class="sb-filter-clear-link" @onclick="SelectAllStatuses">All</button>
+                            <span class="sb-filter-action-sep">·</span>
+                            <button class="sb-filter-clear-link" @onclick="() => _selectedStatuses.Clear()">None</button>
+                        </div>
                     </div>
                     <div class="sb-check-list">
                         @foreach (var s in AllStatuses)
@@ -264,7 +277,7 @@
                     </div>
                 </div>
             </div>
-
+            }
         </div>
 
         <!-- ═══════════════════ ASSIGNEE SUMMARY ═══════════════════ -->
@@ -1159,15 +1172,15 @@
                     <table class="sb-table">
                         <thead>
                             <tr>
-                                <th class="sb-th sb-th-pri" title="Priority">P</th>
-                                <th class="sb-th sb-th-key">Key</th>
-                                <th class="sb-th sb-th-title">Summary</th>
-                                <th class="sb-th sb-th-assignee">Assignee</th>
-                                <th class="sb-th sb-th-status">Status</th>
-                                <th class="sb-th sb-th-est" title="SLA threshold in days">SLA (d)</th>
-                                <th class="sb-th sb-th-est">Age (d)</th>
-                                <th class="sb-th sb-th-est">Breach (d)</th>
-                                <th class="sb-th sb-th-due">Due Date</th>
+                                <th class="sb-th sb-th-pri sortable @SISla("pri")" @onclick='() => SortSla("pri")' title="Priority">P</th>
+                                <th class="sb-th sb-th-key sortable @SISla("key")" @onclick='() => SortSla("key")'>Key</th>
+                                <th class="sb-th sb-th-title sortable @SISla("title")" @onclick='() => SortSla("title")'>Summary</th>
+                                <th class="sb-th sb-th-assignee sortable @SISla("assignee")" @onclick='() => SortSla("assignee")'>Assignee</th>
+                                <th class="sb-th sb-th-status sortable @SISla("status")" @onclick='() => SortSla("status")'>Status</th>
+                                <th class="sb-th sb-th-est sortable @SISla("sla")" @onclick='() => SortSla("sla")' title="SLA threshold in days">SLA (d)</th>
+                                <th class="sb-th sb-th-est sortable @SISla("age")" @onclick='() => SortSla("age")'>Age (d)</th>
+                                <th class="sb-th sb-th-est sortable @SISla("breach")" @onclick='() => SortSla("breach")'>Breach (d)</th>
+                                <th class="sb-th sb-th-due sortable @SISla("due")" @onclick='() => SortSla("due")'>Due Date</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -1425,17 +1438,17 @@
                         <table class="sb-table">
                             <thead>
                                 <tr>
-                                    <th class="sb-th sb-th-pri" title="Priority">P</th>
-                                    <th class="sb-th sb-th-key">Key</th>
-                                    <th class="sb-th sb-th-title">Summary</th>
-                                    <th class="sb-th sb-th-assignee">Assignee</th>
-                                    <th class="sb-th sb-th-status">Status</th>
-                                    <th class="sb-th sb-th-est">Age</th>
-                                    <th class="sb-th sb-th-due">Due Date</th>
+                                    <th class="sb-th sb-th-pri sortable @SIUt("pri")" @onclick='() => SortUt("pri")' title="Priority">P</th>
+                                    <th class="sb-th sb-th-key sortable @SIUt("key")" @onclick='() => SortUt("key")'>Key</th>
+                                    <th class="sb-th sb-th-title sortable @SIUt("title")" @onclick='() => SortUt("title")'>Summary</th>
+                                    <th class="sb-th sb-th-assignee sortable @SIUt("assignee")" @onclick='() => SortUt("assignee")'>Assignee</th>
+                                    <th class="sb-th sb-th-status sortable @SIUt("status")" @onclick='() => SortUt("status")'>Status</th>
+                                    <th class="sb-th sb-th-est sortable @SIUt("age")" @onclick='() => SortUt("age")'>Age</th>
+                                    <th class="sb-th sb-th-due sortable @SIUt("due")" @onclick='() => SortUt("due")'>Due Date</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                @foreach (var ub in dbUntouched.Take(25))
+                                @foreach (var ub in ApplySortUt(dbUntouched).Take(25))
                                 {
                                     var ubAge    = GetDaysOpen(ub);
                                     var ubHealth = GetHealth(ub);
@@ -1540,16 +1553,16 @@
                 <table class="sb-table">
                     <thead>
                         <tr>
-                            <th class="sb-th sb-th-key">Key</th>
-                            <th class="sb-th sb-th-title">Summary</th>
-                            <th class="sb-th sb-th-status">Status</th>
-                            <th class="sb-th sb-th-assignee">Assignee</th>
-                            <th class="sb-th sb-th-due">Created</th>
+                            <th class="sb-th sb-th-key sortable @SIJs("key")" @onclick='() => SortJs("key")'>Key</th>
+                            <th class="sb-th sb-th-title sortable @SIJs("summary")" @onclick='() => SortJs("summary")'>Summary</th>
+                            <th class="sb-th sb-th-status sortable @SIJs("status")" @onclick='() => SortJs("status")'>Status</th>
+                            <th class="sb-th sb-th-assignee sortable @SIJs("assignee")" @onclick='() => SortJs("assignee")'>Assignee</th>
+                            <th class="sb-th sb-th-due sortable @SIJs("created")" @onclick='() => SortJs("created")'>Created</th>
                             <th class="sb-th">Logged By</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @foreach (var issue in _jssupportIssues)
+                        @foreach (var issue in ApplySortJs(_jssupportIssues))
                         {
                             var loggers = issue.Worklogs
                                 .Select(w => w.Author)
@@ -1597,6 +1610,7 @@
     private bool     _loading             = false;
     private string   _errorMessage        = "";
     private bool     _showAssigneeSummary = true;
+    private bool     _showFilters         = true;
 
     private List<SprintIssue>  _bugs              = new();
     private List<SprintIssue>  _priorityBugs      = new();
@@ -1688,6 +1702,54 @@
     private bool   _sortAscAge = false; // oldest first by default
     private void SortAge(string col) { if (_sortColAge == col) _sortAscAge = !_sortAscAge; else { _sortColAge = col; _sortAscAge = true; } }
     private string SIAge(string col) => _sortColAge == col ? (_sortAscAge ? "sort-asc" : "sort-desc") : "";
+
+    // ── SLA table sort state ───────────────────────────────────────────────────
+    private string _sortColSla = ""; private bool _sortAscSla = true;
+    private void SortSla(string col) { if (_sortColSla == col) _sortAscSla = !_sortAscSla; else { _sortColSla = col; _sortAscSla = true; } }
+    private string SISla(string col) => _sortColSla == col ? (_sortAscSla ? "sort-asc" : "sort-desc") : "";
+    private IEnumerable<SprintIssue> ApplySortSla(IEnumerable<SprintIssue> src) => _sortColSla switch
+    {
+        "pri"      => _sortAscSla ? src.OrderBy(b => PriOrder(b))            : src.OrderByDescending(b => PriOrder(b)),
+        "key"      => _sortAscSla ? src.OrderBy(b => b.Key)                  : src.OrderByDescending(b => b.Key),
+        "title"    => _sortAscSla ? src.OrderBy(b => b.Summary)              : src.OrderByDescending(b => b.Summary),
+        "assignee" => _sortAscSla ? src.OrderBy(b => b.Assignee)             : src.OrderByDescending(b => b.Assignee),
+        "status"   => _sortAscSla ? src.OrderBy(b => b.Status)               : src.OrderByDescending(b => b.Status),
+        "sla"      => _sortAscSla ? src.OrderBy(b => GetSlaDays(b))          : src.OrderByDescending(b => GetSlaDays(b)),
+        "age"      => _sortAscSla ? src.OrderBy(b => GetDaysOpen(b))         : src.OrderByDescending(b => GetDaysOpen(b)),
+        "breach"   => _sortAscSla ? src.OrderBy(b => GetDaysOpen(b) - GetSlaDays(b)) : src.OrderByDescending(b => GetDaysOpen(b) - GetSlaDays(b)),
+        "due"      => _sortAscSla ? src.OrderBy(b => b.DueDate ?? DateTime.MaxValue) : src.OrderByDescending(b => b.DueDate ?? DateTime.MinValue),
+        _          => src.OrderBy(b => GetSlaBucketOrder(b)).ThenBy(b => PriOrder(b)).ThenBy(b => b.Key),
+    };
+
+    // ── Untouched bugs table sort state ────────────────────────────────────────
+    private string _sortColUt = ""; private bool _sortAscUt = false;
+    private void SortUt(string col) { if (_sortColUt == col) _sortAscUt = !_sortAscUt; else { _sortColUt = col; _sortAscUt = true; } }
+    private string SIUt(string col) => _sortColUt == col ? (_sortAscUt ? "sort-asc" : "sort-desc") : "";
+    private IEnumerable<SprintIssue> ApplySortUt(IEnumerable<SprintIssue> src) => _sortColUt switch
+    {
+        "pri"      => _sortAscUt ? src.OrderBy(b => PriOrder(b))      : src.OrderByDescending(b => PriOrder(b)),
+        "key"      => _sortAscUt ? src.OrderBy(b => b.Key)            : src.OrderByDescending(b => b.Key),
+        "title"    => _sortAscUt ? src.OrderBy(b => b.Summary)        : src.OrderByDescending(b => b.Summary),
+        "assignee" => _sortAscUt ? src.OrderBy(b => b.Assignee)       : src.OrderByDescending(b => b.Assignee),
+        "status"   => _sortAscUt ? src.OrderBy(b => b.Status)         : src.OrderByDescending(b => b.Status),
+        "age"      => _sortAscUt ? src.OrderBy(b => GetDaysOpen(b))   : src.OrderByDescending(b => GetDaysOpen(b)),
+        "due"      => _sortAscUt ? src.OrderBy(b => b.DueDate ?? DateTime.MaxValue) : src.OrderByDescending(b => b.DueDate ?? DateTime.MinValue),
+        _          => src.OrderByDescending(b => GetDaysOpen(b)),
+    };
+
+    // ── JSSUPPORT table sort state ─────────────────────────────────────────────
+    private string _sortColJs = ""; private bool _sortAscJs = true;
+    private void SortJs(string col) { if (_sortColJs == col) _sortAscJs = !_sortAscJs; else { _sortColJs = col; _sortAscJs = true; } }
+    private string SIJs(string col) => _sortColJs == col ? (_sortAscJs ? "sort-asc" : "sort-desc") : "";
+    private IEnumerable<SprintIssue> ApplySortJs(IEnumerable<SprintIssue> src) => _sortColJs switch
+    {
+        "key"      => _sortAscJs ? src.OrderBy(i => i.Key)      : src.OrderByDescending(i => i.Key),
+        "summary"  => _sortAscJs ? src.OrderBy(i => i.Summary)  : src.OrderByDescending(i => i.Summary),
+        "status"   => _sortAscJs ? src.OrderBy(i => i.Status)   : src.OrderByDescending(i => i.Status),
+        "assignee" => _sortAscJs ? src.OrderBy(i => i.Assignee) : src.OrderByDescending(i => i.Assignee),
+        "created"  => _sortAscJs ? src.OrderBy(i => i.Created ?? DateTime.MaxValue) : src.OrderByDescending(i => i.Created ?? DateTime.MinValue),
+        _          => src,
+    };
 
     // ── Calendar state ────────────────────────────────────────────────────────
     private int _calYear  = DateTime.Today.Year;
@@ -2014,6 +2076,27 @@
         || _dueDateFrom.HasValue || _dueDateTo.HasValue
         || _activityFrom.HasValue || _activityTo.HasValue;
 
+    private int ActiveFilterCount
+    {
+        get
+        {
+            int n = 0;
+            if (_selectedAssignees.Count > 0)                    n++;
+            if (_selectedStatuses.Count > 0)                     n++;
+            if (_healthFilter   != "all")                        n++;
+            if (_priorityFilter != "all")                        n++;
+            if (_forecastFilter != "all")                        n++;
+            if (!string.IsNullOrWhiteSpace(_keyTitleFilter))     n++;
+            if (_dueDateFrom.HasValue || _dueDateTo.HasValue)    n++;
+            if (_activityFrom.HasValue || _activityTo.HasValue)  n++;
+            return n;
+        }
+    }
+
+    private string FilterSubtitle => IsFiltered
+        ? $"{TotalCount} of {_bugs.Count} bugs shown · {ActiveFilterCount} filter{(ActiveFilterCount == 1 ? "" : "s")} active"
+        : $"{_bugs.Count} bugs · no filters applied";
+
     private void ClearFilters()
     {
         _selectedAssignees.Clear();
@@ -2320,6 +2403,9 @@
     {
         if (!_selectedStatuses.Remove(status)) _selectedStatuses.Add(status);
     }
+
+    private void SelectAllAssignees() => _selectedAssignees = new HashSet<string>(AllAssignees);
+    private void SelectAllStatuses()  => _selectedStatuses  = new HashSet<string>(AllStatuses);
 
     private static string GetShortName(string name)
     {
@@ -2759,7 +2845,7 @@
             var q = FilteredBugs.Where(b => !IsDone(b));
             if (_slaFilter != "all")
                 q = q.Where(b => GetSlaBucket(b) == _slaFilter);
-            return q.OrderBy(b => GetSlaBucketOrder(b)).ThenBy(b => PriOrder(b)).ThenBy(b => b.Key);
+            return ApplySortSla(q);
         }
     }
 
@@ -3094,6 +3180,25 @@
         font-weight: 500;
     }
     .sb-filter-clear-link:hover { text-decoration: underline; }
+
+    .sb-filter-col-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .sb-filter-action-sep { color: var(--txt-4); font-size: 11px; }
+
+    .sb-filter-count {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--primary);
+        background: var(--primary-light);
+        border-radius: 10px;
+        padding: 1px 6px;
+    }
+
+    .sb-section-clear { margin-left: auto; }
 
     .sb-check-list {
         display: flex;
@@ -4000,19 +4105,6 @@
     .sb-cal-chip-new           { background: #fef9c3; border-left-color: #eab308; color: #713f12; }
 
     /* ── Filter active bar ───────────────────────────────────────── */
-    .sb-filter-active-bar {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 6px 16px;
-        background: var(--primary-light);
-        border: 1px solid var(--primary-border);
-        border-radius: var(--r-sm);
-        font-size: 12px;
-        color: var(--primary);
-        font-weight: 500;
-    }
-
     /* ── Metric label inline ─────────────────────────────────────── */
     .sb-metric-lbl-inline { font-size: 14px; font-weight: 400; color: var(--txt-3); margin-left: 1px; }
 

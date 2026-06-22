@@ -30,7 +30,7 @@ public class JiraService : IJiraService
             new AuthenticationHeaderValue("Basic", Convert.ToBase64String(authBytes));
     }
 
-    private async Task<string?> GetCustomerFieldIdAsync()
+    public async Task<string?> GetCustomerFieldIdAsync()
     {
         if (_customerFieldIdLookedUp) return _customerFieldId;
         _customerFieldIdLookedUp = true;
@@ -212,6 +212,8 @@ public class JiraService : IJiraService
         var searchJson = await FetchAllPagesAsync(jql, fields);
         var (sprintReport, truncated) = ParseSprintReport(searchJson, "");
         await FetchMissingWorklogsAsync(sprintReport, truncated);
+        // POST /rest/api/3/search/jql does not support expand=changelog in the body; fetch QA rejection counts separately
+        await FetchQaRejectionCountsAsync(sprintReport.Issues);
 
         // Tag all issues with their parent epic context
         foreach (var issue in sprintReport.Issues)
