@@ -15,7 +15,7 @@ public interface IJiraService
     Task<string?> GetCustomerFieldIdAsync();
     Task<JiraEpicReport> GetEpicReportAsync(string epicKey);
     Task<SprintReport> GetSprintReportAsync(string projectKey, int sprintId);
-    Task<SprintReport> GetDeliveryDataAsync(int sprintId);
+    Task<SprintReport> GetDeliveryDataAsync(int sprintId, bool bypassCache = false);
     Task<List<EpicSummary>> GetEpicsInSprintAsync(int sprintId);
     Task<SprintReport> GetEpicSprintForecastAsync(string epicKey, int sprintId);
     Task<SprintReport> GetDeliveryDataByFilterAsync(string filterJql);
@@ -29,10 +29,11 @@ public interface IJiraService
     Task<SprintReport> GetIssuesByKeysAsync(List<string> issueKeys);
 
     /// <summary>
-    /// Fetches all Bug-type issues from an epic, including complete worklogs.
-    /// Used to populate the Support Bug Time Logged column in the sprint report.
+    /// Fetches issues from an epic, including complete worklogs. When <paramref name="bugsOnly"/>
+    /// is true (default) only Bug-type issues are returned; when false, every issue type under the
+    /// epic is returned — matching a Jira "parent = EPIC" filter so worklog totals reconcile with Jira.
     /// </summary>
-    Task<SprintReport> GetEpicBugsAsync(string epicKey);
+    Task<SprintReport> GetEpicBugsAsync(string epicKey, bool bugsOnly = true);
 
     /// <summary>
     /// Fetches epic summaries (key → name) for the given epic keys.

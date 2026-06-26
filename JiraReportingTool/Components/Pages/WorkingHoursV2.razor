@@ -249,6 +249,11 @@
         <div class="wh2-chart-grid">
             <div class="v2-card">
                 <div class="v2-section-title"><i class="bi bi-bar-chart-line" style="color:var(--v2-brand)"></i>Logged vs Capacity per Member</div>
+                <div class="wh2-util-key">
+                    <span class="wh2-util-key-item"><span class="wh2-util-dot" style="background:#16a34a"></span>&lt; 60% capacity</span>
+                    <span class="wh2-util-key-item"><span class="wh2-util-dot" style="background:#f59e0b"></span>60–80%</span>
+                    <span class="wh2-util-key-item"><span class="wh2-util-dot" style="background:#dc2626"></span>≥ 80%</span>
+                </div>
                 <div style="height:@(Math.Clamp(ActiveMemberCount * 30, 220, 520))px;position:relative">
                     <canvas id="chart-hours-member"></canvas>
                 </div>
@@ -691,14 +696,20 @@
     }
     .wh2-heat-cell:hover { transform: scale(1.12); box-shadow: var(--v2-sh-sm); z-index: 1; }
     .wh2-heat-cell.weekend { background: #f1f5f9; }
+    /* Cool → warm intensity ramp (empty → light → full day → over) for a readable heatmap. */
     .wh2-h0 { background: #eef1f6; }
-    .wh2-h1 { background: #e0e7ff; color: #4338ca; }
-    .wh2-h2 { background: #a5b4fc; color: #312e81; }
-    .wh2-h3 { background: #818cf8; }
-    .wh2-h4 { background: #6366f1; }
-    .wh2-h5 { background: #4f46e5; }
+    .wh2-h1 { background: #bfdbfe; color: #1e40af; }  /* up to 2h  light blue */
+    .wh2-h2 { background: #5eead4; color: #115e59; }  /* up to 4h  teal       */
+    .wh2-h3 { background: #fde047; color: #854d0e; }  /* up to 6h  yellow     */
+    .wh2-h4 { background: #fb923c; color: #7c2d12; }  /* up to 8h  orange     */
+    .wh2-h5 { background: #ef4444; color: #fff;    }  /* 8h plus   red        */
     .wh2-heat-legend { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--v2-ink-4); }
     .wh2-heat-swatch { width: 16px; height: 16px; border-radius: 4px; display: inline-block; }
+
+    /* ── Per-member chart utilisation key ──────────────────────────────── */
+    .wh2-util-key { display: flex; flex-wrap: wrap; gap: 12px; margin: -4px 0 8px; }
+    .wh2-util-key-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--v2-ink-3); font-weight: 600; }
+    .wh2-util-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 
     /* ── Member summary ────────────────────────────────────────────────── */
     .wh2-member-btn { display: flex; align-items: center; gap: 8px; background: none; border: none; cursor: pointer; padding: 0; color: var(--v2-ink-1); }
@@ -1180,14 +1191,25 @@
         var wd = WorkingDayCount;
         var byMember = filtered
             .GroupBy(w => w.Author)
-            .Select(g => new
+            .Select(g =>
             {
-                Name     = g.Key,
-                Hours    = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1),
-                Capacity = Math.Round(wd * (double)HoursPerDayFor(g.Key), 1)
+                var hours    = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0, 1);
+                var capacity = Math.Round(wd * (double)HoursPerDayFor(g.Key), 1);
+                return new
+                {
+                    Name     = g.Key,
+                    Hours    = hours,
+                    Capacity = capacity,
+                    Util     = capacity > 0 ? hours / capacity * 100 : 0
+                };
             })
             .OrderByDescending(m => m.Hours).ToList();
         if (byMember.Count == 0) return;
+
+        // Colour each Logged bar by utilisation against the 60% target:
+        // green < 60% (within target), amber 60–80%, red ≥ 80%.
+        static string UtilFill(double u)   => u < 60 ? "rgba(22,163,74,0.85)"  : u < 80 ? "rgba(245,158,11,0.85)" : "rgba(220,38,38,0.85)";
+        static string UtilStroke(double u) => u < 60 ? "rgba(21,128,61,1)"     : u < 80 ? "rgba(180,83,9,1)"     : "rgba(185,28,28,1)";
 
         await JS.InvokeVoidAsync("renderChart", "chart-hours-member", new
         {
@@ -1201,8 +1223,8 @@
                     {
                         label           = "Logged",
                         data            = byMember.Select(m => m.Hours).ToArray(),
-                        backgroundColor = "rgba(99,102,241,0.85)",
-                        borderColor     = "rgba(79,70,229,1)",
+                        backgroundColor = byMember.Select(m => UtilFill(m.Util)).ToArray(),
+                        borderColor     = byMember.Select(m => UtilStroke(m.Util)).ToArray(),
                         borderWidth = 1, borderRadius = 4
                     },
                     new
@@ -1318,21 +1340,23 @@
         });
     }
 
-    // Cohesive indigo → violet → fuchsia brand categorical scale.
+    // Diverse categorical scale so adjacent epic slices are easy to tell apart.
     private static string ChartColor(int index, double alpha)
     {
         (int R, int G, int B)[] palette =
         [
             (79, 70, 229),    // indigo-600
+            (13, 148, 136),   // teal-600
+            (217, 119, 6),    // amber-600
+            (219, 39, 119),   // pink-600
+            (22, 163, 74),    // green-600
             (124, 58, 237),   // violet-600
-            (99, 102, 241),   // indigo-500
-            (168, 85, 247),   // purple-500
-            (139, 92, 246),   // violet-500
-            (217, 70, 239),   // fuchsia-500
-            (129, 140, 248),  // indigo-400
-            (192, 132, 252),  // purple-400
-            (236, 72, 153),   // pink-500
-            (167, 139, 250),  // violet-400
+            (8, 145, 178),    // cyan-600
+            (234, 88, 12),    // orange-600
+            (147, 51, 234),   // purple-600
+            (202, 138, 4),    // yellow-600
+            (5, 150, 105),    // emerald-600
+            (225, 29, 72),    // rose-600
         ];
         var (r, g, b) = palette[index % palette.Length];
         return $"rgba({r},{g},{b},{alpha:F2})";

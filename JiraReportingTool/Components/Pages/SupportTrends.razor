@@ -1,0 +1,1555 @@
+@page "/support-trends"
+@rendermode InteractiveServer
+@using JiraReportingTool.Models
+@using System.Threading
+@inject IJiraService JiraService
+@inject SprintConfigService SprintConfigService
+@inject IConfiguration Config
+@inject IJSRuntime JS
+
+<PageTitle>Support Trends</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ═══════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon"><i class="bi bi-graph-up-arrow"></i></div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Reporting</span>
+                <h1 class="v2-hero-title">Support Trends</h1>
+                <span class="v2-hero-sub">
+                    @if (_epicKeys.Count > 0)
+                    {
+                        <strong>@_bugs.Count bugs</strong>
+                        <span> · @_epicKeys.Count epic@(_epicKeys.Count == 1 ? "" : "s") · @_configs.Count sprint@(_configs.Count == 1 ? "" : "s")</span>
+                        <span> · @_fullStart.ToString("MMM yyyy") – @_fullEnd.ToString("MMM yyyy")</span>
+                    }
+                    else
+                    {
+                        <span>Long-term bug analytics pooled across every epic in Dashboard Config</span>
+                    }
+                </span>
+            </div>
+            <div class="v2-hero-spacer"></div>
+            <div class="v2-hero-actions st-controls">
+                <button class="v2-btn v2-btn-ghost" @onclick="ReloadAsync" disabled="@(_loading || _epicKeys.Count == 0)" title="Reload all epics">
+                    @if (_loading) { <span class="v2-spin"></span> } else { <i class="bi bi-arrow-repeat"></i> }
+                </button>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(_error))
+    {
+        <div class="st-banner st-banner-danger"><i class="bi bi-exclamation-triangle"></i> @_error</div>
+    }
+    @if (_failedEpics.Count > 0)
+    {
+        <div class="st-banner st-banner-warn">
+            <i class="bi bi-exclamation-circle"></i>
+            Couldn't load @_failedEpics.Count epic@(_failedEpics.Count == 1 ? "" : "s"): @string.Join(", ", _failedEpics)
+        </div>
+    }
+
+    @if (_configs.Count == 0)
+    {
+        <div class="st-empty">
+            <i class="bi bi-sliders2"></i>
+            <p>No sprints are configured yet. Add some on the <a href="config">Dashboard Config</a> page.</p>
+        </div>
+    }
+    else if (_epicKeys.Count == 0)
+    {
+        <div class="st-empty">
+            <i class="bi bi-link-45deg"></i>
+            <p>None of your configured sprints have an Epic Key. Add epic keys on the <a href="config">Dashboard Config</a> page.</p>
+        </div>
+    }
+    else if (_loading && _bugs.Count == 0)
+    {
+        <div class="st-empty">
+            <span class="v2-spin"></span>
+            <p>Loading bugs — @_epicsLoaded of @_epicsTotal epics…</p>
+            <div class="st-load-bar"><div class="st-load-fill" style="width:@(_epicsTotal == 0 ? 0 : _epicsLoaded * 100 / _epicsTotal)%"></div></div>
+        </div>
+    }
+    else if (_bugs.Count == 0)
+    {
+        <div class="st-empty"><i class="bi bi-inbox"></i><p>No bugs found across the configured epics.</p></div>
+    }
+    else
+    {
+        <!-- ═══ RANGE ══════════════════════════════════════════════════════════ -->
+        <div class="st-toolbar">
+            <div class="st-tool-group">
+                <span class="st-tool-label">Window</span>
+                <span class="st-date-lbl">From</span>
+                <InputDate class="st-input" @bind-Value="_rangeStart" @bind-Value:after="OnRangeChanged" />
+                <span class="st-date-lbl">To</span>
+                <InputDate class="st-input" @bind-Value="_rangeEnd" @bind-Value:after="OnRangeChanged" />
+                <button class="st-link" @onclick="ResetRange" disabled="@(_rangeStart == _fullStart && _rangeEnd == _fullEnd)">Full span</button>
+            </div>
+            @if (_loading) { <div class="st-tool-group"><span class="v2-spin" title="Refreshing"></span></div> }
+        </div>
+
+        <!-- ═══ TABS ═══════════════════════════════════════════════════════════ -->
+        <div class="st-tabs">
+            @foreach (var t in _tabs)
+            {
+                <button class="st-tab @(_tab == t.Key ? "active" : "")" @onclick="() => SetTab(t.Key)">
+                    <i class="bi @t.Icon"></i> @t.Label
+                    @if (t.Key == "bugs") { <span class="st-tab-count">@_bugs.Count</span> }
+                </button>
+            }
+        </div>
+
+        @if (_tab == "overview")
+        {
+        <!-- ═══ 1. LIFECYCLE & THROUGHPUT ══════════════════════════════════════ -->
+        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-arrow-repeat"></i> Lifecycle &amp; Throughput <span class="st-scope">in window</span></span></div>
+        <div class="v2-kpi-grid">
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-collection"></i>Total Bugs</div>
+                <div class="v2-kpi-value">@_bugs.Count</div>
+                <div class="v2-kpi-sub">@OpenCount open · @DoneCount done (all time)</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-plus-circle"></i>Created</div>
+                <div class="v2-kpi-value">@CreatedCount</div>
+                <div class="v2-kpi-sub">raised in window</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-hammer"></i>Worked On</div>
+                <div class="v2-kpi-value">@WorkedOnCount</div>
+                <div class="v2-kpi-sub">had worklog activity</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-success">
+                <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Closed</div>
+                <div class="v2-kpi-value">@ClosedCount</div>
+                <div class="v2-bar" style="margin-top:8px"><div class="v2-bar-fill v2-bar-fill-success" style="width:@Pct(ClosedCount, Math.Max(1, WorkedOnCount))%"></div></div>
+                <div class="v2-kpi-sub">resolved in window</div>
+            </div>
+
+            <div class="v2-kpi @(CarriedOverOpenCount == 0 ? "v2-kpi-neutral" : "v2-kpi-warn")">
+                <div class="v2-kpi-head"><i class="bi bi-arrow-left-right"></i>Open Backlog</div>
+                <div class="v2-kpi-value">@OpenCount</div>
+                <div class="v2-kpi-sub">@CarriedOverOpenCount opened before window</div>
+            </div>
+
+            <div class="v2-kpi @(ReopenedCount == 0 ? "v2-kpi-neutral" : "v2-kpi-danger")">
+                <div class="v2-kpi-head"><i class="bi bi-arrow-counterclockwise"></i>QA Rejected</div>
+                <div class="v2-kpi-value">@ReopenedCount</div>
+                <div class="v2-kpi-sub">bugs bounced back from QA</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-graph-up"></i>Net Flow</div>
+                <div class="v2-kpi-value @(NetFlow >= 0 ? "v2-text-success" : "v2-text-danger")">@(NetFlow >= 0 ? "+" : "")@NetFlow</div>
+                <div class="v2-kpi-sub">closed − created</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Avg Time to Resolve</div>
+                <div class="v2-kpi-value">@(AvgResolveDays.HasValue ? $"{AvgResolveDays:0.0}" : "—")<span class="v2-kpi-of">days</span></div>
+                <div class="v2-kpi-sub">create → resolve (closed in window)</div>
+            </div>
+
+        </div>
+
+        <!-- ═══ 2. EFFORT & TIME ══════════════════════════════════════════════ -->
+        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-stopwatch"></i> Effort &amp; Time</span></div>
+        <div class="v2-kpi-grid">
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Logged in Window</div>
+                <div class="v2-kpi-value">@FmtHM(WindowLoggedSeconds)</div>
+                <div class="v2-kpi-sub">across @WindowWorklogCount worklog@(WindowWorklogCount == 1 ? "" : "s")</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Total Logged</div>
+                <div class="v2-kpi-value">@FmtHM(TotalLoggedSeconds)</div>
+                <div class="v2-kpi-sub">+ @FmtHM(RemainingSeconds) remaining (all time)</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-speedometer"></i>Weekly Burn</div>
+                <div class="v2-kpi-value">@($"{WeeklyBurnHours:0.0}")<span class="v2-kpi-of">h / wk</span></div>
+                <div class="v2-kpi-sub">@WindowWeeks week@(WindowWeeks == 1 ? "" : "s") in window</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-clock"></i>Avg Logged / Bug</div>
+                <div class="v2-kpi-value">@FmtHM(AvgLoggedPerBugSeconds)</div>
+                <div class="v2-kpi-sub">bugs with time logged</div>
+            </div>
+
+            <div class="v2-kpi @(BugsNoTimeOpen == 0 ? "v2-kpi-success" : "v2-kpi-warn")">
+                <div class="v2-kpi-head"><i class="bi bi-slash-circle"></i>Open · No Time</div>
+                <div class="v2-kpi-value">@BugsNoTimeOpen</div>
+                <div class="v2-kpi-sub">open bugs with zero logged</div>
+            </div>
+
+            <div class="v2-kpi @(OverdueCount == 0 ? "v2-kpi-success" : "v2-kpi-danger")">
+                <div class="v2-kpi-head"><i class="bi bi-exclamation-triangle"></i>Overdue</div>
+                <div class="v2-kpi-value">@OverdueCount</div>
+                <div class="v2-kpi-sub">@SlaBreachedCount past SLA · avg age @($"{AvgOpenAgeDays:0}")d</div>
+            </div>
+
+        </div>
+
+        <!-- ═══ TICKETS BY PRIORITY ════════════════════════════════════════════ -->
+        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-flag-fill"></i> Tickets by priority <span class="st-scope">all time</span></span></div>
+        <div class="v2-grid-2">
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-pie-chart"></i> Count by priority</div>
+                <div class="st-chart-box"><canvas id="st-chart-priority"></canvas></div>
+            </div>
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-list-ol"></i> Breakdown</div>
+                <div class="v2-table-wrap" style="margin:0">
+                    <table class="v2-table" style="font-size:12px">
+                        <thead><tr><th>Priority</th><th class="v2-table-num">Bugs</th><th class="v2-table-num">Open</th><th class="v2-table-num">Done</th><th class="v2-table-num" title="Avg logged effort from first Dev Ready → Done">Avg Fix</th><th class="v2-table-num">Share</th></tr></thead>
+                        <tbody>
+                            @foreach (var p in ByPriority)
+                            {
+                                <tr>
+                                    <td><span class="v2-pill @PriorityPill(p.Name)">@p.Name</span></td>
+                                    <td class="v2-table-num">@p.Total</td>
+                                    <td class="v2-table-num">@p.Open</td>
+                                    <td class="v2-table-num v2-text-success">@p.Closed</td>
+                                    <td class="v2-table-num">@(p.AvgFixHours.HasValue ? $"{p.AvgFixHours:0.0}h" : "—")</td>
+                                    <td class="v2-table-num">@ShareCell(p.Total, _bugs.Count)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        }
+
+        @if (_tab == "metrics")
+        {
+        <!-- ═══ 3. METRICS ════════════════════════════════════════════════════ -->
+        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-bar-chart-line"></i> Metrics <span class="st-scope">all bugs · all time</span></span></div>
+
+        <!-- Worklog effort by author across every bug -->
+        <div class="v2-card">
+            <div class="st-card-title"><i class="bi bi-person-workspace"></i> Worklog effort by author <span class="st-scope">hours logged · top 20</span></div>
+            <div class="st-chart-box" style="height:420px"><canvas id="st-chart-m-author"></canvas></div>
+        </div>
+
+        <div class="v2-grid-2" style="margin-top:16px">
+            <!-- By customer -->
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-building"></i> By customer <span class="st-scope">bugs &amp; logged hours · top 15</span></div>
+                <div class="st-chart-box" style="height:320px"><canvas id="st-chart-m-customer"></canvas></div>
+            </div>
+            <!-- By label -->
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-tags"></i> By label <span class="st-scope">bugs &amp; logged hours · top 15</span></div>
+                <div class="st-chart-box" style="height:320px"><canvas id="st-chart-m-label"></canvas></div>
+            </div>
+        </div>
+
+        }
+
+        @if (_tab == "sprints")
+        {
+        <!-- ═══ 4. SPRINT-OVER-SPRINT ═════════════════════════════════════════ -->
+        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-calendar3"></i> Sprint over Sprint</span></div>
+        <div class="v2-grid-2">
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-funnel"></i> Created vs Resolved per sprint</div>
+                <div class="st-chart-box"><canvas id="st-chart-sprint-flow"></canvas></div>
+            </div>
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-stopwatch"></i> Hours logged per sprint</div>
+                <div class="st-chart-box"><canvas id="st-chart-sprint-logged"></canvas></div>
+            </div>
+        </div>
+        <div class="v2-card" style="margin-top:16px">
+            <div class="st-card-title"><i class="bi bi-table"></i> Per-sprint breakdown</div>
+            <div class="v2-table-wrap" style="margin:0">
+                <table class="v2-table">
+                    <thead><tr>
+                        <th>Sprint</th><th>Window</th>
+                        <th class="v2-table-num">Created</th><th class="v2-table-num">Resolved</th>
+                        <th class="v2-table-num">Net</th><th class="v2-table-num">Logged</th>
+                        <th class="v2-table-num">Avg Resolve</th><th class="v2-table-num">QA Rej.</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var s in SprintStats)
+                        {
+                            <tr>
+                                <td class="st-trunc" title="@s.Name" style="font-weight:600">@s.Name</td>
+                                <td class="st-muted-cell">@s.Start.ToString("dd MMM") – @s.End.ToString("dd MMM yy")</td>
+                                <td class="v2-table-num">@s.Created</td>
+                                <td class="v2-table-num v2-text-success">@s.Closed</td>
+                                <td class="v2-table-num @(s.Net >= 0 ? "v2-text-success" : "v2-text-danger")">@(s.Net >= 0 ? "+" : "")@s.Net</td>
+                                <td class="v2-table-num">@FmtHM(s.LoggedSeconds)</td>
+                                <td class="v2-table-num">@(s.AvgResolve.HasValue ? $"{s.AvgResolve:0.0}d" : "—")</td>
+                                <td class="v2-table-num @(s.QaRejected > 0 ? "v2-text-danger" : "")">@s.QaRejected</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ═══ PRIORITY BREAKDOWN PER SPRINT ══════════════════════════════════ -->
+        <div class="v2-section" style="margin-top:16px">
+            <span class="v2-section-title"><i class="bi bi-flag-fill"></i> Priority breakdown per sprint <span class="st-scope">bugs created in each sprint window</span></span>
+        </div>
+        @foreach (var s in SprintStats)
+        {
+            var rows = PriorityBreakdownForWindow(s.Start, s.End).ToList();
+            var sprintTotal = rows.Sum(r => r.Total);
+            <div class="v2-card" style="margin-top:12px">
+                <div class="st-card-title">
+                    <i class="bi bi-calendar3"></i> @s.Name
+                    <span class="st-scope">@s.Start.ToString("dd MMM") – @s.End.ToString("dd MMM yy") · @sprintTotal bug@(sprintTotal == 1 ? "" : "s")</span>
+                </div>
+                @if (sprintTotal == 0)
+                {
+                    <div class="st-muted-cell" style="padding:6px 2px">No bugs created in this sprint window.</div>
+                }
+                else
+                {
+                    <div class="v2-table-wrap" style="margin:0">
+                        <table class="v2-table" style="font-size:12px">
+                            <thead><tr>
+                                <th>Priority</th><th class="v2-table-num">Bugs</th><th class="v2-table-num">Open</th>
+                                <th class="v2-table-num">Done</th><th class="v2-table-num" title="Avg logged effort from first Dev Ready → Done">Avg Fix</th><th class="v2-table-num">Share</th>
+                            </tr></thead>
+                            <tbody>
+                                @foreach (var p in rows)
+                                {
+                                    <tr>
+                                        <td><span class="v2-pill @PriorityPill(p.Name)">@p.Name</span></td>
+                                        <td class="v2-table-num">@p.Total</td>
+                                        <td class="v2-table-num">@p.Open</td>
+                                        <td class="v2-table-num v2-text-success">@p.Closed</td>
+                                        <td class="v2-table-num">@(p.AvgFixHours.HasValue ? $"{p.AvgFixHours:0.0}h" : "—")</td>
+                                        <td class="v2-table-num">@ShareCell(p.Total, sprintTotal)</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        }
+
+        }
+
+        @if (_tab == "breakdowns")
+        {
+        <!-- ═══ 5. BREAKDOWNS ═════════════════════════════════════════════════ -->
+        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-diagram-3"></i> Breakdowns <span class="st-scope">all time</span></span></div>
+
+        <div class="v2-grid-2">
+            <!-- By customer -->
+            <div class="v2-card">
+                <div class="st-card-title st-bk-head">
+                    <span><i class="bi bi-building"></i> By customer</span>
+                    <input class="st-bk-search" placeholder="Filter customers…" @bind="_custFilter" @bind:event="oninput" />
+                </div>
+                <div class="v2-table-wrap st-bk-scroll" style="margin:0">
+                    <table class="v2-table" style="font-size:12px">
+                        <thead><tr>
+                            <th class="sortable @CustSI("name")" @onclick='() => CustSort("name")'>Customer</th>
+                            <th class="v2-table-num sortable @CustSI("total")" @onclick='() => CustSort("total")'>Bugs</th>
+                            <th class="v2-table-num sortable @CustSI("closed")" @onclick='() => CustSort("closed")'>Closed</th>
+                            <th class="v2-table-num sortable @CustSI("logged")" @onclick='() => CustSort("logged")'>Logged</th>
+                            <th class="v2-table-num sortable @CustSI("resolve")" @onclick='() => CustSort("resolve")'>Avg Resolve</th>
+                            <th class="v2-table-num">Share</th>
+                        </tr></thead>
+                        <tbody>
+                            @foreach (var c in SortFilterGroups(ByCustomer, _custSortCol, _custAsc, _custFilter))
+                            {
+                                <tr>
+                                    <td class="st-trunc" title="@c.Name">@c.Name</td>
+                                    <td class="v2-table-num">@c.Total</td>
+                                    <td class="v2-table-num v2-text-success">@c.Closed</td>
+                                    <td class="v2-table-num">@FmtHM(c.LoggedSeconds)</td>
+                                    <td class="v2-table-num">@(c.AvgResolve.HasValue ? $"{c.AvgResolve:0.0}d" : "—")</td>
+                                    <td class="v2-table-num">@ShareCell(c.Total, _bugs.Count)</td>
+                                </tr>
+                            }
+                            @if (!SortFilterGroups(ByCustomer, _custSortCol, _custAsc, _custFilter).Any()) { <tr><td colspan="6" class="st-muted-cell">No customer data</td></tr> }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- By label -->
+            <div class="v2-card">
+                <div class="st-card-title st-bk-head">
+                    <span><i class="bi bi-tags"></i> By label</span>
+                    <input class="st-bk-search" placeholder="Filter labels…" @bind="_labelFilter" @bind:event="oninput" />
+                </div>
+                <div class="v2-table-wrap st-bk-scroll" style="margin:0">
+                    <table class="v2-table" style="font-size:12px">
+                        <thead><tr>
+                            <th class="sortable @LabelSI("name")" @onclick='() => LabelSort("name")'>Label</th>
+                            <th class="v2-table-num sortable @LabelSI("total")" @onclick='() => LabelSort("total")'>Bugs</th>
+                            <th class="v2-table-num sortable @LabelSI("closed")" @onclick='() => LabelSort("closed")'>Closed</th>
+                            <th class="v2-table-num sortable @LabelSI("logged")" @onclick='() => LabelSort("logged")'>Logged</th>
+                            <th class="v2-table-num sortable @LabelSI("resolve")" @onclick='() => LabelSort("resolve")'>Avg Resolve</th>
+                            <th class="v2-table-num">Share</th>
+                        </tr></thead>
+                        <tbody>
+                            @foreach (var l in SortFilterGroups(ByLabel, _labelSortCol, _labelAsc, _labelFilter))
+                            {
+                                <tr>
+                                    <td class="st-trunc" title="@l.Name">@l.Name</td>
+                                    <td class="v2-table-num">@l.Total</td>
+                                    <td class="v2-table-num v2-text-success">@l.Closed</td>
+                                    <td class="v2-table-num">@FmtHM(l.LoggedSeconds)</td>
+                                    <td class="v2-table-num">@(l.AvgResolve.HasValue ? $"{l.AvgResolve:0.0}d" : "—")</td>
+                                    <td class="v2-table-num">@ShareCell(l.Total, _bugs.Count)</td>
+                                </tr>
+                            }
+                            @if (!SortFilterGroups(ByLabel, _labelSortCol, _labelAsc, _labelFilter).Any()) { <tr><td colspan="6" class="st-muted-cell">No labels</td></tr> }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Worked by (worklog author) -->
+        <div class="v2-card" style="margin-top:16px">
+            <div class="st-card-title st-bk-head">
+                <span><i class="bi bi-person-workspace"></i> Worked by <span class="st-scope">who actually logged work — by worklog author, not assignee</span></span>
+                <input class="st-bk-search" placeholder="Filter members…" @bind="_workedFilter" @bind:event="oninput" />
+            </div>
+            @{
+                var workedTotalLogged = WorkedBy.Sum(w => w.LoggedSeconds);
+            }
+            <div class="v2-table-wrap st-bk-scroll" style="margin:0">
+                <table class="v2-table">
+                    <thead><tr>
+                        <th class="sortable @WorkedSI("name")" @onclick='() => WorkedSort("name")'>Member</th>
+                        <th class="v2-table-num sortable @WorkedSI("total")" @onclick='() => WorkedSort("total")' title="Distinct bugs this member logged work on">Bugs</th>
+                        <th class="v2-table-num sortable @WorkedSI("closed")" @onclick='() => WorkedSort("closed")'>Closed</th>
+                        <th class="v2-table-num sortable @WorkedSI("open")" @onclick='() => WorkedSort("open")'>Open</th>
+                        <th class="v2-table-num sortable @WorkedSI("logged")" @onclick='() => WorkedSort("logged")' title="Total hours this member logged">Logged</th>
+                        <th class="v2-table-num sortable @WorkedSI("wlogged")" @onclick='() => WorkedSort("wlogged")'>Logged (window)</th>
+                        <th class="v2-table-num sortable @WorkedSI("resolve")" @onclick='() => WorkedSort("resolve")'>Avg Resolve</th>
+                        <th class="v2-table-num">Share</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var m in SortFilterGroups(WorkedBy, _workedSortCol, _workedAsc, _workedFilter))
+                        {
+                            <tr>
+                                <td>
+                                    <div style="display:flex;align-items:center;gap:8px">
+                                        <span class="v2-avatar v2-avatar-sm @AvatarGrad(m.Name)">@Initials(m.Name)</span>
+                                        <span class="st-trunc" style="max-width:180px" title="@m.Name">@m.Name</span>
+                                    </div>
+                                </td>
+                                <td class="v2-table-num">@m.Total</td>
+                                <td class="v2-table-num v2-text-success">@m.Closed</td>
+                                <td class="v2-table-num">@m.Open</td>
+                                <td class="v2-table-num">@FmtHM(m.LoggedSeconds)</td>
+                                <td class="v2-table-num">@FmtHM(m.WindowLoggedSeconds)</td>
+                                <td class="v2-table-num">@(m.AvgResolve.HasValue ? $"{m.AvgResolve:0.0}d" : "—")</td>
+                                <td class="v2-table-num">@ShareCell(m.LoggedSeconds, workedTotalLogged)</td>
+                            </tr>
+                        }
+                        @if (!SortFilterGroups(WorkedBy, _workedSortCol, _workedAsc, _workedFilter).Any()) { <tr><td colspan="8" class="st-muted-cell">No worklog data</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        }
+
+        @if (_tab == "bugs")
+        {
+        <!-- ═══ 6. BUG EXPLORER ═══════════════════════════════════════════════ -->
+        <div class="v2-section">
+            <span class="v2-section-title"><i class="bi bi-bug"></i> Bug Explorer <span class="st-scope">all epics · phase timings for resolved bugs</span></span>
+        </div>
+
+        <!-- Critical highlight legend + filter -->
+        <div class="st-bug-toolbar">
+            <div class="st-tool-group">
+                <span class="st-tool-label">Show</span>
+                <div class="st-seg">
+                    <button class="st-seg-btn @(_bugFilter == "all" ? "active" : "")" @onclick='() => SetBugFilter("all")'>All <span class="st-tab-count">@_bugs.Count</span></button>
+                    <button class="st-seg-btn @(_bugFilter == "critical" ? "active" : "")" @onclick='() => SetBugFilter("critical")'>Critical only <span class="st-tab-count">@CriticalBugs.Count()</span></button>
+                </div>
+            </div>
+            <div class="st-tool-group">
+                <span class="st-tool-label">Customer</span>
+                <div class="st-cust-filter">
+                    <button class="st-cust-btn @(_selectedCustomers.Count > 0 ? "active" : "")" @onclick="() => _showCustomerFilter = !_showCustomerFilter">
+                        @(_selectedCustomers.Count == 0 ? "All customers" : $"{_selectedCustomers.Count} selected")
+                        <i class="bi bi-chevron-down"></i>
+                    </button>
+                    @if (_showCustomerFilter)
+                    {
+                        <div class="st-cust-panel">
+                            <div class="st-cust-panel-actions">
+                                <button class="st-link" @onclick="SelectAllCustomers">All</button>
+                                <span class="st-cust-sep">·</span>
+                                <button class="st-link" @onclick="ClearCustomers">None</button>
+                            </div>
+                            <div class="st-cust-list">
+                                @foreach (var c in AllBugCustomers)
+                                {
+                                    var cust = c;
+                                    <label class="st-cust-item">
+                                        <input type="checkbox" checked="@(_selectedCustomers.Contains(cust))"
+                                               @onchange="() => ToggleCustomer(cust)" />
+                                        <span title="@cust">@cust</span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="st-tool-group">
+                <span class="st-tool-label">Search</span>
+                <input class="st-input st-bug-search" placeholder="Key or summary…" @bind="_bugSearch" @bind:event="oninput" />
+                @if (!string.IsNullOrWhiteSpace(_bugSearch)) { <button class="st-link" @onclick='() => _bugSearch = ""'>Clear</button> }
+            </div>
+            <div class="st-tool-group st-bug-legend">
+                <span class="st-flag st-flag-slow">Slow lifecycle</span>
+                <span class="st-flag st-flag-prio">High priority</span>
+                <span class="st-flag st-flag-qa">QA bounced</span>
+            </div>
+        </div>
+
+        <!-- Bug analytics charts — reflect the active Show/Customer filters -->
+        <div class="v2-grid-2" style="margin-top:12px">
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-hourglass-split"></i> Avg phase timing <span class="st-scope">resolved bugs · days</span></div>
+                <div class="st-chart-box"><canvas id="st-chart-bug-phases"></canvas></div>
+            </div>
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-stopwatch"></i> Logged hours distribution <span class="st-scope">bugs per bucket</span></div>
+                <div class="st-chart-box"><canvas id="st-chart-bug-logged"></canvas></div>
+            </div>
+        </div>
+        <div class="v2-grid-2" style="margin-top:16px">
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-bar-chart"></i> Avg logged per bug <span class="st-scope">by priority</span></div>
+                <div class="st-chart-box"><canvas id="st-chart-bug-byprio"></canvas></div>
+            </div>
+            <div class="v2-card">
+                <div class="st-card-title"><i class="bi bi-arrow-counterclockwise"></i> QA bounce-backs <span class="st-scope">times rejected</span></div>
+                <div class="st-chart-box"><canvas id="st-chart-bug-qarej"></canvas></div>
+            </div>
+        </div>
+
+        <div class="v2-card" style="margin-top:16px">
+            <div class="v2-table-wrap" style="margin:0">
+                <table class="v2-table st-bug-table">
+                    <thead>
+                        <tr>
+                            <th class="sortable @BugSI("key")" @onclick='() => BugSort("key")'>Key</th>
+                            <th class="sortable @BugSI("summary")" @onclick='() => BugSort("summary")'>Summary</th>
+                            <th class="sortable @BugSI("customer")" @onclick='() => BugSort("customer")'>Customer</th>
+                            <th class="sortable @BugSI("priority")" @onclick='() => BugSort("priority")'>Priority</th>
+                            <th class="sortable @BugSI("status")" @onclick='() => BugSort("status")'>Status</th>
+                            <th class="v2-table-num sortable @BugSI("devqa")" @onclick='() => BugSort("devqa")' title="Hours logged between first Dev Ready and first QA Ready">Dev→QA</th>
+                            <th class="v2-table-num sortable @BugSI("qadone")" @onclick='() => BugSort("qadone")' title="Hours logged between first QA Ready and Done">QA→Done</th>
+                            <th class="v2-table-num sortable @BugSI("devdone")" @onclick='() => BugSort("devdone")' title="Hours logged between first Dev Ready and Done">Dev→Done</th>
+                            <th class="v2-table-num sortable @BugSI("qarej")" @onclick='() => BugSort("qarej")' title="Times bounced back from QA">QA Rej.</th>
+                            <th class="v2-table-num sortable @BugSI("logged")" @onclick='() => BugSort("logged")' title="Total logged">Logged</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var b in DisplayedBugs)
+                        {
+                            var flags = BugFlags(b);
+                            var devQa   = PhaseLoggedSeconds(b, b.DevReadyDate, b.QaReadyDate);
+                            var qaDone  = PhaseLoggedSeconds(b, b.QaReadyDate, b.ResolutionDate);
+                            var devDone = PhaseLoggedSeconds(b, b.DevReadyDate, b.ResolutionDate);
+                            <tr class="@(flags.Any() ? "st-bug-critical" : "")">
+                                <td><a class="st-bug-key" href="@JiraUrl(b.Key)" target="_blank" rel="noopener">@b.Key</a></td>
+                                <td class="st-trunc" style="max-width:320px" title="@b.Summary">
+                                    @b.Summary
+                                    @foreach (var f in flags) { <span class="st-flag-dot @f.Cls" title="@f.Label"></span> }
+                                </td>
+                                <td class="st-trunc" style="max-width:160px" title="@b.Customer">@(string.IsNullOrWhiteSpace(b.Customer) ? "—" : b.Customer)</td>
+                                <td><span class="v2-pill @PriorityPill(b.Priority)">@b.Priority</span></td>
+                                <td><span class="st-status @(IsDone(b) ? "st-status-done" : "st-status-open")">@b.Status</span></td>
+                                <td class="v2-table-num @PhaseHrsCls(devQa, 8)">@PhaseHrsLabel(devQa)</td>
+                                <td class="v2-table-num @PhaseHrsCls(qaDone, 8)">@PhaseHrsLabel(qaDone)</td>
+                                <td class="v2-table-num @PhaseHrsCls(devDone, 16)">@PhaseHrsLabel(devDone)</td>
+                                <td class="v2-table-num @(b.QaRejectedCount > 0 ? "v2-text-danger" : "")">@(b.QaRejectedCount > 0 ? b.QaRejectedCount.ToString() : "—")</td>
+                                <td class="v2-table-num">@(b.TimeSpentSeconds > 0 ? FmtHM(b.TimeSpentSeconds) : "—")</td>
+                            </tr>
+                        }
+                        @if (!DisplayedBugs.Any()) { <tr><td colspan="10" class="st-muted-cell">No bugs match this filter.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        }
+    }
+</div>
+
+@code {
+    private List<SprintConfig> _configs = new();
+    private List<string> _epicKeys = new();
+    private List<string> _failedEpics = new();
+    private List<SprintIssue> _bugs = new();
+
+    private DateOnly _fullStart = DateOnly.FromDateTime(DateTime.Today.AddMonths(-6));
+    private DateOnly _fullEnd   = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly _rangeStart;
+    private DateOnly _rangeEnd;
+
+    private bool _loading;
+    private string _error = "";
+    private int _epicsTotal;
+    private int _epicsLoaded;
+    private bool _chartsNeedRender;
+
+    // ── Tabs ──
+    private string _tab = "overview";
+    private string _bugFilter = "all";
+    private record TabDef(string Key, string Label, string Icon);
+    private static readonly TabDef[] _tabs =
+    {
+        new("overview",   "Overview",   "bi-speedometer2"),
+        new("metrics",    "Metrics",    "bi-bar-chart-line"),
+        new("sprints",    "Sprints",    "bi-calendar3"),
+        new("breakdowns", "Breakdowns", "bi-diagram-3"),
+        new("bugs",       "Bugs",       "bi-bug"),
+    };
+
+    private void SetTab(string t)
+    {
+        _tab = t;
+        _chartsNeedRender = true;   // charts live inside tab panels; re-render when one becomes visible
+    }
+
+    private void SetBugFilter(string f) { _bugFilter = f; _chartsNeedRender = true; }
+
+    // ── Bug explorer: customer filter + column sorting ───────────────────────
+    private const string NoCustomerLabel = "(none)";
+    private HashSet<string> _selectedCustomers = new();
+    private bool _showCustomerFilter;
+    private string _bugSearch = "";
+    private string _bugSortCol = "";
+    private bool _bugSortAsc = true;
+
+    private IEnumerable<string> AllBugCustomers =>
+        _bugs.Select(b => string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer)
+             .Distinct()
+             .OrderBy(c => c == NoCustomerLabel ? 1 : 0)
+             .ThenBy(c => c);
+
+    private void ToggleCustomer(string customer)
+    {
+        if (!_selectedCustomers.Remove(customer)) _selectedCustomers.Add(customer);
+        _chartsNeedRender = true;
+    }
+    private void SelectAllCustomers() { _selectedCustomers = new HashSet<string>(AllBugCustomers); _chartsNeedRender = true; }
+    private void ClearCustomers() { _selectedCustomers.Clear(); _chartsNeedRender = true; }
+
+    private void BugSort(string col)
+    {
+        if (_bugSortCol == col) _bugSortAsc = !_bugSortAsc;
+        else { _bugSortCol = col; _bugSortAsc = true; }
+    }
+    private string BugSI(string col) => _bugSortCol == col ? (_bugSortAsc ? "sort-asc" : "sort-desc") : "";
+
+    // ── Lifecycle ───────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        _configs = await SprintConfigService.GetAllAsync();
+        _epicKeys = _configs
+            .Where(c => !string.IsNullOrWhiteSpace(c.EpicKey))
+            .Select(c => c.EpicKey.Trim().ToUpperInvariant())
+            .Distinct()
+            .ToList();
+
+        if (_configs.Count > 0)
+        {
+            _fullStart = _configs.Min(c => c.StartDate);
+            _fullEnd   = _configs.Max(c => c.EndDate);
+            _rangeStart = _fullStart;
+            _rangeEnd   = _fullEnd;
+        }
+
+        if (_epicKeys.Count > 0) await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _loading = true;
+        _error = "";
+        _failedEpics = new();
+        _epicsTotal = _epicKeys.Count;
+        _epicsLoaded = 0;
+        StateHasChanged();
+
+        try
+        {
+            // Fetch every epic's bugs in parallel (GetEpicBugsAsync bypasses the cache).
+            var results = await Task.WhenAll(_epicKeys.Select(FetchEpicAsync));
+
+            // Pool + de-dupe by issue key (an issue could surface under more than one epic).
+            _bugs = results
+                .SelectMany(r => r)
+                .GroupBy(b => b.Key)
+                .Select(g => g.First())
+                .ToList();
+
+            _chartsNeedRender = true;
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load trends: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private async Task<List<SprintIssue>> FetchEpicAsync(string epicKey)
+    {
+        try
+        {
+            // bugsOnly: false → include every child type (Stories, Tasks, Sub-tasks) under the
+            // epic, matching a Jira "parent = EPIC" worklog total so logged hours reconcile.
+            var report = await JiraService.GetEpicBugsAsync(epicKey, bugsOnly: false);
+            return report.Issues ?? new();
+        }
+        catch
+        {
+            _failedEpics.Add(epicKey);
+            return new();
+        }
+        finally
+        {
+            Interlocked.Increment(ref _epicsLoaded);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private void OnRangeChanged()
+    {
+        if (_rangeEnd < _rangeStart) (_rangeStart, _rangeEnd) = (_rangeEnd, _rangeStart);
+        _chartsNeedRender = true;
+    }
+
+    private void ResetRange()
+    {
+        _rangeStart = _fullStart;
+        _rangeEnd   = _fullEnd;
+        _chartsNeedRender = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_chartsNeedRender && _bugs.Count > 0 && !_loading)
+        {
+            _chartsNeedRender = false;
+            await RenderChartsAsync();
+        }
+    }
+
+    // ── Window helpers ──────────────────────────────────────────────────────
+    private bool InRange(DateTime? d) =>
+        d.HasValue && DateOnly.FromDateTime(d.Value) >= _rangeStart && DateOnly.FromDateTime(d.Value) <= _rangeEnd;
+
+    private static bool InWin(DateTime? d, DateOnly s, DateOnly e) =>
+        d.HasValue && DateOnly.FromDateTime(d.Value) >= s && DateOnly.FromDateTime(d.Value) <= e;
+
+    private static bool IsDone(SprintIssue b) =>
+        b.StatusCategoryKey == "done" || string.Equals(b.Status, "done", StringComparison.OrdinalIgnoreCase);
+
+    private static int GetDaysOpen(SprintIssue b) =>
+        b.Created.HasValue ? Math.Max(0, (int)(DateTime.Today - b.Created.Value.Date).TotalDays) : 0;
+
+    private string GetHealth(SprintIssue b)
+    {
+        if (IsDone(b)) return "done";
+        if (!b.DueDate.HasValue) return "no-due-date";
+        if (b.DueDate.Value.Date <= DateTime.Today) return "overdue";
+        return (b.DueDate.Value.Date - DateTime.Today).Days <= 7 ? "at-risk" : "on-track";
+    }
+
+    private static int GetSlaDays(SprintIssue b) => b.Priority?.ToLowerInvariant() switch
+    {
+        "critical" or "highest" => 1,
+        "high"                  => 7,
+        "medium"                => 14,
+        _                       => 30
+    };
+    private string GetSlaBucket(SprintIssue b)
+    {
+        if (IsDone(b)) return "done";
+        return GetDaysOpen(b) - GetSlaDays(b) <= 0 ? "inside" : "breached";
+    }
+
+    private static double? AvgResolveOf(IEnumerable<SprintIssue> bugs)
+    {
+        var closed = bugs.Where(b => b.ResolutionDate.HasValue && b.Created.HasValue).ToList();
+        if (closed.Count == 0) return null;
+        return closed.Average(b => (b.ResolutionDate!.Value.Date - b.Created!.Value.Date).TotalDays);
+    }
+
+    // ── Lifecycle metrics (window-scoped flow, all-time state) ───────────────
+    private int OpenCount            => _bugs.Count(b => !IsDone(b));
+    private int DoneCount            => _bugs.Count(IsDone);
+    private int CreatedCount         => _bugs.Count(b => InRange(b.Created));
+    private int WorkedOnCount        => _bugs.Count(b => b.Worklogs.Any(w => InRange(w.Started)));
+    private int ClosedCount          => _bugs.Count(b => InRange(b.ResolutionDate));
+    private int NetFlow              => ClosedCount - CreatedCount;
+    private int CarriedOverOpenCount => _bugs.Count(b => !IsDone(b) && b.Created.HasValue && DateOnly.FromDateTime(b.Created.Value) < _rangeStart);
+    private int ReopenedCount        => _bugs.Count(b => b.QaRejectedCount > 0);
+    private double? AvgResolveDays   => AvgResolveOf(_bugs.Where(b => InRange(b.ResolutionDate)));
+
+    // ── Effort metrics ──────────────────────────────────────────────────────
+    private int WindowLoggedSeconds => _bugs.Sum(b => b.Worklogs.Where(w => InRange(w.Started)).Sum(w => w.TimeSpentSeconds));
+    private int WindowWorklogCount  => _bugs.Sum(b => b.Worklogs.Count(w => InRange(w.Started)));
+    private int TotalLoggedSeconds  => _bugs.Sum(b => b.TimeSpentSeconds);
+    private int RemainingSeconds    => _bugs.Where(b => !IsDone(b)).Sum(b => b.ComputedRemainingSeconds);
+    private int BugsNoTimeOpen      => _bugs.Count(b => !IsDone(b) && b.TimeSpentSeconds == 0);
+    private int AvgLoggedPerBugSeconds
+    {
+        get { var w = _bugs.Where(b => b.TimeSpentSeconds > 0).ToList(); return w.Count == 0 ? 0 : (int)w.Average(b => b.TimeSpentSeconds); }
+    }
+    private int WindowWeeks => Math.Max(1, (_rangeEnd.DayNumber - _rangeStart.DayNumber + 1 + 6) / 7);
+    private double WeeklyBurnHours => WindowLoggedSeconds / 3600.0 / WindowWeeks;
+
+    // ── Health / SLA / aging ────────────────────────────────────────────────
+    private int OverdueCount     => _bugs.Count(b => GetHealth(b) == "overdue");
+    private int SlaBreachedCount => _bugs.Count(b => GetSlaBucket(b) == "breached");
+    private double AvgOpenAgeDays
+    {
+        get { var open = _bugs.Where(b => !IsDone(b)).ToList(); return open.Count == 0 ? 0 : open.Average(GetDaysOpen); }
+    }
+
+    private static readonly string[] PriorityOrder = { "Critical", "Highest", "High", "Medium", "Low", "Lowest" };
+
+    // ── Tickets by priority (all-time counts) ─────────────────────────────────
+    private record PriorityCount(string Name, int Total, int Open, int Closed, double? AvgFixHours);
+    private IEnumerable<PriorityCount> ByPriority =>
+        _bugs.GroupBy(b => string.IsNullOrWhiteSpace(b.Priority) ? "Medium" : b.Priority)
+             .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g)))
+             .OrderBy(p => { var i = Array.IndexOf(PriorityOrder, p.Name); return i < 0 ? 99 : i; });
+
+    // Same priority breakdown as ByPriority, but scoped to the bugs created within one
+    // sprint window — powers the per-sprint "breakdown of the breakdown" on the Sprints tab.
+    private IEnumerable<PriorityCount> PriorityBreakdownForWindow(DateOnly start, DateOnly end) =>
+        _bugs.Where(b => InWin(b.Created, start, end))
+             .GroupBy(b => string.IsNullOrWhiteSpace(b.Priority) ? "Medium" : b.Priority)
+             .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g)))
+             .OrderBy(p => { var i = Array.IndexOf(PriorityOrder, p.Name); return i < 0 ? 99 : i; });
+
+    // Avg logged worklog effort (hours) from first "Dev Ready" transition until resolution,
+    // across done bugs that have both timestamps. Same approach as the support-bugs dashboard.
+    private static int WorklogSecondsBetween(SprintIssue b, DateTime from, DateTime to)
+        => b.Worklogs.Where(w => w.Started >= from && w.Started <= to).Sum(w => w.TimeSpentSeconds);
+
+    private static double? AvgDevReadyToDoneHoursOf(IEnumerable<SprintIssue> bugs)
+    {
+        var list = bugs.Where(b => IsDone(b) && b.DevReadyDate.HasValue && b.ResolutionDate.HasValue
+                                && b.ResolutionDate!.Value > b.DevReadyDate!.Value).ToList();
+        if (list.Count == 0) return null;
+        return list.Average(b => WorklogSecondsBetween(b, b.DevReadyDate!.Value, b.ResolutionDate!.Value) / 3600.0);
+    }
+
+    // ── Bug explorer ──────────────────────────────────────────────────────────
+    // Slow-lifecycle threshold (calendar days) for the longest phase, Dev Ready → Done.
+    private const double SlowLifecycleDays = 10;
+
+    private record BugFlag(string Label, string Cls);
+
+    // Returns the critical flags that apply to a bug (empty = not critical).
+    private List<BugFlag> BugFlags(SprintIssue b)
+    {
+        var flags = new List<BugFlag>();
+        var devDone = PhaseDays(b.DevReadyDate, b.ResolutionDate);
+        if (devDone.HasValue && devDone.Value >= SlowLifecycleDays) flags.Add(new("Slow lifecycle", "st-flag-slow"));
+        if (IsHighPriority(b)) flags.Add(new("High priority", "st-flag-prio"));
+        if (b.QaRejectedCount > 0) flags.Add(new("QA bounced", "st-flag-qa"));
+        return flags;
+    }
+
+    private static bool IsHighPriority(SprintIssue b) =>
+        b.Priority?.ToLowerInvariant() is "critical" or "highest";
+
+    private IEnumerable<SprintIssue> CriticalBugs => _bugs.Where(b => BugFlags(b).Count > 0);
+
+    // Bugs shown in the explorer: status filter + customer filter, then sorted.
+    private IEnumerable<SprintIssue> DisplayedBugs
+    {
+        get
+        {
+            IEnumerable<SprintIssue> src = _bugFilter == "critical" ? CriticalBugs : _bugs;
+            if (_selectedCustomers.Count > 0)
+                src = src.Where(b => _selectedCustomers.Contains(string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer));
+
+            if (!string.IsNullOrWhiteSpace(_bugSearch))
+            {
+                var q = _bugSearch.Trim();
+                src = src.Where(b => (b.Key?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
+                                  || (b.Summary?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            // No explicit column sort → default worst-first ordering (critical, then longest in-flow).
+            if (string.IsNullOrEmpty(_bugSortCol))
+                return src.OrderByDescending(b => BugFlags(b).Count)
+                          .ThenByDescending(b => PhaseDays(b.DevReadyDate, b.ResolutionDate) ?? -1)
+                          .ThenByDescending(b => b.Created ?? DateTime.MinValue);
+
+            return ApplyBugSort(src);
+        }
+    }
+
+    private IEnumerable<SprintIssue> ApplyBugSort(IEnumerable<SprintIssue> src)
+    {
+        var asc = _bugSortAsc;
+        // Missing phase timings sort last regardless of direction.
+        return _bugSortCol switch
+        {
+            "key"      => asc ? src.OrderBy(b => b.Key)                  : src.OrderByDescending(b => b.Key),
+            "summary"  => asc ? src.OrderBy(b => b.Summary)              : src.OrderByDescending(b => b.Summary),
+            "customer" => asc ? src.OrderBy(b => CustomerKey(b))         : src.OrderByDescending(b => CustomerKey(b)),
+            "priority" => asc ? src.OrderBy(b => PriOrder(b))            : src.OrderByDescending(b => PriOrder(b)),
+            "status"   => asc ? src.OrderBy(b => b.Status)               : src.OrderByDescending(b => b.Status),
+            "devqa"    => asc ? src.OrderBy(b => PhaseLoggedSeconds(b, b.DevReadyDate, b.QaReadyDate)    ?? int.MaxValue) : src.OrderByDescending(b => PhaseLoggedSeconds(b, b.DevReadyDate, b.QaReadyDate)    ?? int.MinValue),
+            "qadone"   => asc ? src.OrderBy(b => PhaseLoggedSeconds(b, b.QaReadyDate, b.ResolutionDate)  ?? int.MaxValue) : src.OrderByDescending(b => PhaseLoggedSeconds(b, b.QaReadyDate, b.ResolutionDate)  ?? int.MinValue),
+            "devdone"  => asc ? src.OrderBy(b => PhaseLoggedSeconds(b, b.DevReadyDate, b.ResolutionDate) ?? int.MaxValue) : src.OrderByDescending(b => PhaseLoggedSeconds(b, b.DevReadyDate, b.ResolutionDate) ?? int.MinValue),
+            "qarej"    => asc ? src.OrderBy(b => b.QaRejectedCount)      : src.OrderByDescending(b => b.QaRejectedCount),
+            "logged"   => asc ? src.OrderBy(b => b.TimeSpentSeconds)     : src.OrderByDescending(b => b.TimeSpentSeconds),
+            _          => src
+        };
+    }
+
+    private static int PriOrder(SprintIssue b)
+    {
+        var i = Array.IndexOf(PriorityOrder, string.IsNullOrWhiteSpace(b.Priority) ? "Medium" : b.Priority);
+        return i < 0 ? 99 : i;
+    }
+
+    private static string CustomerKey(SprintIssue b) =>
+        string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer;
+
+    // Calendar days between two lifecycle markers; null if either is missing or out of order.
+    private static double? PhaseDays(DateTime? from, DateTime? to)
+    {
+        if (!from.HasValue || !to.HasValue) return null;
+        var d = (to.Value - from.Value).TotalDays;
+        return d < 0 ? null : d;
+    }
+
+    private static string PhaseLabel(double? days) =>
+        days.HasValue ? $"{days.Value:0.0}d" : "—";
+
+    // Amber/red emphasis once a phase runs long.
+    private static string PhaseCls(double? days, double warnDays)
+    {
+        if (!days.HasValue) return "";
+        if (days.Value >= warnDays * 2) return "v2-text-danger";
+        if (days.Value >= warnDays) return "st-text-warn";
+        return "";
+    }
+
+    // Worklog effort (seconds) logged within a lifecycle phase: the sum of every worklog
+    // whose "started" timestamp falls between the two markers. Null when either marker is
+    // missing or out of order (so the cell renders "—" rather than a misleading 0h).
+    private static int? PhaseLoggedSeconds(SprintIssue b, DateTime? from, DateTime? to)
+    {
+        if (!from.HasValue || !to.HasValue || to.Value < from.Value) return null;
+        return WorklogSecondsBetween(b, from.Value, to.Value);
+    }
+
+    private static string PhaseHrsLabel(int? seconds) =>
+        seconds.HasValue ? FmtHM(seconds.Value) : "—";
+
+    // Amber/red emphasis once the logged effort in a phase gets heavy.
+    private static string PhaseHrsCls(int? seconds, double warnHours)
+    {
+        if (!seconds.HasValue) return "";
+        var h = seconds.Value / 3600.0;
+        if (h >= warnHours * 2) return "v2-text-danger";
+        if (h >= warnHours) return "st-text-warn";
+        return "";
+    }
+
+    private string JiraUrl(string key) => $"{Config["Jira:BaseUrl"]?.TrimEnd('/')}/browse/{key}";
+
+    // "% of total bugs" cell content.
+    private static string ShareCell(int part, int whole) =>
+        whole <= 0 ? "—" : $"{part * 100.0 / whole:0.0}%";
+
+    // ── Breakdowns ──────────────────────────────────────────────────────────
+    private record GroupStat(string Name, int Total, int Closed, int Open, int LoggedSeconds, int WindowLoggedSeconds, double? AvgResolve);
+
+    private IEnumerable<GroupStat> ByCustomer =>
+        _bugs.Where(b => !string.IsNullOrWhiteSpace(b.Customer))
+             .GroupBy(b => b.Customer)
+             .Select(g => new GroupStat(g.Key, g.Count(), g.Count(IsDone), g.Count(b => !IsDone(b)),
+                 g.Sum(b => b.TimeSpentSeconds),
+                 g.Sum(b => b.Worklogs.Where(w => InRange(w.Started)).Sum(w => w.TimeSpentSeconds)),
+                 AvgResolveOf(g)));
+
+    private IEnumerable<GroupStat> ByLabel =>
+        _bugs.SelectMany(b => (b.Labels ?? new()).Select(l => (Label: l, Bug: b)))
+             .Where(x => !string.IsNullOrWhiteSpace(x.Label))
+             .GroupBy(x => x.Label)
+             .Select(g => new GroupStat(g.Key, g.Count(), g.Count(x => IsDone(x.Bug)), g.Count(x => !IsDone(x.Bug)),
+                 g.Sum(x => x.Bug.TimeSpentSeconds),
+                 g.Sum(x => x.Bug.Worklogs.Where(w => InRange(w.Started)).Sum(w => w.TimeSpentSeconds)),
+                 AvgResolveOf(g.Select(x => x.Bug))));
+
+    // Worklog-author breakdown: who actually logged work, regardless of current assignee.
+    // Mirrors the Metrics tab "Worklog effort by author" chart (same logged-hours totals),
+    // but as a sortable/filterable table with the bugs they touched.
+    private IEnumerable<GroupStat> WorkedBy =>
+        _bugs.SelectMany(b => b.Worklogs
+                 .Where(w => !string.IsNullOrWhiteSpace(w.Author))
+                 .Select(w => (Author: w.Author, Bug: b, Sec: w.TimeSpentSeconds,
+                               WinSec: InRange(w.Started) ? w.TimeSpentSeconds : 0)))
+             .GroupBy(x => x.Author)
+             .Select(g =>
+             {
+                 var bugs = g.Select(x => x.Bug).DistinctBy(b => b.Key).ToList();
+                 return new GroupStat(
+                     g.Key,
+                     bugs.Count,
+                     bugs.Count(IsDone),
+                     bugs.Count(b => !IsDone(b)),
+                     g.Sum(x => x.Sec),
+                     g.Sum(x => x.WinSec),
+                     AvgResolveOf(bugs));
+             });
+
+    // ── Breakdown table sort + filter (Breakdowns tab) ───────────────────────
+    private string _custSortCol = "total", _labelSortCol = "total", _workedSortCol = "logged";
+    private bool _custAsc = false, _labelAsc = false, _workedAsc = false;
+    private string _custFilter = "", _labelFilter = "", _workedFilter = "";
+
+    private void CustSort(string col)   { if (_custSortCol == col) _custAsc = !_custAsc; else { _custSortCol = col; _custAsc = false; } }
+    private void LabelSort(string col)  { if (_labelSortCol == col) _labelAsc = !_labelAsc; else { _labelSortCol = col; _labelAsc = false; } }
+    private void WorkedSort(string col) { if (_workedSortCol == col) _workedAsc = !_workedAsc; else { _workedSortCol = col; _workedAsc = false; } }
+    private string CustSI(string col)   => _custSortCol == col ? (_custAsc ? "sort-asc" : "sort-desc") : "";
+    private string LabelSI(string col)  => _labelSortCol == col ? (_labelAsc ? "sort-asc" : "sort-desc") : "";
+    private string WorkedSI(string col) => _workedSortCol == col ? (_workedAsc ? "sort-asc" : "sort-desc") : "";
+
+    // Filters a breakdown by name substring, then orders by the chosen column.
+    private static IEnumerable<GroupStat> SortFilterGroups(IEnumerable<GroupStat> src, string col, bool asc, string filter)
+    {
+        if (!string.IsNullOrWhiteSpace(filter))
+            src = src.Where(g => g.Name.Contains(filter.Trim(), StringComparison.OrdinalIgnoreCase));
+        Func<GroupStat, object> key = col switch
+        {
+            "name"    => g => g.Name,
+            "closed"  => g => g.Closed,
+            "open"    => g => g.Open,
+            "logged"  => g => g.LoggedSeconds,
+            "wlogged" => g => g.WindowLoggedSeconds,
+            "resolve" => g => g.AvgResolve ?? double.MaxValue,
+            _         => g => g.Total
+        };
+        return asc ? src.OrderBy(key) : src.OrderByDescending(key);
+    }
+
+    // ── Worklog effort breakdown (Metrics tab) ───────────────────────────────
+    // Worklog effort by author across EVERY bug (all time — matches the Bugs tab set).
+    private record WorklogGroup(string Name, double TotalHours, int Entries, double AvgHours);
+
+    private List<WorklogGroup> WlAuthorAllTime =>
+        _bugs.SelectMany(b => b.Worklogs)
+             .Select(w => (Key: string.IsNullOrWhiteSpace(w.Author) ? "Unknown" : w.Author, Sec: w.TimeSpentSeconds))
+             .GroupBy(x => x.Key)
+             .Select(g =>
+             {
+                 var entries = g.Count();
+                 var hours   = g.Sum(x => x.Sec) / 3600.0;
+                 return new WorklogGroup(g.Key, hours, entries, entries == 0 ? 0 : hours / entries);
+             })
+             .OrderByDescending(g => g.TotalHours)
+             .ToList();
+
+    // ── Sprint-over-sprint ──────────────────────────────────────────────────
+    private record SprintStat(string Name, DateOnly Start, DateOnly End, int Created, int Closed, int Net, int LoggedSeconds, double? AvgResolve, int QaRejected);
+
+    private IEnumerable<SprintStat> SprintStats =>
+        _configs.OrderBy(c => c.StartDate).Select(c =>
+        {
+            var s = c.StartDate; var e = c.EndDate;
+            var created = _bugs.Count(b => InWin(b.Created, s, e));
+            var closedBugs = _bugs.Where(b => InWin(b.ResolutionDate, s, e)).ToList();
+            var logged = _bugs.Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds));
+            var qa = closedBugs.Count(b => b.QaRejectedCount > 0);
+            return new SprintStat(
+                string.IsNullOrWhiteSpace(c.Name) ? c.EpicKey : c.Name,
+                s, e, created, closedBugs.Count, closedBugs.Count - created, logged, AvgResolveOf(closedBugs), qa);
+        });
+
+    // ── Charts ──────────────────────────────────────────────────────────────
+    private async Task RenderChartsAsync()
+    {
+        // Only the active tab's canvases exist in the DOM, so render that tab's charts.
+        if (_tab == "overview")
+        {
+            await JS.InvokeVoidAsync("destroyChart", "st-chart-priority");
+            var pr = ByPriority.ToList();
+            await JS.InvokeVoidAsync("renderChart", "st-chart-priority", new
+            {
+                type = "doughnut",
+                data = new
+                {
+                    labels = pr.Select(p => p.Name).ToArray(),
+                    datasets = new[] { new
+                    {
+                        data = pr.Select(p => p.Total).ToArray(),
+                        backgroundColor = pr.Select(p => PriorityColor(p.Name)).ToArray(),
+                        borderWidth = 0
+                    }}
+                },
+                options = new
+                {
+                    responsive = true,
+                    maintainAspectRatio = false,
+                    plugins = new { legend = new { display = true, position = "right" } }
+                }
+            });
+            return;
+        }
+
+        if (_tab == "sprints") { await RenderSprintChartsAsync(); return; }
+
+        if (_tab == "bugs") { await RenderBugChartsAsync(); return; }
+
+        if (_tab != "metrics") return;
+
+        foreach (var id in new[] { "st-chart-m-author", "st-chart-m-customer", "st-chart-m-label" })
+            await JS.InvokeVoidAsync("destroyChart", id);
+
+        // Worklog effort by author across every bug (all time).
+        var auth = WlAuthorAllTime.Take(20).ToList();
+        await JS.InvokeVoidAsync("renderChart", "st-chart-m-author", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = auth.Select(g => g.Name).ToArray(),
+                datasets = new[] { new
+                {
+                    label = "Hours",
+                    data = auth.Select(g => Math.Round(g.TotalHours, 1)).ToArray(),
+                    backgroundColor = "#2563eb",
+                    borderRadius = 4
+                }}
+            },
+            options = new
+            {
+                indexAxis = "y",
+                responsive = true,
+                maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales = new { x = new { beginAtZero = true } }
+            }
+        });
+
+        // By customer — bug count (left axis) + logged hours (right axis).
+        var cust = ByCustomer.OrderByDescending(c => c.Total).Take(15).ToList();
+        await JS.InvokeVoidAsync("renderChart", "st-chart-m-customer", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = cust.Select(c => c.Name).ToArray(),
+                datasets = new object[]
+                {
+                    new { label = "Bugs",  data = cust.Select(c => c.Total).ToArray(), backgroundColor = "#2563eb", borderRadius = 3, yAxisID = "y" },
+                    new { label = "Hours", data = cust.Select(c => Math.Round(c.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = "#7c3aed", borderRadius = 3, yAxisID = "y1" }
+                }
+            },
+            options = DualAxisOpts()
+        });
+
+        // By label — bug count (left axis) + logged hours (right axis).
+        var lab = ByLabel.OrderByDescending(l => l.Total).Take(15).ToList();
+        await JS.InvokeVoidAsync("renderChart", "st-chart-m-label", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = lab.Select(l => l.Name).ToArray(),
+                datasets = new object[]
+                {
+                    new { label = "Bugs",  data = lab.Select(l => l.Total).ToArray(), backgroundColor = "#16a34a", borderRadius = 3, yAxisID = "y" },
+                    new { label = "Hours", data = lab.Select(l => Math.Round(l.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = "#b45309", borderRadius = 3, yAxisID = "y1" }
+                }
+            },
+            options = DualAxisOpts()
+        });
+    }
+
+    // Grouped-bar options with a left axis (counts) and a right axis (hours).
+    private static object DualAxisOpts() => new
+    {
+        responsive = true,
+        maintainAspectRatio = false,
+        plugins = new { legend = new { display = true, position = "bottom" } },
+        scales = new
+        {
+            y  = new { type = "linear", position = "left",  beginAtZero = true, ticks = new { precision = 0 }, title = new { display = true, text = "Bugs" } },
+            y1 = new { type = "linear", position = "right", beginAtZero = true, grid = new { drawOnChartArea = false }, title = new { display = true, text = "Hours" } }
+        }
+    };
+
+    private async Task RenderSprintChartsAsync()
+    {
+        foreach (var id in new[] { "st-chart-sprint-flow", "st-chart-sprint-logged" })
+            await JS.InvokeVoidAsync("destroyChart", id);
+
+        var sprints = SprintStats.ToList();
+        var sLabels = sprints.Select(s => s.Name).ToArray();
+        await JS.InvokeVoidAsync("renderChart", "st-chart-sprint-flow", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = sLabels,
+                datasets = new object[]
+                {
+                    new { label = "Created",  data = sprints.Select(s => s.Created).ToArray(), backgroundColor = "#94a3b8", borderRadius = 3 },
+                    new { label = "Resolved", data = sprints.Select(s => s.Closed).ToArray(),  backgroundColor = "#16a34a", borderRadius = 3 }
+                }
+            },
+            options = ChartOpts(true)
+        });
+
+        await JS.InvokeVoidAsync("renderChart", "st-chart-sprint-logged", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = sLabels,
+                datasets = new object[]
+                {
+                    new { label = "Hours", data = sprints.Select(s => Math.Round(s.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = "#2563eb", borderRadius = 3 }
+                }
+            },
+            options = ChartOpts(false)
+        });
+    }
+
+    // Bug-tab analytics — all driven by the explorer's current Show/Customer filter (DisplayedBugs).
+    private async Task RenderBugChartsAsync()
+    {
+        foreach (var id in new[] { "st-chart-bug-phases", "st-chart-bug-logged", "st-chart-bug-byprio", "st-chart-bug-qarej" })
+            await JS.InvokeVoidAsync("destroyChart", id);
+
+        var bugs = DisplayedBugs.ToList();
+
+        // 1. Average phase timing (calendar days) across bugs that reached each marker.
+        double AvgPhase(Func<SprintIssue, double?> sel)
+        {
+            var vals = bugs.Select(sel).Where(v => v.HasValue).Select(v => v!.Value).ToList();
+            return vals.Count == 0 ? 0 : Math.Round(vals.Average(), 1);
+        }
+        await JS.InvokeVoidAsync("renderChart", "st-chart-bug-phases", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = new[] { "Dev→QA", "QA→Done", "Dev→Done" },
+                datasets = new[] { new
+                {
+                    label = "Avg days",
+                    data = new[]
+                    {
+                        AvgPhase(b => PhaseDays(b.DevReadyDate, b.QaReadyDate)),
+                        AvgPhase(b => PhaseDays(b.QaReadyDate, b.ResolutionDate)),
+                        AvgPhase(b => PhaseDays(b.DevReadyDate, b.ResolutionDate))
+                    },
+                    backgroundColor = new[] { "#2563eb", "#7c3aed", "#b45309" },
+                    borderRadius = 4
+                }}
+            },
+            options = ChartOpts(false)
+        });
+
+        // 2. Logged-hours distribution — bug count per effort bucket.
+        var hrBuckets = new (string Label, Func<double, bool> Test)[]
+        {
+            ("0h",     h => h == 0),
+            ("<2h",    h => h > 0 && h < 2),
+            ("2–5h",   h => h >= 2 && h < 5),
+            ("5–10h",  h => h >= 5 && h < 10),
+            ("10–20h", h => h >= 10 && h < 20),
+            ("20h+",   h => h >= 20),
+        };
+        var hours = bugs.Select(b => b.TimeSpentSeconds / 3600.0).ToList();
+        await JS.InvokeVoidAsync("renderChart", "st-chart-bug-logged", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = hrBuckets.Select(x => x.Label).ToArray(),
+                datasets = new[] { new
+                {
+                    label = "Bugs",
+                    data = hrBuckets.Select(x => hours.Count(x.Test)).ToArray(),
+                    backgroundColor = "#2563eb",
+                    borderRadius = 4
+                }}
+            },
+            options = ChartOpts(false)
+        });
+
+        // 3. Average logged hours per bug, grouped by priority (bugs with time logged).
+        var byPrio = PriorityOrder
+            .Select(p => new
+            {
+                Name = p,
+                Logged = bugs.Where(b => string.Equals(b.Priority, p, StringComparison.OrdinalIgnoreCase)
+                                      && b.TimeSpentSeconds > 0).ToList()
+            })
+            .Where(g => g.Logged.Count > 0)
+            .ToList();
+        await JS.InvokeVoidAsync("renderChart", "st-chart-bug-byprio", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = byPrio.Select(g => g.Name).ToArray(),
+                datasets = new[] { new
+                {
+                    label = "Avg h / bug",
+                    data = byPrio.Select(g => Math.Round(g.Logged.Average(b => b.TimeSpentSeconds) / 3600.0, 1)).ToArray(),
+                    backgroundColor = byPrio.Select(g => PriorityColor(g.Name)).ToArray(),
+                    borderRadius = 4
+                }}
+            },
+            options = ChartOpts(false)
+        });
+
+        // 4. QA bounce-backs — how many times bugs were kicked back from QA.
+        var qaBuckets = new (string Label, Func<SprintIssue, bool> Test)[]
+        {
+            ("0",  b => b.QaRejectedCount == 0),
+            ("1",  b => b.QaRejectedCount == 1),
+            ("2",  b => b.QaRejectedCount == 2),
+            ("3+", b => b.QaRejectedCount >= 3),
+        };
+        await JS.InvokeVoidAsync("renderChart", "st-chart-bug-qarej", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = qaBuckets.Select(x => x.Label).ToArray(),
+                datasets = new[] { new
+                {
+                    label = "Bugs",
+                    data = qaBuckets.Select(x => bugs.Count(x.Test)).ToArray(),
+                    backgroundColor = new[] { "#16a34a", "#b45309", "#dc2626", "#991b1b" },
+                    borderRadius = 4
+                }}
+            },
+            options = ChartOpts(false)
+        });
+    }
+
+    private static object ChartOpts(bool legend) => new
+    {
+        responsive = true,
+        maintainAspectRatio = false,
+        plugins = new { legend = new { display = legend, position = "bottom" } },
+        scales = new { y = new { beginAtZero = true, ticks = new { precision = 0 } } }
+    };
+
+    // ── Formatting helpers ──────────────────────────────────────────────────
+    private static string FmtHM(int seconds)
+    {
+        if (seconds <= 0) return "0h";
+        var h = seconds / 3600; var m = (seconds % 3600) / 60;
+        if (h == 0) return $"{m}m";
+        return m > 0 ? $"{h}h {m}m" : $"{h}h";
+    }
+
+    private static int Pct(int part, int whole) => whole <= 0 ? 0 : Math.Min(100, part * 100 / whole);
+
+    private static string PriorityPill(string? p) => p?.ToLowerInvariant() switch
+    {
+        "critical" or "highest" => "v2-pill-danger",
+        "high"                  => "v2-pill-warn",
+        "medium"                => "v2-pill-brand",
+        _                       => "v2-pill-neutral"
+    };
+
+    private static string PriorityColor(string? p) => p?.ToLowerInvariant() switch
+    {
+        "critical" or "highest" => "#b91c1c",
+        "high"                  => "#b45309",
+        "medium"                => "#2563eb",
+        "low"                   => "#16a34a",
+        _                       => "#94a3b8"
+    };
+
+    private static string AvatarGrad(string name) => $"v2-avatar-grad-{1 + (Math.Abs(name.GetHashCode()) % 5)}";
+    private static string Initials(string name)
+    {
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return "?";
+        return parts.Length == 1 ? parts[0][..1].ToUpper() : (parts[0][..1] + parts[^1][..1]).ToUpper();
+    }
+}
+
+<style>
+    .st-controls { display: flex; align-items: center; gap: 8px; }
+
+    .st-toolbar {
+        display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
+        background: var(--v2-elevated); border: 1px solid var(--v2-border); border-radius: 12px;
+        padding: 12px 16px; margin-bottom: 16px;
+    }
+    .st-tool-group { display: flex; align-items: center; gap: 8px; }
+    .st-tool-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--v2-ink-3); }
+    .st-date-lbl { font-size: 11px; color: var(--v2-ink-3); }
+    .st-input {
+        font-size: 13px; font-weight: 600; padding: 6px 9px; border-radius: 8px;
+        border: 1px solid var(--v2-border); background: var(--v2-elevated); color: var(--v2-ink-1); cursor: pointer;
+    }
+    .st-link { background: none; border: none; color: var(--v2-brand); font-size: 12px; font-weight: 600; cursor: pointer; padding: 4px 6px; }
+    .st-link:disabled { color: var(--v2-ink-4); cursor: default; }
+
+    .st-seg { display: inline-flex; border: 1px solid var(--v2-border); border-radius: 8px; overflow: hidden; }
+    .st-seg-btn { background: var(--v2-elevated); border: none; padding: 6px 14px; font-size: 12px; font-weight: 600; color: var(--v2-ink-2); cursor: pointer; }
+    .st-seg-btn.active { background: var(--v2-brand); color: #fff; }
+
+    .st-scope { font-size: 10px; font-weight: 600; color: var(--v2-ink-4); text-transform: none; letter-spacing: 0; margin-left: 6px; }
+
+    .st-card-title {
+        font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+        color: var(--v2-ink-3); margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
+    }
+    .st-chart-box { position: relative; height: 260px; }
+
+    /* Breakdowns: filter input + sortable, scrollable tables */
+    .st-bk-head { justify-content: space-between; }
+    .st-bk-scroll { max-height: 380px; overflow-y: auto; }
+    .st-bk-search, .st-bug-search {
+        text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px;
+        padding: 5px 9px; border-radius: 8px; border: 1px solid var(--v2-border);
+        background: var(--v2-elevated); color: var(--v2-ink-1); min-width: 150px;
+    }
+    .st-bk-search:focus, .st-bug-search:focus { outline: none; border-color: var(--v2-brand); }
+
+    /* Bug-explorer sortable headers (markup uses the unprefixed classes). */
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable:hover { color: var(--v2-ink-1); }
+    th.sort-asc::after  { content: " ▲"; font-size: 9px; opacity: 0.6; }
+    th.sort-desc::after { content: " ▼"; font-size: 9px; opacity: 0.6; }
+    .st-trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 240px; }
+    .st-muted-cell { color: var(--v2-ink-4); font-size: 12px; }
+
+    .v2-text-success { color: var(--v2-success) !important; }
+    .v2-text-danger  { color: var(--v2-danger) !important; }
+
+    .st-banner {
+        display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-radius: 10px;
+        font-size: 13px; font-weight: 600; margin-bottom: 16px;
+    }
+    .st-banner-danger { background: var(--v2-danger-soft); color: var(--v2-danger); border: 1px solid var(--v2-danger-border); }
+    .st-banner-warn   { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+
+    .st-empty {
+        display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+        padding: 64px 24px; color: var(--v2-ink-3); text-align: center;
+    }
+    .st-empty .bi { font-size: 36px; opacity: .5; }
+    .st-empty a { color: var(--v2-brand); font-weight: 600; }
+    .st-load-bar { width: 220px; height: 6px; border-radius: 4px; background: var(--v2-border); overflow: hidden; }
+    .st-load-fill { height: 100%; background: var(--v2-brand); transition: width .3s ease; }
+
+    /* ── Tabs ── */
+    .st-tabs {
+        display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 18px;
+        border-bottom: 1px solid var(--v2-border);
+    }
+    .st-tab {
+        display: inline-flex; align-items: center; gap: 7px;
+        background: none; border: none; border-bottom: 2px solid transparent;
+        padding: 10px 16px; font-size: 13px; font-weight: 600; color: var(--v2-ink-3);
+        cursor: pointer; margin-bottom: -1px;
+    }
+    .st-tab:hover { color: var(--v2-ink-1); }
+    .st-tab.active { color: var(--v2-brand); border-bottom-color: var(--v2-brand); }
+    .st-tab-count {
+        font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 10px;
+        background: var(--v2-surface-2, #f1f5f9); color: var(--v2-ink-3);
+    }
+    .st-tab.active .st-tab-count { background: var(--v2-brand); color: #fff; }
+
+    /* ── Bug explorer ── */
+    .st-bug-toolbar {
+        display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px;
+        margin-top: 12px;
+    }
+    .st-bug-legend { gap: 12px; }
+    .st-flag { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--v2-ink-3); }
+    .st-flag::before { content: ""; width: 9px; height: 9px; border-radius: 3px; display: inline-block; }
+    .st-flag-slow::before { background: #b45309; }
+    .st-flag-prio::before { background: #b91c1c; }
+    .st-flag-qa::before   { background: #7c3aed; }
+
+    .st-flag-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-left: 5px; vertical-align: middle; }
+    .st-flag-dot.st-flag-slow { background: #b45309; }
+    .st-flag-dot.st-flag-prio { background: #b91c1c; }
+    .st-flag-dot.st-flag-qa   { background: #7c3aed; }
+
+    .st-bug-table { font-size: 12.5px; }
+    .st-bug-critical { background: var(--v2-danger-soft, #fef2f2); }
+    .st-bug-key { color: var(--v2-brand); font-weight: 600; text-decoration: none; }
+    .st-bug-key:hover { text-decoration: underline; }
+
+    .st-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
+    .st-status-done { background: #dcfce7; color: #15803d; }
+    .st-status-open { background: #f1f5f9; color: #475569; }
+
+    .st-text-warn { color: #b45309 !important; font-weight: 600; }
+
+    /* ── Bug explorer: customer filter dropdown ── */
+    .st-cust-filter { position: relative; }
+    .st-cust-btn {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: var(--v2-elevated); border: 1px solid var(--v2-border); border-radius: 8px;
+        padding: 6px 10px; font-size: 12px; font-weight: 600; color: var(--v2-ink-2); cursor: pointer;
+    }
+    .st-cust-btn:hover { border-color: var(--v2-brand); }
+    .st-cust-btn.active { border-color: var(--v2-brand); color: var(--v2-brand); }
+    .st-cust-btn .bi { font-size: 10px; }
+    .st-cust-panel {
+        position: absolute; top: calc(100% + 4px); left: 0; z-index: 30;
+        min-width: 200px; max-width: 280px;
+        background: var(--v2-elevated); border: 1px solid var(--v2-border); border-radius: 10px;
+        box-shadow: 0 8px 28px rgba(0,0,0,.14); padding: 8px;
+    }
+    .st-cust-panel-actions {
+        display: flex; align-items: center; gap: 6px; padding: 2px 4px 8px;
+        border-bottom: 1px solid var(--v2-border); margin-bottom: 6px;
+    }
+    .st-cust-sep { color: var(--v2-ink-4); font-size: 11px; }
+    .st-cust-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+    .st-cust-item {
+        display: flex; align-items: center; gap: 8px; padding: 4px 6px; border-radius: 6px;
+        font-size: 12px; color: var(--v2-ink-2); cursor: pointer;
+    }
+    .st-cust-item:hover { background: var(--v2-surface-2, #f1f5f9); color: var(--v2-ink-1); }
+    .st-cust-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+</style>

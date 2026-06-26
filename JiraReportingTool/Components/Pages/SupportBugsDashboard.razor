@@ -80,11 +80,47 @@
                 <div class="v2-kpi-sub">@DoneCount done · @InProgressCount active · @(TotalCount - DoneCount - InProgressCount) to do @if (IsFiltered) { <span>· @TotalCount / @_bugs.Count shown</span> }</div>
             </div>
 
+            <!-- Started & Closed this sprint -->
+            <div class="v2-kpi v2-kpi-success">
+                <div class="v2-kpi-head"><i class="bi bi-check2-all"></i>Started &amp; Closed</div>
+                <div class="v2-kpi-value">@StartedAndClosedCount<span class="v2-kpi-of">of @DoneCount done</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill v2-bar-fill-success"
+                         style="width:@(DoneCount > 0 ? Math.Min(StartedAndClosedCount * 100 / DoneCount, 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">picked up &amp; resolved within @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
+            </div>
+
+            <!-- Added into Sprint -->
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-box-arrow-in-down-right"></i>Added into Sprint</div>
+                <div class="v2-kpi-value">@AddedToSprintCount</div>
+                <div class="v2-kpi-sub">created @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
+            </div>
+
+            <!-- Closed This Sprint -->
+            <div class="v2-kpi v2-kpi-success">
+                <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Closed This Sprint</div>
+                <div class="v2-kpi-value">@ClosedThisSprintCount<span class="v2-kpi-of">of @DoneCount done</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill v2-bar-fill-success"
+                         style="width:@(DoneCount > 0 ? Math.Min(ClosedThisSprintCount * 100 / DoneCount, 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">resolved within sprint window</div>
+            </div>
+
             <!-- Sprint Logged -->
             <div class="v2-kpi v2-kpi-neutral">
                 <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Sprint Logged</div>
                 <div class="v2-kpi-value">@FormatSeconds(TotalSprintSeconds)</div>
                 <div class="v2-kpi-sub">@_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
+            </div>
+
+            <!-- Daily Burn -->
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-speedometer"></i>Daily Burn</div>
+                <div class="v2-kpi-value">@($"{DailyBurnHours:0.0}")<span class="v2-kpi-of">h / day</span></div>
+                <div class="v2-kpi-sub">@WeekdaysElapsed of @TotalWeekdays weekdays elapsed</div>
             </div>
 
             <!-- Total Logged -->
@@ -134,6 +170,28 @@
                 <div class="v2-kpi-sub">@BugsNoTimeOpen untracked · @OnHoldCount on hold</div>
             </div>
 
+            <!-- Avg Time to Conclude -->
+            <div class="v2-kpi @(AvgResolutionDays >= 30 ? "v2-kpi-danger" : AvgResolutionDays >= 14 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-hourglass-bottom"></i>Avg Time to Conclude</div>
+                <div class="v2-kpi-value">@($"{AvgResolutionDays:0.0}")<span class="v2-kpi-of">days / bug</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(AvgResolutionDays >= 30 ? "v2-bar-fill-danger" : AvgResolutionDays >= 14 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@(Math.Min((int)(AvgResolutionDays / 60.0 * 100), 100))%"></div>
+                </div>
+                <div class="v2-kpi-sub">@(AvgResolutionCount > 0 ? $"created → resolved this sprint · {AvgResolutionCount} bug{(AvgResolutionCount == 1 ? "" : "s")}" : "no bugs resolved this sprint")</div>
+            </div>
+
+            <!-- Avg Logged: Dev Ready → Done -->
+            <div class="v2-kpi @(AvgDevReadyToDoneHours >= 24 ? "v2-kpi-danger" : AvgDevReadyToDoneHours >= 8 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-hourglass-bottom"></i>Avg Effort to Conclude</div>
+                <div class="v2-kpi-value">@($"{AvgDevReadyToDoneHours:0.0}")<span class="v2-kpi-of">h / bug</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(AvgDevReadyToDoneHours >= 24 ? "v2-bar-fill-danger" : AvgDevReadyToDoneHours >= 8 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@(Math.Min((int)(AvgDevReadyToDoneHours / 40.0 * 100), 100))%"></div>
+                </div>
+                <div class="v2-kpi-sub">@(AvgDevReadyToDoneCount > 0 ? $"Dev Ready → Done this sprint · {AvgDevReadyToDoneCount} bug{(AvgDevReadyToDoneCount == 1 ? "" : "s")}" : "no Dev Ready data this sprint")</div>
+            </div>
+
         </div>
         <!-- ═══════════════════ FILTER BAR ═══════════════════ -->
         <div class="sb-section">
@@ -152,10 +210,10 @@
             <!-- ── Row 1: checkbox lists + date ranges ─────────────── -->
             <div class="sb-filter-grid">
 
-                <!-- Assignee -->
+                <!-- Assignee / Worklog Author -->
                 <div class="sb-filter-col">
                     <div class="sb-filter-col-hdr">
-                        <span class="sb-filter-label">Assignee</span>
+                        <span class="sb-filter-label">@(_personFilterByAuthor ? "Worklog Author" : "Assignee")</span>
                         @if (_selectedAssignees.Count > 0)
                         {
                             <span class="sb-filter-count">@_selectedAssignees.Count</span>
@@ -166,6 +224,10 @@
                             <button class="sb-filter-clear-link" @onclick="() => _selectedAssignees.Clear()">None</button>
                         </div>
                     </div>
+                    <label class="sb-person-mode" title="When on, logged-time metrics count only the selected people's worklogs and include any bug they logged on (matches Jira's worklogAuthor). When off, filters by who the bug is assigned to.">
+                        <input type="checkbox" checked="@_personFilterByAuthor" @onchange="TogglePersonFilterMode" />
+                        <span>Match by worklog author</span>
+                    </label>
                     <div class="sb-check-list">
                         @foreach (var name in AllAssignees)
                         {
@@ -175,6 +237,64 @@
                                        @onchange="() => ToggleAssignee(n)" />
                                 <span title="@n">@GetShortName(n)</span>
                             </label>
+                        }
+                    </div>
+                </div>
+
+                <!-- Customer -->
+                <div class="sb-filter-col">
+                    <div class="sb-filter-col-hdr">
+                        <span class="sb-filter-label">Customer</span>
+                        @if (_selectedCustomers.Count > 0)
+                        {
+                            <span class="sb-filter-count">@_selectedCustomers.Count</span>
+                        }
+                        <div class="sb-filter-col-actions">
+                            <button class="sb-filter-clear-link" @onclick="SelectAllCustomers">All</button>
+                            <span class="sb-filter-action-sep">·</span>
+                            <button class="sb-filter-clear-link" @onclick="() => _selectedCustomers.Clear()">None</button>
+                        </div>
+                    </div>
+                    <div class="sb-check-list">
+                        @foreach (var c in AllCustomers)
+                        {
+                            var cust = c;
+                            <label class="sb-check-item">
+                                <input type="checkbox" checked="@(_selectedCustomers.Contains(cust))"
+                                       @onchange="() => ToggleCustomer(cust)" />
+                                <span title="@cust">@cust</span>
+                            </label>
+                        }
+                    </div>
+                </div>
+
+                <!-- Labels -->
+                <div class="sb-filter-col">
+                    <div class="sb-filter-col-hdr">
+                        <span class="sb-filter-label">Labels</span>
+                        @if (_selectedLabels.Count > 0)
+                        {
+                            <span class="sb-filter-count">@_selectedLabels.Count</span>
+                        }
+                        <div class="sb-filter-col-actions">
+                            <button class="sb-filter-clear-link" @onclick="SelectAllLabels">All</button>
+                            <span class="sb-filter-action-sep">·</span>
+                            <button class="sb-filter-clear-link" @onclick="() => _selectedLabels.Clear()">None</button>
+                        </div>
+                    </div>
+                    <div class="sb-check-list">
+                        @foreach (var l in AllLabels)
+                        {
+                            var lbl = l;
+                            <label class="sb-check-item">
+                                <input type="checkbox" checked="@(_selectedLabels.Contains(lbl))"
+                                       @onchange="() => ToggleLabel(lbl)" />
+                                <span title="@lbl">@lbl</span>
+                            </label>
+                        }
+                        @if (!AllLabels.Any())
+                        {
+                            <span class="sb-filter-empty">No labels</span>
                         }
                     </div>
                 </div>
@@ -345,6 +465,9 @@
             </button>
             <button class="sb-tab @(_activeTab == "charts" ? "sb-tab-active" : "")" @onclick="SwitchToChartsTab">
                 Charts
+            </button>
+            <button class="sb-tab @(_activeTab == "breakdowns" ? "sb-tab-active" : "")" @onclick="SwitchToBreakdownsTab">
+                Breakdowns
             </button>
             <button class="sb-tab @(_activeTab == "slas" ? "sb-tab-active" : "")" @onclick="SwitchToSlaTab">
                 SLAs
@@ -1103,6 +1226,81 @@
             </div>
         } <!-- end charts tab -->
 
+        <!-- ═══════════════════ BREAKDOWNS TAB ═══════════════════ -->
+        @if (_activeTab == "breakdowns")
+        {
+            <div class="sb-charts-grid">
+                <div class="sb-chart-card sb-chart-card-wide">
+                    <div class="sb-chart-title">Resolutions per day · @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
+                    <div class="sb-chart-canvas-wrap" style="height:280px">
+                        <canvas id="sb-chart-resolved"></canvas>
+                    </div>
+                </div>
+
+                <div class="sb-chart-card">
+                    <div class="sb-chart-title">By Customer</div>
+                    <div class="sb-table-wrap" style="max-height:360px;overflow:auto">
+                        <table class="sb-table">
+                            <thead>
+                                <tr>
+                                    <th class="sb-th">Customer</th>
+                                    <th class="sb-th sb-th-est">Bugs</th>
+                                    <th class="sb-th sb-th-est">Done</th>
+                                    <th class="sb-th sb-th-est">Logged</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var c in ByCustomer)
+                                {
+                                    <tr class="sb-row">
+                                        <td class="sb-td" style="font-weight:600;color:var(--txt-1)" title="@c.Name">@c.Name</td>
+                                        <td class="sb-td sb-td-est">@c.Total</td>
+                                        <td class="sb-td sb-td-est kpi-green">@c.Done</td>
+                                        <td class="sb-td sb-td-est">@FormatSeconds(c.LoggedSeconds)</td>
+                                    </tr>
+                                }
+                                @if (!ByCustomer.Any())
+                                {
+                                    <tr><td colspan="4" class="sb-td" style="text-align:center;color:var(--txt-3);font-style:italic">No customer data</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="sb-chart-card">
+                    <div class="sb-chart-title">By Label</div>
+                    <div class="sb-table-wrap" style="max-height:360px;overflow:auto">
+                        <table class="sb-table">
+                            <thead>
+                                <tr>
+                                    <th class="sb-th">Label</th>
+                                    <th class="sb-th sb-th-est">Bugs</th>
+                                    <th class="sb-th sb-th-est">Done</th>
+                                    <th class="sb-th sb-th-est">Logged</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var l in ByLabel)
+                                {
+                                    <tr class="sb-row">
+                                        <td class="sb-td" style="font-weight:600;color:var(--txt-1)" title="@l.Name">@l.Name</td>
+                                        <td class="sb-td sb-td-est">@l.Total</td>
+                                        <td class="sb-td sb-td-est kpi-green">@l.Done</td>
+                                        <td class="sb-td sb-td-est">@FormatSeconds(l.LoggedSeconds)</td>
+                                    </tr>
+                                }
+                                @if (!ByLabel.Any())
+                                {
+                                    <tr><td colspan="4" class="sb-td" style="text-align:center;color:var(--txt-3);font-style:italic">No labels</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        } <!-- end breakdowns tab -->
+
         <!-- ═══════════════════ SLAs TAB ═══════════════════ -->
         @if (_activeTab == "slas")
         {
@@ -1637,12 +1835,18 @@
     private Dictionary<string, List<DevPullRequest>?> _ghPrs     = new();
     private HashSet<string>                        _ghPrLoading   = new();
     private HashSet<string>    _selectedAssignees = new();
+    // true  → person filter matches worklog author (Jira worklogAuthor semantics, author-scoped hours)
+    // false → person filter matches the bug's assignee (original behaviour, full bug totals)
+    private bool               _personFilterByAuthor = true;
     private HashSet<string>    _selectedStatuses  = new();
+    private HashSet<string>    _selectedCustomers = new();
+    private HashSet<string>    _selectedLabels    = new();
     private string             _healthFilter      = "all";
     private string             _activeTab            = "bugs";
     private bool               _chartsNeedRender     = false;
     private bool               _slaChartNeedRender   = false;
     private bool               _stripChartsNeedRender = false;
+    private bool               _breakdownsChartNeedRender = false;
     private string             _slaFilter          = "all";
     private string             _priorityFilter     = "all";
     private string             _forecastFilter     = "all";
@@ -1761,16 +1965,39 @@
     private string _jiraBase => Config["Jira:BaseUrl"]?.TrimEnd('/') ?? "";
 
     // ── Computed / Filtered ────────────────────────────────────────────────────
-    private IEnumerable<string> AllAssignees =>
-        _bugs.Select(b => b.Assignee ?? "Unassigned")
-             .Distinct()
-             .OrderBy(a => a);
+    // When matching by worklog author, also surface people who logged time but aren't assignees.
+    private IEnumerable<string> AllAssignees
+    {
+        get
+        {
+            var names = _bugs.Select(b => b.Assignee ?? "Unassigned");
+            if (_personFilterByAuthor)
+                names = names.Concat(_bugs.SelectMany(b => b.Worklogs.Select(w => w.Author)))
+                             .Where(n => !string.IsNullOrWhiteSpace(n));
+            return names.Distinct().OrderBy(a => a);
+        }
+    }
 
     private IEnumerable<string> AllStatuses =>
         _bugs.Select(b => b.Status ?? "—")
              .Where(s => s != "—")
              .Distinct()
              .OrderBy(s => s);
+
+    private const string NoCustomerLabel = "(none)";
+
+    private IEnumerable<string> AllCustomers =>
+        _bugs.Select(b => string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer)
+             .Distinct()
+             .OrderBy(c => c == NoCustomerLabel ? 1 : 0)
+             .ThenBy(c => c);
+
+    private IEnumerable<string> AllLabels =>
+        _bugs.Where(b => b.Labels != null)
+             .SelectMany(b => b.Labels)
+             .Where(l => !string.IsNullOrWhiteSpace(l))
+             .Distinct()
+             .OrderBy(l => l);
 
     private static readonly string[] PriorityOrder = ["Critical", "Highest", "High", "Medium", "Low", "Lowest"];
 
@@ -1798,9 +2025,19 @@
         {
             var q = _bugs.AsEnumerable();
             if (_selectedAssignees.Count > 0)
-                q = q.Where(b => _selectedAssignees.Contains(b.Assignee ?? "Unassigned"));
+                // Author mode: match Jira's worklogAuthor view — include a bug if the selected person is
+                // the assignee OR logged time on it (logged-hours metrics are author-scoped to match).
+                // Assignee mode: original behaviour — match only on who the bug is assigned to.
+                q = _personFilterByAuthor
+                    ? q.Where(b => _selectedAssignees.Contains(b.Assignee ?? "Unassigned")
+                                || b.Worklogs.Any(w => _selectedAssignees.Contains(w.Author)))
+                    : q.Where(b => _selectedAssignees.Contains(b.Assignee ?? "Unassigned"));
             if (_selectedStatuses.Count > 0)
                 q = q.Where(b => _selectedStatuses.Contains(b.Status ?? ""));
+            if (_selectedCustomers.Count > 0)
+                q = q.Where(b => _selectedCustomers.Contains(string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer));
+            if (_selectedLabels.Count > 0)
+                q = q.Where(b => b.Labels != null && b.Labels.Any(l => _selectedLabels.Contains(l)));
             if (_healthFilter != "all")
                 q = q.Where(b => GetHealth(b) == _healthFilter);
             if (_priorityFilter != "all")
@@ -1882,17 +2119,26 @@
     private int    OnHoldCount          => FilteredBugs.Count(b => string.Equals(b.Status, "on hold", StringComparison.OrdinalIgnoreCase));
     private int    StaleCount           => FilteredBugs.Count(b => IsStale(b));
     private int    TotalSprintSeconds   => FilteredBugs.Sum(b => GetSprintTimeSeconds(b));
-    private int    TotalLoggedSeconds   => FilteredBugs.Sum(b => b.TimeSpentSeconds);
+    private int    TotalLoggedSeconds   => FilteredBugs.Sum(b => GetTotalTimeSeconds(b));
     private int    TotalRemainingSeconds => FilteredBugs.Where(b => !IsDone(b)).Sum(b => b.ComputedRemainingSeconds);
     private int    OpenCount            => FilteredBugs.Count(b => !IsDone(b));
-    private int    SprintWorklogCount   => FilteredBugs.Sum(b => b.Worklogs.Count(IsInSprintPeriod));
+    private int    SprintWorklogCount   => FilteredBugs.Sum(b => b.Worklogs.Count(w => IsInSprintPeriod(w) && AuthorIncluded(w)));
     private int    BugsNoTimeOpen       => FilteredBugs.Count(b => !IsDone(b) && b.TimeSpentSeconds == 0);
+    private int    StartedAndClosedCount => FilteredBugs.Count(b => IsDone(b) && StartedThisSprint(b));
+
+    // First worklog falls within the sprint window → work was picked up this sprint.
+    private bool StartedThisSprint(SprintIssue b)
+    {
+        if (b.Worklogs.Count == 0) return false;
+        var first = DateOnly.FromDateTime(b.Worklogs.Min(w => w.Started));
+        return first >= _sprintStart && first <= _sprintEnd;
+    }
     private int AvgLoggedPerBugSeconds
     {
         get
         {
-            var bugs = FilteredBugs.Where(b => b.TimeSpentSeconds > 0).ToList();
-            return bugs.Count > 0 ? (int)bugs.Average(b => b.TimeSpentSeconds) : 0;
+            var bugs = FilteredBugs.Where(b => GetTotalTimeSeconds(b) > 0).ToList();
+            return bugs.Count > 0 ? (int)bugs.Average(b => (double)GetTotalTimeSeconds(b)) : 0;
         }
     }
     private int AvgSprintPerBugSeconds
@@ -1911,6 +2157,84 @@
             return open.Count == 0 ? 0 : open.Average(b => (DateTime.Today - b.Created!.Value.Date).TotalDays);
         }
     }
+    // True when the bug was resolved within the sprint window (Sprint Start → Sprint End).
+    private bool ResolvedInSprint(SprintIssue b)
+        => b.ResolutionDate.HasValue
+           && DateOnly.FromDateTime(b.ResolutionDate.Value) >= _sprintStart
+           && DateOnly.FromDateTime(b.ResolutionDate.Value) <= _sprintEnd;
+
+    // Average create → resolve time across bugs resolved within the sprint window.
+    private List<SprintIssue> ResolvedWithDates =>
+        FilteredBugs.Where(b => IsDone(b) && b.Created.HasValue && ResolvedInSprint(b)).ToList();
+    private double AvgResolutionDays
+    {
+        get
+        {
+            var resolved = ResolvedWithDates;
+            return resolved.Count == 0 ? 0 : resolved.Average(b => (b.ResolutionDate!.Value.Date - b.Created!.Value.Date).TotalDays);
+        }
+    }
+    private int AvgResolutionCount => ResolvedWithDates.Count;
+
+    // Logged worklog effort from the first "Dev Ready" transition until resolution,
+    // across bugs resolved within the sprint window that have both timestamps.
+    private List<SprintIssue> DevReadyResolved =>
+        FilteredBugs.Where(b => IsDone(b) && b.DevReadyDate.HasValue && ResolvedInSprint(b)
+                             && b.ResolutionDate!.Value > b.DevReadyDate.Value).ToList();
+    // Worklog seconds logged on the bug between two instants (inclusive), scoped to the active person filter.
+    private int WorklogSecondsBetween(SprintIssue b, DateTime from, DateTime to)
+        => b.Worklogs.Where(w => w.Started >= from && w.Started <= to && AuthorIncluded(w)).Sum(w => w.TimeSpentSeconds);
+
+    private double AvgDevReadyToDoneHours
+    {
+        get
+        {
+            var list = DevReadyResolved;
+            return list.Count == 0 ? 0
+                : list.Average(b => WorklogSecondsBetween(b, b.DevReadyDate!.Value, b.ResolutionDate!.Value) / 3600.0);
+        }
+    }
+    private int AvgDevReadyToDoneCount => DevReadyResolved.Count;
+
+    // ── Sprint-flow KPIs (Closed / Added / Daily burn) ──
+    private int ClosedThisSprintCount => FilteredBugs.Count(b => IsDone(b) && ResolvedInSprint(b));
+    private int AddedToSprintCount    => FilteredBugs.Count(b => b.Created.HasValue
+        && DateOnly.FromDateTime(b.Created.Value) >= _sprintStart
+        && DateOnly.FromDateTime(b.Created.Value) <= _sprintEnd);
+
+    private static int CountWeekdays(DateOnly from, DateOnly to)
+    {
+        if (to < from) return 0;
+        int n = 0;
+        for (var d = from; d <= to; d = d.AddDays(1))
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday) n++;
+        return n;
+    }
+    private int TotalWeekdays => CountWeekdays(_sprintStart, _sprintEnd);
+    private int WeekdaysElapsed
+    {
+        get
+        {
+            var today = DateOnly.FromDateTime(DateTime.Today);
+            var end = today < _sprintEnd ? today : _sprintEnd;
+            return end < _sprintStart ? 0 : CountWeekdays(_sprintStart, end);
+        }
+    }
+    private double DailyBurnHours => WeekdaysElapsed <= 0 ? 0 : TotalSprintSeconds / 3600.0 / WeekdaysElapsed;
+
+    // ── Breakdowns (By customer / By label) over the current filter ──
+    private record BreakdownRow(string Name, int Total, int Done, int LoggedSeconds);
+    private IEnumerable<BreakdownRow> ByCustomer =>
+        FilteredBugs.Where(b => !string.IsNullOrWhiteSpace(b.Customer))
+                    .GroupBy(b => b.Customer)
+                    .Select(g => new BreakdownRow(g.Key, g.Count(), g.Count(IsDone), g.Sum(b => b.TimeSpentSeconds)))
+                    .OrderByDescending(r => r.Total).ThenByDescending(r => r.LoggedSeconds);
+    private IEnumerable<BreakdownRow> ByLabel =>
+        FilteredBugs.SelectMany(b => (b.Labels ?? new()).Select(l => (Label: l, Bug: b)))
+                    .Where(x => !string.IsNullOrWhiteSpace(x.Label))
+                    .GroupBy(x => x.Label)
+                    .Select(g => new BreakdownRow(g.Key, g.Count(), g.Count(x => IsDone(x.Bug)), g.Sum(x => x.Bug.TimeSpentSeconds)))
+                    .OrderByDescending(r => r.Total).ThenByDescending(r => r.LoggedSeconds);
 
     // ── Assignee Summary ───────────────────────────────────────────────────────
     private string AssigneeSummarySubtitle
@@ -2071,6 +2395,7 @@
 
     // ── Filter helpers ─────────────────────────────────────────────────────────
     private bool IsFiltered => _selectedAssignees.Count > 0 || _selectedStatuses.Count > 0
+        || _selectedCustomers.Count > 0 || _selectedLabels.Count > 0
         || _healthFilter != "all" || _priorityFilter != "all" || _forecastFilter != "all"
         || !string.IsNullOrWhiteSpace(_keyTitleFilter)
         || _dueDateFrom.HasValue || _dueDateTo.HasValue
@@ -2083,6 +2408,8 @@
             int n = 0;
             if (_selectedAssignees.Count > 0)                    n++;
             if (_selectedStatuses.Count > 0)                     n++;
+            if (_selectedCustomers.Count > 0)                    n++;
+            if (_selectedLabels.Count > 0)                       n++;
             if (_healthFilter   != "all")                        n++;
             if (_priorityFilter != "all")                        n++;
             if (_forecastFilter != "all")                        n++;
@@ -2101,6 +2428,8 @@
     {
         _selectedAssignees.Clear();
         _selectedStatuses.Clear();
+        _selectedCustomers.Clear();
+        _selectedLabels.Clear();
         _healthFilter   = "all";
         _priorityFilter = "all";
         _forecastFilter = "all";
@@ -2124,6 +2453,8 @@
         _expandedKeys.Clear();
         _selectedAssignees.Clear();
         _selectedStatuses.Clear();
+        _selectedCustomers.Clear();
+        _selectedLabels.Clear();
         _healthFilter = "all";
         _dueDateFrom  = null;
         _dueDateTo    = null;
@@ -2133,7 +2464,9 @@
 
         try
         {
-            var epicTask     = JiraService.GetEpicBugsAsync(key);
+            // bugsOnly: false → include every child type (Stories, Tasks, Sub-tasks) under the
+            // epic, matching a Jira "parent = EPIC" worklog total so logged hours reconcile.
+            var epicTask     = JiraService.GetEpicBugsAsync(key, bugsOnly: false);
             var priorityTask = JiraService.GetPriorityBugsAsync();
             await Task.WhenAll(epicTask, priorityTask);
 
@@ -2143,6 +2476,7 @@
             _chartsNeedRender      = true;
             _slaChartNeedRender    = true;
             _stripChartsNeedRender = true;
+            _breakdownsChartNeedRender = true;
         }
         catch (Exception ex)
         {
@@ -2372,12 +2706,21 @@
     // ── Worklogs ───────────────────────────────────────────────────────────────
     private int GetSprintTimeSeconds(SprintIssue b)
     {
-        return b.Worklogs.Where(IsInSprintPeriod).Sum(w => w.TimeSpentSeconds);
+        return b.Worklogs.Where(w => IsInSprintPeriod(w) && AuthorIncluded(w)).Sum(w => w.TimeSpentSeconds);
+    }
+
+    // Total logged scoped to the active person filter: the bug's full logged time when no person is
+    // selected, otherwise only the selected people's worklogs (matches Jira's worklogAuthor total).
+    private int GetTotalTimeSeconds(SprintIssue b)
+    {
+        return (!_personFilterByAuthor || _selectedAssignees.Count == 0)
+            ? b.TimeSpentSeconds
+            : b.Worklogs.Where(AuthorIncluded).Sum(w => w.TimeSpentSeconds);
     }
 
     private List<WorklogEntry> GetSprintWorklogs(SprintIssue b)
     {
-        return b.Worklogs.Where(IsInSprintPeriod).OrderByDescending(w => w.Started).ToList();
+        return b.Worklogs.Where(w => IsInSprintPeriod(w) && AuthorIncluded(w)).OrderByDescending(w => w.Started).ToList();
     }
 
     private bool IsInSprintPeriod(WorklogEntry w)
@@ -2385,6 +2728,11 @@
         var d = DateOnly.FromDateTime(w.Started);
         return d >= _sprintStart && d <= _sprintEnd;
     }
+
+    // A worklog counts toward logged-time metrics when no person filter is active, or when its author
+    // is one of the selected people. Keeps "Sprint Logged"/"Total Logged" aligned with the filter.
+    private bool AuthorIncluded(WorklogEntry w) =>
+        !_personFilterByAuthor || _selectedAssignees.Count == 0 || _selectedAssignees.Contains(w.Author);
 
     private static DateTime? GetLastActivity(SprintIssue b) =>
         b.Worklogs.Count > 0 ? b.Worklogs.Max(w => w.Started) : null;
@@ -2399,13 +2747,29 @@
         if (!_selectedAssignees.Remove(name)) _selectedAssignees.Add(name);
     }
 
+    // Switch the person filter between worklog-author and assignee matching. Selections are kept —
+    // a person can be valid in both modes; only the matching/attribution rules change.
+    private void TogglePersonFilterMode() => _personFilterByAuthor = !_personFilterByAuthor;
+
     private void ToggleStatus(string status)
     {
         if (!_selectedStatuses.Remove(status)) _selectedStatuses.Add(status);
     }
 
+    private void ToggleCustomer(string customer)
+    {
+        if (!_selectedCustomers.Remove(customer)) _selectedCustomers.Add(customer);
+    }
+
+    private void ToggleLabel(string label)
+    {
+        if (!_selectedLabels.Remove(label)) _selectedLabels.Add(label);
+    }
+
     private void SelectAllAssignees() => _selectedAssignees = new HashSet<string>(AllAssignees);
     private void SelectAllStatuses()  => _selectedStatuses  = new HashSet<string>(AllStatuses);
+    private void SelectAllCustomers() => _selectedCustomers = new HashSet<string>(AllCustomers);
+    private void SelectAllLabels()    => _selectedLabels    = new HashSet<string>(AllLabels);
 
     private static string GetShortName(string name)
     {
@@ -2598,6 +2962,46 @@
         _chartsNeedRender = true;
     }
 
+    private void SwitchToBreakdownsTab()
+    {
+        _activeTab = "breakdowns";
+        _breakdownsChartNeedRender = true;
+    }
+
+    private async Task RenderBreakdownsChartAsync()
+    {
+        await JS.InvokeVoidAsync("destroyChart", "sb-chart-resolved");
+
+        var days = Enumerable.Range(0, Math.Max(1, _sprintEnd.DayNumber - _sprintStart.DayNumber + 1))
+                             .Select(i => _sprintStart.AddDays(i)).ToList();
+        var labels   = days.Select(d => d.ToString("MMM d")).ToArray();
+        var resolved = days.Select(d => FilteredBugs.Count(b =>
+                            b.ResolutionDate.HasValue && DateOnly.FromDateTime(b.ResolutionDate.Value) == d)).ToArray();
+
+        await JS.InvokeVoidAsync("renderChart", "sb-chart-resolved", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels,
+                datasets = new[] { new
+                {
+                    label = "Resolved",
+                    data = resolved,
+                    backgroundColor = "#16a34a",
+                    borderRadius = 3
+                }}
+            },
+            options = new
+            {
+                responsive = true,
+                maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales = new { y = new { beginAtZero = true, ticks = new { precision = 0 } } }
+            }
+        });
+    }
+
     protected override async Task OnInitializedAsync()
     {
         var current = await SprintConfigService.GetCurrentAsync();
@@ -2622,6 +3026,12 @@
         {
             _chartsNeedRender = false;
             await RenderChartsAsync();
+        }
+
+        if (_breakdownsChartNeedRender && _activeTab == "breakdowns" && _bugs.Count > 0)
+        {
+            _breakdownsChartNeedRender = false;
+            await RenderBreakdownsChartAsync();
         }
 
         if (_slaChartNeedRender && _activeTab == "slas" && _bugs.Count > 0)
@@ -3153,15 +3563,26 @@
     /* ── Checkbox+date-range grid (top row) ──────────────────────── */
     .sb-filter-grid {
         display: grid;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
         gap: 0;
     }
 
     .sb-filter-col {
         padding: 12px 16px 14px;
         border-right: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
     }
-    .sb-filter-col:last-child { border-right: none; }
+    /* no right border at the end of each row of 3 */
+    .sb-filter-col:nth-child(3n) { border-right: none; }
+    /* no bottom border on the last row */
+    .sb-filter-col:nth-last-child(-n+3) { border-bottom: none; }
+
+    .sb-filter-empty {
+        font-size: 12px;
+        color: var(--txt-3);
+        font-style: italic;
+        padding: 4px 0;
+    }
 
     .sb-filter-col-hdr {
         display: flex;
@@ -3199,6 +3620,18 @@
     }
 
     .sb-section-clear { margin-left: auto; }
+
+    .sb-person-mode {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--txt-2);
+        cursor: pointer;
+        margin: 2px 0 8px;
+        user-select: none;
+    }
+    .sb-person-mode input { cursor: pointer; }
 
     .sb-check-list {
         display: flex;

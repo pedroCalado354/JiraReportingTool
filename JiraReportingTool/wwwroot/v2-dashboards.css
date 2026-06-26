@@ -626,6 +626,12 @@ th.v2-sort-desc::after { content: " ▼"; font-size: 9px; opacity: 0.6; }
 .v2-row-label { color: var(--v2-ink-3); font-size: 12px; }
 .v2-row-value { font-weight: 600; color: var(--v2-ink-1); font-variant-numeric: tabular-nums; }
 
+/* Compact epic card: tighter padding + side-by-side hours blocks */
+.v2-card-epic { padding: 14px 16px; }
+.v2-hours-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 20px; align-items: start; }
+.v2-hours-grid .v2-row { padding: 3px 0; }
+@media (max-width: 720px) { .v2-hours-grid { grid-template-columns: 1fr; } }
+
 /* ── Layout grids ── */
 .v2-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .v2-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }

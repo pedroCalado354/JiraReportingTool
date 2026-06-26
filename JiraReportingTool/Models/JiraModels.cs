@@ -30,6 +30,10 @@ public class WorklogEntry
     public int? SprintIssueId { get; set; }
 
     public string Author { get; set; } = "";
+    /// <summary>Jira accountId of the worklog author — the stable identifier Jira matches on.</summary>
+    public string AuthorAccountId { get; set; } = "";
+    /// <summary>Worklog author email, when Jira privacy settings expose it (may be empty).</summary>
+    public string AuthorEmail { get; set; } = "";
     public string TimeSpent { get; set; } = "";
     public int TimeSpentSeconds { get; set; }
     public string Comment { get; set; } = "";
@@ -182,6 +186,10 @@ public class SprintIssue
     [NotMapped] public string    JiraId          { get; set; } = "";
     [NotMapped] public string    Customer        { get; set; } = "";
     [NotMapped] public DateTime? PrioListDate    { get; set; }
+    /// <summary>First time the issue transitioned into the "Dev Ready" status (from changelog). Not persisted.</summary>
+    [NotMapped] public DateTime? DevReadyDate    { get; set; }
+    /// <summary>First time the issue transitioned into the "QA Ready" status (from changelog). Not persisted.</summary>
+    [NotMapped] public DateTime? QaReadyDate     { get; set; }
 
     [NotMapped] public int DaysSinceLastWorklog => Worklogs.Any()
         ? Math.Max(0, (int)(DateTime.Today - Worklogs.Max(w => w.Started).Date).TotalDays)

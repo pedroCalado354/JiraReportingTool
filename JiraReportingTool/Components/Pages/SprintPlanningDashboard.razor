@@ -12,6 +12,17 @@
 
 <div class="spd-root">
 
+    <!-- ═══ GLOBAL BUSY OVERLAY ═══════════════════════════════════════ -->
+    @if (_busyMessage is not null)
+    {
+        <div class="spd-busy-overlay">
+            <div class="spd-busy-card">
+                <div class="spd-busy-spinner"></div>
+                <span class="spd-busy-text">@_busyMessage</span>
+            </div>
+        </div>
+    }
+
     <!-- ═══ HEADER ════════════════════════════════════════════════════ -->
     <div class="spd-header">
         <div class="spd-title-block">
@@ -158,7 +169,9 @@
             <div class="stat-label">Missing Est.</div>
             <div class="stat-sub">active, no remaining est.</div>
         </div>
-        <div class="stat-card @(SupportBugAllocatedHours > 0 ? "stat-red" : "")">
+        <div class="stat-card stat-clickable @(SupportBugAllocatedHours > 0 ? "stat-red" : "")"
+             @onclick="OpenSupportBugDetail"
+             title="Click for the per-team support-bug split and solvable-ticket estimate">
             <div class="stat-value">@(SupportBugAllocatedHours > 0 ? $"{SupportBugAllocatedHours:0.#}h" : "—")</div>
             <div class="stat-label">Bug Hours</div>
             <div class="stat-sub">allocated for support bugs</div>
@@ -175,7 +188,10 @@
                 var capH   = GetTeamCapacityHours(team);
                 var allocH = GetTeamAllocatedHours(team);
                 var pct    = capH > 0m ? (double)(allocH / capH * 100m) : 0.0;
-                <div class="cap-team @GetCapacityLoadClass(pct)" title="@team — @($"{allocH:0.#}h allocated of {capH:0.#}h capacity ({pct:0}%)")">
+                var teamName = team;
+                <div class="cap-team cap-team-clickable @GetCapacityLoadClass(pct)"
+                     @onclick="() => OpenTeamLoadDetail(teamName)"
+                     title="@team — @($"{allocH:0.#}h allocated of {capH:0.#}h capacity ({pct:0}%)") · click for breakdown">
                     <div class="cap-team-top">
                         <span class="cap-team-name">@team</span>
                         <span class="cap-team-pct">@($"{pct:0}%")</span>
@@ -1055,9 +1071,13 @@
                                             var bMem        = mem;
                                             var totalPlanned = GetSupportBugPlannedHoursInRange(bMem.Id, SprintStart, SprintEnd);
                                             var totalLogged  = GetSupportBugLoggedSecondsInRange(bMem.Name, SprintStart, SprintEnd);
+                                            var bugIsExpanded = _expandedBugMembers.Contains(bMem.Id);
                                             <tr class="bugs-tr">
                                                 <td class="bugs-td bugs-td-member">
-                                                    @bMem.Name
+                                                    <button class="bugs-member-toggle" @onclick="() => ToggleBugMemberDetail(bMem.Id)" title="Show which support bugs were logged">
+                                                        <span class="bugs-caret">@(bugIsExpanded ? "▾" : "▸")</span>
+                                                        @bMem.Name
+                                                    </button>
                                                 </td>
                                                 @foreach (var wk in bugWeeks)
                                                 {
@@ -1087,6 +1107,52 @@
                                                     </div>
                                                 </td>
                                             </tr>
+                                            @if (bugIsExpanded)
+                                            {
+                                                var bugLog = GetSupportBugLogBreakdown(bMem.Name, SprintStart, SprintEnd);
+                                                <tr class="bugs-detail-row">
+                                                    <td colspan="@(bugWeeks.Count + 2)" class="bugs-detail-cell">
+                                                        @if (bugLog.Count == 0)
+                                                        {
+                                                            <div class="bugs-detail-empty">No support-bug worklogs matched <strong>@bMem.Name</strong> in this sprint window. If Jira shows hours, the worklog author name may not match the roster name.</div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <table class="bugs-detail-table">
+                                                                <thead>
+                                                                    <tr>
+                                                                        <th>Issue</th>
+                                                                        <th>Summary</th>
+                                                                        <th class="bugs-detail-num">Worklogs</th>
+                                                                        <th class="bugs-detail-num">Logged</th>
+                                                                        <th class="bugs-detail-num">Last activity</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    @foreach (var bl in bugLog)
+                                                                    {
+                                                                        <tr>
+                                                                            <td><a href="@JiraBrowseUrl(bl.Key)" target="_blank">@bl.Key ↗</a></td>
+                                                                            <td class="bugs-detail-summary">@bl.Summary</td>
+                                                                            <td class="bugs-detail-num">@bl.Worklogs</td>
+                                                                            <td class="bugs-detail-num">@FmtSec(bl.Seconds)</td>
+                                                                            <td class="bugs-detail-num">@bl.LastActivity.ToString("dd MMM, HH:mm")</td>
+                                                                        </tr>
+                                                                    }
+                                                                </tbody>
+                                                                <tfoot>
+                                                                    <tr>
+                                                                        <td colspan="2">@bugLog.Count issue(s)</td>
+                                                                        <td class="bugs-detail-num">@bugLog.Sum(b => b.Worklogs)</td>
+                                                                        <td class="bugs-detail-num">@FmtSec(bugLog.Sum(b => b.Seconds))</td>
+                                                                        <td></td>
+                                                                    </tr>
+                                                                </tfoot>
+                                                            </table>
+                                                        }
+                                                    </td>
+                                                </tr>
+                                            }
                                         }
                                     }
                                 }
@@ -1423,6 +1489,139 @@
         </div>
     }
 
+    @if (_teamLoadDetail is not null)
+    {
+        var tlTeam  = _teamLoadDetail;
+        var tlCap   = GetTeamCapacityHours(tlTeam);
+        var tlAlloc = GetTeamAllocatedHours(tlTeam);
+        var tlPct   = tlCap > 0m ? (double)(tlAlloc / tlCap * 100m) : 0.0;
+        var tlRows  = GetTeamTaskBreakdown(tlTeam);
+        <div class="modal-backdrop" @onclick="CloseTeamLoadDetail"></div>
+        <div class="modal-dialog modal-dialog-lg">
+            <div class="modal-header-row">
+                <span class="modal-title">@tlTeam — Load Breakdown</span>
+                <button class="modal-close-btn" @onclick="CloseTeamLoadDetail">✕</button>
+            </div>
+            <div class="tld-summary @GetCapacityLoadClass(tlPct)">
+                <span class="tld-summary-pct">@($"{tlPct:0}%")</span>
+                <span class="tld-summary-hrs">@($"{tlAlloc:0.#}h allocated of {tlCap:0.#}h capacity") · @GetTeamMemberCount(tlTeam) ppl</span>
+            </div>
+            @if (tlRows.Count == 0)
+            {
+                <p class="modal-body">No work allocated to this team in the current sprint window.</p>
+            }
+            else
+            {
+                <div class="removal-logs-wrap">
+                    <table class="removal-logs-table tld-table">
+                        <thead>
+                            <tr>
+                                <th>Task</th>
+                                <th class="tld-num">Hours</th>
+                                <th class="tld-num">% of capacity</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var r in tlRows)
+                            {
+                                var rowPct = tlCap > 0m ? (double)(r.Hours / tlCap * 100m) : 0.0;
+                                <tr>
+                                    <td class="rl-task">
+                                        <span class="tld-type-dot @(r.IsCustom ? "tld-dot-custom" : "tld-dot-jira")"></span>
+                                        @r.Label
+                                    </td>
+                                    <td class="tld-num">@($"{r.Hours:0.#}h")</td>
+                                    <td class="tld-num">@($"{rowPct:0.#}%")</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+            <div class="modal-actions">
+                <button class="btn" @onclick="CloseTeamLoadDetail">Close</button>
+            </div>
+        </div>
+    }
+
+    @if (_supportBugDetail)
+    {
+        var sbTotal = SupportBugAllocatedHours;
+        var sbAvg   = _bugAvgHours > 0m ? _bugAvgHours : 5m;
+        var sbTeams = GetAllTeams()
+            .Select(t => new { Team = t, Hours = GetTeamSupportBugHours(t) })
+            .Where(x => x.Hours > 0m)
+            .OrderByDescending(x => x.Hours)
+            .ToList();
+        // QA only validates support bugs — it doesn't fix them — so QA hours are
+        // excluded from the "tickets solvable" estimate (still shown as allocated).
+        var sbSolvableHours   = sbTeams.Where(x => !IsQaTeam(x.Team)).Sum(x => x.Hours);
+        var sbSolvableTickets = sbAvg > 0m ? sbSolvableHours / sbAvg : 0m;
+        <div class="modal-backdrop" @onclick="CloseSupportBugDetail"></div>
+        <div class="modal-dialog modal-dialog-lg">
+            <div class="modal-header-row">
+                <span class="modal-title">Support Bug Allocation — Team Split</span>
+                <button class="modal-close-btn" @onclick="CloseSupportBugDetail">✕</button>
+            </div>
+            <div class="tld-summary">
+                <span class="tld-summary-pct">@($"{sbTotal:0.#}h")</span>
+                <span class="tld-summary-hrs">allocated to support bugs this sprint · ≈ @($"{sbSolvableTickets:0.#}") solvable tickets at @($"{sbAvg:0.#}h")/bug <span class="sb-qa-note">(QA hours excluded — QA validates, doesn't fix)</span></span>
+            </div>
+            <div class="sb-avg-row">
+                <label class="sb-avg-label">Avg hours per bug</label>
+                <input type="number" min="0.5" step="0.5" class="input sb-avg-input"
+                       @bind="_bugAvgHours" @bind:event="oninput" />
+                <span class="sb-avg-hint">tickets solvable = dev/team hours ÷ avg (QA excluded)</span>
+            </div>
+            @if (sbTeams.Count == 0)
+            {
+                <p class="modal-body">No support-bug hours allocated to any team in the current sprint window.</p>
+            }
+            else
+            {
+                <div class="removal-logs-wrap">
+                    <table class="removal-logs-table tld-table">
+                        <thead>
+                            <tr>
+                                <th>Team</th>
+                                <th class="tld-num">Hours</th>
+                                <th class="tld-num">% of support bugs</th>
+                                <th class="tld-num">Tickets @@ @($"{sbAvg:0.#}h")</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in sbTeams)
+                            {
+                                var rowPct  = sbTotal > 0m ? (double)(row.Hours / sbTotal * 100m) : 0.0;
+                                var tickets = sbAvg > 0m ? row.Hours / sbAvg : 0m;
+                                <tr>
+                                    <td class="rl-task">
+                                        <span class="tld-type-dot tld-dot-custom"></span>
+                                        @row.Team
+                                    </td>
+                                    <td class="tld-num">@($"{row.Hours:0.#}h")</td>
+                                    <td class="tld-num">@($"{rowPct:0.#}%")</td>
+                                    <td class="tld-num">@(IsQaTeam(row.Team) ? "— validates" : $"{tickets:0.#}")</td>
+                                </tr>
+                            }
+                        </tbody>
+                        <tfoot>
+                            <tr class="sb-total-row">
+                                <td>Total</td>
+                                <td class="tld-num">@($"{sbTotal:0.#}h")</td>
+                                <td class="tld-num">100%</td>
+                                <td class="tld-num">@($"{sbSolvableTickets:0.#}")</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            }
+            <div class="modal-actions">
+                <button class="btn" @onclick="CloseSupportBugDetail">Close</button>
+            </div>
+        </div>
+    }
+
     @if (_detailTaskId.HasValue)
     {
         var dtId      = _detailTaskId.Value;
@@ -1581,6 +1780,16 @@
     private Dictionary<string, SprintIssue> _supportBugIssues = new(StringComparer.OrdinalIgnoreCase);
     private Dictionary<string, List<SprintIssue>> _featureBugIssuesByEpic = new(StringComparer.OrdinalIgnoreCase);
 
+    // Members expanded in the Support Bugs table to show their per-issue worklog drill-down.
+    private HashSet<Guid> _expandedBugMembers = new();
+    private void ToggleBugMemberDetail(Guid memberId)
+    {
+        if (!_expandedBugMembers.Add(memberId)) _expandedBugMembers.Remove(memberId);
+    }
+
+    // One row per support-bug issue a member logged time on, within [from, to].
+    private sealed record BugLogRow(string Key, string Summary, int Seconds, int Worklogs, DateTime LastActivity);
+
     private List<TaskAllocation> Allocations { get; set; } = new();
     private Dictionary<int, SprintIssue> _taskCache = new();
     // Fallback labels loaded from persisted SprintPlanAllocation.TaskLabel when _taskCache misses.
@@ -1678,6 +1887,26 @@
     private NoEstimatePending? _noEstimatePending;
     private string  _noEstimateHoursInput = "";
     private string? _noEstimateError      = null;
+
+    // ── Global busy overlay ── (null = idle; otherwise the message shown over a dimmed page)
+    private string? _busyMessage = "Loading sprint planner…";
+
+    // Shows the blocking overlay with <message>, paints it, runs <work>, then clears it.
+    // The StateHasChanged + Task.Yield pair forces the overlay to render before <work>
+    // begins, even when the work is fast/synchronous (cache hits) and wouldn't otherwise yield.
+    private async Task RunBusyAsync(string message, Func<Task> work)
+    {
+        _busyMessage = message;
+        StateHasChanged();
+        await Task.Yield();
+        try { await work(); }
+        finally { _busyMessage = null; }
+    }
+
+    // ── Team Load breakdown dialog ── (null = closed; otherwise the team name)
+    private string? _teamLoadDetail = null;
+    private bool _supportBugDetail = false;
+    private decimal _bugAvgHours = 5m;
 
     // ── Removal logs dialog ──
     private bool                       _showRemovalLogsDialog = false;
@@ -1976,6 +2205,24 @@
         return words.Any(w => string.Equals(w, memberName, StringComparison.OrdinalIgnoreCase));
     }
 
+    // Decides whether a worklog belongs to a roster member, in priority order:
+    //   1. Jira accountId   — exact, the identifier Jira itself matches on (most reliable)
+    //   2. Email            — exact, when the roster and the worklog author both expose it
+    //   3. Display-name heuristic — legacy fallback for members with no Jira id configured
+    // The strong identifiers only short-circuit when BOTH sides have a value to compare, so a
+    // member with an accountId set still matches name-only worklogs (e.g. older index data).
+    private bool WorklogByMember(WorklogEntry w, string memberName)
+    {
+        if (_rosterByName.TryGetValue(memberName, out var r))
+        {
+            if (!string.IsNullOrWhiteSpace(r.JiraAccountId) && !string.IsNullOrWhiteSpace(w.AuthorAccountId))
+                return string.Equals(r.JiraAccountId, w.AuthorAccountId, StringComparison.OrdinalIgnoreCase);
+            if (!string.IsNullOrWhiteSpace(r.JiraEmail) && !string.IsNullOrWhiteSpace(w.AuthorEmail))
+                return string.Equals(r.JiraEmail, w.AuthorEmail, StringComparison.OrdinalIgnoreCase);
+        }
+        return AuthorMatchesMember(w.Author, memberName);
+    }
+
     private static string FmtSec(int seconds)
     {
         if (seconds == 0) return "0h";
@@ -2000,10 +2247,14 @@
         SprintEndDateTime   = DateTime.Today.AddDays(13);
         ApplySprintRange();
 
-        await LoadRosterAsync();
-        _savedPlans   = await PlanService.GetAllAsync();
-        await LoadSharedHolidaysAsync();
-        _customTaskTemplates = await RosterService.GetActiveCustomTaskTemplatesAsync();
+        try
+        {
+            await LoadRosterAsync();
+            _savedPlans   = await PlanService.GetAllAsync();
+            await LoadSharedHolidaysAsync();
+            _customTaskTemplates = await RosterService.GetActiveCustomTaskTemplatesAsync();
+        }
+        finally { _busyMessage = null; }
     }
 
     private async Task LoadSharedHolidaysAsync()
@@ -2013,9 +2264,16 @@
     }
 
     // Loads the editable roster from the DB and rebuilds the in-memory member list + capacity map.
+    // Roster keyed by member name → used to resolve a member's Jira identity (accountId/email)
+    // when matching worklog authors. Rebuilt whenever the roster reloads.
+    private Dictionary<string, RosterMember> _rosterByName = new(StringComparer.OrdinalIgnoreCase);
+
     private async Task LoadRosterAsync()
     {
         _allRoster = await RosterService.GetAllAsync();   // includes inactive members
+        _rosterByName = _allRoster
+            .GroupBy(r => r.Name, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.OrdinalIgnoreCase);
 
         // Capacity is resolved for EVERYONE (active or not) so old plans render correct hours.
         _memberHours = new();
@@ -2112,7 +2370,7 @@
         var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
         tasks = tasks.Where(g=> g.IssueType != "Bug").ToList();
 
-        foreach (var t in tasks) _taskCache[t.Id] = t;
+        foreach (var t in tasks) { AssignStableTaskId(t); _taskCache[t.Id] = t; }
 
         LoadedEpics[key].Tasks     = tasks;
         LoadedEpics[key].IsLoading = false;
@@ -2143,7 +2401,7 @@
         LoadedEpics[key] = new EpicLoadState { EpicKey = key, IsLoading = true };
         var report = await JiraService.GetEpicReportAsync(key);
         var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
-        foreach (var t in tasks) _taskCache[t.Id] = t;
+        foreach (var t in tasks) { AssignStableTaskId(t); _taskCache[t.Id] = t; }
         LoadedEpics[key].Tasks     = tasks;
         LoadedEpics[key].IsLoading = false;
     }
@@ -2156,6 +2414,19 @@
              .Select(k => k.Trim().ToUpperInvariant())
              .Where(k => k.Length > 0)
              .Distinct();
+
+    // Jira issues are fetched with Id == 0 (the EF PK default). The planner keys tasks,
+    // allocations and calendar blocks by this int Id, so leaving every loaded task at 0
+    // makes them collide — GetAllTasks() collapses them and the calendar shows only the
+    // most-recently-loaded one (e.g. JM-12452 "turning into" JM-14513). Stamp each task
+    // with its numeric Jira id: unique, positive (custom tasks use negative ids) and stable
+    // across reloads so persisted allocations keep matching.
+    private static void AssignStableTaskId(SprintIssue t)
+    {
+        if (t.Id != 0 || string.IsNullOrEmpty(t.JiraId)) return;
+        if (long.TryParse(t.JiraId, out var jid) && jid > 0)
+            t.Id = jid <= int.MaxValue ? (int)jid : (int)(jid % int.MaxValue) + 1;
+    }
 
     private async Task LoadTasks()
     {
@@ -2178,6 +2449,7 @@
             foreach (var t in found)
             {
                 if (string.IsNullOrEmpty(t.Key)) continue;
+                AssignStableTaskId(t);
                 _taskCache[t.Id] = t;
                 LoadedTasks[t.Key] = t;
             }
@@ -2219,6 +2491,7 @@
             foreach (var t in report?.Issues ?? new List<SprintIssue>())
             {
                 if (string.IsNullOrEmpty(t.Key)) continue;
+                AssignStableTaskId(t);
                 _taskCache[t.Id] = t;
                 LoadedTasks[t.Key] = t;
             }
@@ -2243,13 +2516,15 @@
 
         try
         {
-            var bugReport = await JiraService.GetEpicBugsAsync(key);
+            // All issue types under the epic (not just Bugs) so logged-hour totals match a
+            // Jira "parent = EPIC" worklog report — some logged work sits on Tasks/Stories.
+            var bugReport = await JiraService.GetEpicBugsAsync(key, bugsOnly: false);
             LoadedSupportBugEpics[key].Tasks = bugReport.Issues;
             LoadedSupportBugEpics[key].IsLoading = false;
             foreach (var issue in bugReport.Issues)
                 if (!string.IsNullOrEmpty(issue.Key))
                     _supportBugIssues[issue.Key] = issue;
-            InfoMessage = $"Loaded {bugReport.Issues.Count} bugs from epic {key}.";
+            InfoMessage = $"Loaded {bugReport.Issues.Count} issues from epic {key}.";
         }
         catch (Exception ex)
         {
@@ -2277,7 +2552,7 @@
         LoadedSupportBugEpics[key] = new EpicLoadState { EpicKey = key, IsLoading = true };
         try
         {
-            var bugReport = await JiraService.GetEpicBugsAsync(key);
+            var bugReport = await JiraService.GetEpicBugsAsync(key, bugsOnly: false);
             LoadedSupportBugEpics[key].Tasks = bugReport.Issues;
             foreach (var issue in bugReport.Issues)
                 if (!string.IsNullOrEmpty(issue.Key))
@@ -2309,6 +2584,9 @@
         }
 
         _isSaving = true;
+        _busyMessage = "Saving sprint plan…";
+        StateHasChanged();
+        await Task.Yield();   // paint the overlay before the save round-trip
         try
         {
             var epicKeys = string.Join(",", LoadedEpics.Keys);
@@ -2368,7 +2646,7 @@
             InfoMessage = $"Plan '{saved.Name}' saved (#{saved.Id}).";
         }
         catch (Exception ex) { ErrorMessage = $"Save failed: {ex.Message}"; }
-        finally { _isSaving = false; }
+        finally { _isSaving = false; _busyMessage = null; }
     }
 
     private async Task OnSprintDropdownChanged(ChangeEventArgs e)
@@ -2428,6 +2706,9 @@
     {
         _isSaving = true;
         ErrorMessage = null;
+        _busyMessage = "Loading sprint plan…";
+        StateHasChanged();
+        await Task.Yield();   // paint the overlay before the (epic-heavy) load begins
         try
         {
             var plan = await PlanService.GetAsync(id);
@@ -2439,7 +2720,7 @@
             InfoMessage = $"Plan '{plan.Name}' loaded — {plan.Allocations.Count} allocations.";
         }
         catch (Exception ex) { ErrorMessage = $"Load failed: {ex.Message}"; }
-        finally { _isSaving = false; }
+        finally { _isSaving = false; _busyMessage = null; }
     }
 
     // Applies a SprintPlanHeader to the in-memory state. When keepId=true the
@@ -2468,16 +2749,28 @@
         _supportBugIssues.Clear();
         _featureBugIssuesByEpic.Clear();
         var epicKeys = plan.LoadedEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var key in epicKeys)
-            await LoadEpicByKey(key);
+        for (var i = 0; i < epicKeys.Length; i++)
+        {
+            _busyMessage = $"Loading epic {epicKeys[i]} ({i + 1}/{epicKeys.Length})…";
+            StateHasChanged();
+            await LoadEpicByKey(epicKeys[i]);
+        }
 
         var taskKeys = (plan.LoadedTaskKeys ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries);
         if (taskKeys.Length > 0)
+        {
+            _busyMessage = $"Loading {taskKeys.Length} task(s)…";
+            StateHasChanged();
             await LoadTasksByKeys(taskKeys);
+        }
 
         var supportBugEpicKeys = plan.SupportBugEpicKeys.Split(',', StringSplitOptions.RemoveEmptyEntries);
-        foreach (var key in supportBugEpicKeys)
-            await LoadSupportBugEpicByKey(key);
+        for (var i = 0; i < supportBugEpicKeys.Length; i++)
+        {
+            _busyMessage = $"Loading support bugs {supportBugEpicKeys[i]} ({i + 1}/{supportBugEpicKeys.Length})…";
+            StateHasChanged();
+            await LoadSupportBugEpicByKey(supportBugEpicKeys[i]);
+        }
 
         // Seed fallback labels from persisted allocations so tasks missing from _taskCache still display correctly.
         foreach (var a in plan.Allocations)
@@ -2524,6 +2817,9 @@
     {
         _isSaving = true;
         ErrorMessage = null;
+        _busyMessage = $"Restoring version {version.VersionNumber}…";
+        StateHasChanged();
+        await Task.Yield();   // paint the overlay before the (epic-heavy) restore begins
         try
         {
             var plan = System.Text.Json.JsonSerializer.Deserialize<SprintPlanHeader>(version.DataJson);
@@ -2533,7 +2829,7 @@
             InfoMessage = $"Restored version {version.VersionNumber} (saved {version.SavedAt.ToLocalTime():dd-MMM-yyyy HH:mm}). Save to keep this state.";
         }
         catch (Exception ex) { ErrorMessage = $"Restore failed: {ex.Message}"; }
-        finally { _isSaving = false; }
+        finally { _isSaving = false; _busyMessage = null; }
     }
 
     private async Task DeletePlanAsync()
@@ -2830,15 +3126,43 @@
             return;
         }
 
+        // Custom tasks are repeatable work-type templates (e.g. "Planned Issues / 6h"):
+        // every drop schedules the full hours as its own independent block, so a member can
+        // accumulate as many of them as needed and the same task can go on any number of
+        // members. Jira tasks share one fixed estimate across the team, so they stay capped to
+        // their remaining estimate (a 30h ticket can't end up as 2×30h on the calendar).
+        var isCustomActive = _customTasks.ContainsKey(activeTaskId!.Value);
+        decimal alreadyAllocated;
+        decimal remainingToSchedule;
+        if (isCustomActive)
+        {
+            alreadyAllocated    = 0m;
+            remainingToSchedule = totalHoursResolved;
+        }
+        else
+        {
+            alreadyAllocated    = AllocatedForTask(activeTaskId.Value);
+            remainingToSchedule = totalHoursResolved - alreadyAllocated;
+            if (remainingToSchedule <= 0m)
+            {
+                ErrorMessage = $"'{taskLabel}' is already fully scheduled ({totalHoursResolved:0.#}h). "
+                             + "Remove an existing block before rescheduling it.";
+                SelectedTask = null;
+                SelectedCustomTaskId = null;
+                PendingPlacement = null;
+                return;
+            }
+        }
+
         var memberName = TeamMembers.First(x => x.Id == memberId).Name;
-        var newAllocs  = ScheduleTask(activeTaskId!.Value, memberId, totalHoursResolved, startDate);
+        var newAllocs  = ScheduleTask(activeTaskId.Value, memberId, remainingToSchedule, startDate);
         var scheduledHours = newAllocs.Sum(a => a.HoursAllocated);
 
-        if (scheduledHours < totalHoursResolved)
+        if (scheduledHours < remainingToSchedule)
         {
             // Capacity insufficient — ask user whether to schedule over the 6h/day limit
             _overCapacityPending = new OverCapacityPending(
-                activeTaskId.Value, memberId, totalHoursResolved, startDate, taskLabel, memberName);
+                activeTaskId.Value, memberId, remainingToSchedule, startDate, taskLabel, memberName);
             _showOverCapacityDialog = true;
             PendingPlacement = null;
             return;
@@ -2846,7 +3170,10 @@
 
         Allocations.AddRange(newAllocs);
         var lastDate = newAllocs.Max(a => a.Date);
-        InfoMessage = $"Scheduled '{taskLabel}' for {memberName}: {totalHoursResolved:0.#}h from {startDate:dd-MMM} → {lastDate:dd-MMM}.";
+        var capNote  = alreadyAllocated > 0m
+            ? $" (capped to remaining {remainingToSchedule:0.#}h of {totalHoursResolved:0.#}h)"
+            : "";
+        InfoMessage = $"Scheduled '{taskLabel}' for {memberName}: {remainingToSchedule:0.#}h from {startDate:dd-MMM} → {lastDate:dd-MMM}{capNote}.";
         SelectedTask = null;
         SelectedCustomTaskId = null;
         PendingPlacement = null;
@@ -3150,11 +3477,79 @@
     private decimal GetTeamAllocatedHours(string team)
         => TeamMembers.Where(m => m.Team == team).Sum(m => GetMemberSprintAllocated(m.Id));
 
+    // ── Team Load breakdown ──
+    private void OpenTeamLoadDetail(string team) => _teamLoadDetail = team;
+    private void CloseTeamLoadDetail()           => _teamLoadDetail = null;
+
+    // ── Support Bug team-split popup ──
+    private void OpenSupportBugDetail()  => _supportBugDetail = true;
+    private void CloseSupportBugDetail() => _supportBugDetail = false;
+
+    // Support-bug hours allocated to a team's members within the current sprint window.
+    // Mirrors SupportBugAllocatedHours' filters, so the team rows sum to that headline total.
+    private decimal GetTeamSupportBugHours(string team)
+    {
+        var memberIds = TeamMembers.Where(m => m.Team == team).Select(m => m.Id).ToHashSet();
+        var supportBugIds = _customTasks.Values
+            .Where(ct => ct.Category == "Support Bug")
+            .Select(ct => ct.Id)
+            .ToHashSet();
+        return Allocations
+            .Where(a => supportBugIds.Contains(a.TaskId)
+                && memberIds.Contains(a.TeamMemberId)
+                && !IsDayOff(a.TeamMemberId, a.Date)
+                && a.Date >= SprintStart && a.Date <= SprintEnd)
+            .Sum(a => a.HoursAllocated);
+    }
+
+    private sealed record TeamTaskLoad(int TaskId, string Label, bool IsCustom, decimal Hours);
+
+    // Per-task hours allocated to a team's members within the current sprint window,
+    // ordered by hours descending. Drives the Team Load breakdown popup.
+    private List<TeamTaskLoad> GetTeamTaskBreakdown(string team)
+    {
+        var memberIds = TeamMembers.Where(m => m.Team == team).Select(m => m.Id).ToHashSet();
+        var rows = Allocations
+            .Where(a => memberIds.Contains(a.TeamMemberId) && a.Date >= SprintStart && a.Date <= SprintEnd)
+            .GroupBy(a => a.TaskId)
+            .Select(g => new TeamTaskLoad(
+                g.Key,
+                GetTaskShortLabel(g.Key),
+                _customTasks.ContainsKey(g.Key),
+                g.Sum(a => a.HoursAllocated)))
+            .Where(r => r.Hours > 0m)
+            .ToList();
+
+        // Collapse all "Support Bug" custom tasks into a single combined row so the
+        // breakdown shows total support-bug load rather than one line per bug task.
+        var supportBugIds = _customTasks.Values
+            .Where(ct => ct.Category == "Support Bug")
+            .Select(ct => ct.Id)
+            .ToHashSet();
+        var supportBugRows = rows.Where(r => supportBugIds.Contains(r.TaskId)).ToList();
+        if (supportBugRows.Count > 1)
+        {
+            rows.RemoveAll(r => supportBugIds.Contains(r.TaskId));
+            rows.Add(new TeamTaskLoad(
+                0,
+                $"Support Bug ({supportBugRows.Count} items)",
+                true,
+                supportBugRows.Sum(r => r.Hours)));
+        }
+
+        return rows.OrderByDescending(r => r.Hours).ToList();
+    }
+
     // ───────────────────────────────────────────────────────────
     // Team filter helpers
     // ───────────────────────────────────────────────────────────
     private List<string> GetAllTeams()
         => TeamMembers.Select(m => m.Team).Distinct().OrderBy(t => t).ToList();
+
+    // QA members only validate support bugs — they don't fix them — so QA is never
+    // counted as a bug-fixer in the "tickets solvable" estimate.
+    private static bool IsQaTeam(string team)
+        => string.Equals(team, "QA", StringComparison.OrdinalIgnoreCase);
 
     private int GetTeamMemberCount(string team)
         => TeamMembers.Count(m => m.Team == team);
@@ -3509,7 +3904,7 @@
         return _supportBugIssues.Values
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStart
-                     && AuthorMatchesMember(w.Author, memberName))
+                     && WorklogByMember(w, memberName))
             .Sum(w => w.TimeSpentSeconds);
     }
 
@@ -3520,7 +3915,7 @@
         var worklogs = _supportBugIssues.Values
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStart
-                     && AuthorMatchesMember(w.Author, memberName))
+                     && WorklogByMember(w, memberName))
             .ToList();
         return worklogs.Count > 0 ? worklogs.Max(w => w.Started) : (DateTime?)null;
     }
@@ -3544,7 +3939,7 @@
         return issues
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStart
-                     && AuthorMatchesMember(w.Author, memberName))
+                     && WorklogByMember(w, memberName))
             .Sum(w => w.TimeSpentSeconds);
     }
 
@@ -3555,7 +3950,7 @@
         var worklogs = issues
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStart
-                     && AuthorMatchesMember(w.Author, memberName))
+                     && WorklogByMember(w, memberName))
             .ToList();
         return worklogs.Count > 0 ? worklogs.Max(w => w.Started) : (DateTime?)null;
     }
@@ -3909,6 +4304,11 @@
     private decimal GetTaskPlannedHours(int taskId)
         => Allocations.Where(a => a.TaskId == taskId && a.Date >= SprintStart && a.Date <= SprintEnd)
                       .Sum(a => a.HoursAllocated);
+
+    // Total hours already allocated for a task across all members/dates — used to
+    // cap new placements to the task's remaining estimate.
+    private decimal AllocatedForTask(int taskId)
+        => Allocations.Where(a => a.TaskId == taskId).Sum(a => a.HoursAllocated);
 
     private List<string> GetTaskAssignedMembers(int taskId)
         => Allocations.Where(a => a.TaskId == taskId)
@@ -4625,8 +5025,35 @@ private static decimal ParseJiraDurationToHours(string? input)
         return _supportBugIssues.Values
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= fromDt && w.Started <= toDt
-                     && AuthorMatchesMember(w.Author, memberName))
+                     && WorklogByMember(w, memberName))
             .Sum(w => w.TimeSpentSeconds);
+    }
+
+    // Per-issue worklog breakdown for a member in [from, to] — drives the Support Bugs
+    // drill-down and lets totals be reconciled against a Jira "parent = EPIC,
+    // worklogAuthor = X" report issue-by-issue.
+    private List<BugLogRow> GetSupportBugLogBreakdown(string memberName, DateOnly from, DateOnly to)
+    {
+        if (_supportBugIssues.Count == 0 || string.IsNullOrEmpty(memberName)) return new();
+        var fromDt = from.ToDateTime(TimeOnly.MinValue);
+        var toDt   = to.ToDateTime(TimeOnly.MaxValue);
+        return _supportBugIssues.Values
+            .Select(i =>
+            {
+                var mine = i.Worklogs
+                    .Where(w => w.Started >= fromDt && w.Started <= toDt
+                             && WorklogByMember(w, memberName))
+                    .ToList();
+                return new BugLogRow(
+                    i.Key,
+                    i.Summary,
+                    mine.Sum(w => w.TimeSpentSeconds),
+                    mine.Count,
+                    mine.Count > 0 ? mine.Max(w => w.Started) : default);
+            })
+            .Where(r => r.Worklogs > 0)
+            .OrderByDescending(r => r.Seconds)
+            .ToList();
     }
 
     private IReadOnlyList<TeamMemberDto> GetMembersWithSupportBugActivity()
@@ -4644,15 +5071,14 @@ private static decimal ParseJiraDurationToHours(string? input)
 
         var sprintStartDt = SprintStart.ToDateTime(TimeOnly.MinValue);
         var sprintEndDt   = SprintEnd.ToDateTime(TimeOnly.MaxValue);
-        var authorsWithLog = _supportBugIssues.Values
+        var worklogsInRange = _supportBugIssues.Values
             .SelectMany(i => i.Worklogs)
             .Where(w => w.Started >= sprintStartDt && w.Started <= sprintEndDt)
-            .Select(w => w.Author)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToList();
 
         return TeamMembers
             .Where(m => membersWithPlan.Contains(m.Id)
-                     || authorsWithLog.Any(a => AuthorMatchesMember(a, m.Name)))
+                     || worklogsInRange.Any(w => WorklogByMember(w, m.Name)))
             .ToList();
     }
 
@@ -4996,6 +5422,46 @@ private static decimal ParseJiraDurationToHours(string? input)
 
     .cap-team-bar { height: 100%; border-radius: 4px; transition: width 0.2s; }
     .cap-team-sub { font-size: 10px; color: #9ca3af; }
+
+    .cap-team-clickable { cursor: pointer; transition: box-shadow .12s, transform .12s; }
+    .cap-team-clickable:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); transform: translateY(-1px); }
+
+    /* Clickable Bug Hours stat card */
+    .stat-clickable { cursor: pointer; transition: box-shadow .12s, transform .12s; }
+    .stat-clickable:hover { box-shadow: 0 2px 8px rgba(0,0,0,0.12); transform: translateY(-1px); }
+
+    /* Support Bug team-split popup */
+    .sb-avg-row { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; }
+    .sb-avg-label { font-size: 12px; font-weight: 600; color: #374151; }
+    .sb-avg-input { width: 80px; }
+    .sb-avg-hint { font-size: 11px; color: #9ca3af; }
+    .sb-qa-note { font-size: 11px; font-style: italic; color: #9ca3af; }
+    .sb-total-row td { font-weight: 700; border-top: 2px solid #e5e7eb; }
+
+    /* Team Load breakdown popup */
+    .tld-summary {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+        padding: 10px 14px;
+        margin: 0 0 6px;
+        border-radius: 8px;
+        border: 1px solid #e5e7eb;
+        background: #f9fafb;
+    }
+    .tld-summary-pct { font-size: 22px; font-weight: 800; }
+    .tld-summary-hrs { font-size: 12px; color: #6b7280; }
+    .tld-table .tld-num { text-align: right; white-space: nowrap; }
+    .tld-table th.tld-num { text-align: right; }
+    .tld-type-dot {
+        display: inline-block;
+        width: 8px; height: 8px;
+        border-radius: 50%;
+        margin-right: 7px;
+        vertical-align: middle;
+    }
+    .tld-dot-custom { background: #8b5cf6; }
+    .tld-dot-jira   { background: #2563eb; }
 
     .cap-under   { border-color: #cbd5e1; }
     .cap-under   .cap-team-pct { color: #64748b; }
@@ -5444,6 +5910,46 @@ private static decimal ParseJiraDurationToHours(string? input)
     }
 
     @@keyframes rpt-spin { to { transform: rotate(360deg); } }
+
+    /* ─── Global busy overlay ─── */
+    .spd-busy-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 1000;
+        background: rgba(15, 23, 42, 0.45);
+        backdrop-filter: blur(1.5px);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .spd-busy-card {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+        padding: 28px 40px;
+        background: #fff;
+        border-radius: 14px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+        min-width: 240px;
+    }
+
+    .spd-busy-spinner {
+        width: 42px;
+        height: 42px;
+        border: 4px solid #bfdbfe;
+        border-top-color: #2563eb;
+        border-radius: 50%;
+        animation: rpt-spin 0.7s linear infinite;
+    }
+
+    .spd-busy-text {
+        font-size: 14px;
+        font-weight: 600;
+        color: #1e293b;
+        text-align: center;
+    }
 
     /* ─── Report View ─── */
     .rpt-container {
@@ -6442,6 +6948,83 @@ private static decimal ParseJiraDurationToHours(string? input)
         font-weight: 600;
         color: #1f2937;
     }
+
+    .bugs-member-toggle {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        background: none;
+        border: none;
+        padding: 0;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 600;
+        color: #1f2937;
+    }
+
+    .bugs-member-toggle:hover { color: #1d4ed8; }
+
+    .bugs-caret {
+        font-size: 10px;
+        color: #6b7280;
+        width: 10px;
+    }
+
+    /* ── Per-member support-bug worklog drill-down ── */
+    .bugs-detail-row > .bugs-detail-cell {
+        background: #f8fafc;
+        padding: 8px 14px 12px 30px;
+        border-left: 3px solid #2563eb;
+    }
+
+    .bugs-detail-empty {
+        font-size: 12px;
+        color: #6b7280;
+        font-style: italic;
+        padding: 6px 0;
+    }
+
+    .bugs-detail-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+    }
+
+    .bugs-detail-table th {
+        text-align: left;
+        color: #6b7280;
+        font-weight: 600;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        padding: 4px 10px;
+        border-bottom: 1px solid #e5e7eb;
+    }
+
+    .bugs-detail-table td {
+        padding: 4px 10px;
+        border-bottom: 1px solid #eef2f7;
+        color: #374151;
+    }
+
+    .bugs-detail-table tfoot td {
+        font-weight: 700;
+        color: #1f2937;
+        border-top: 1px solid #cbd5e1;
+        border-bottom: none;
+    }
+
+    .bugs-detail-num { text-align: right; white-space: nowrap; }
+
+    .bugs-detail-summary {
+        max-width: 380px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .bugs-detail-table a { color: #1d4ed8; text-decoration: none; }
+    .bugs-detail-table a:hover { text-decoration: underline; }
 
     .bugs-td-cell {
         text-align: center;

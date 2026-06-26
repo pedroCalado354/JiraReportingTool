@@ -261,7 +261,9 @@ public class JiraService : IJiraService
     }
 
     // Fetches ALL issues in a sprint (no epic filter) with epic grouping — used by Team Delivery Dashboard
-    public Task<SprintReport> GetDeliveryDataAsync(int sprintId)
+    // bypassCache is honoured by the caching decorator (JiraCacheService); the direct API
+    // path always fetches live, so the parameter is accepted only to satisfy the interface.
+    public Task<SprintReport> GetDeliveryDataAsync(int sprintId, bool bypassCache = false)
     {
         var jql = Uri.EscapeDataString($"sprint = {sprintId} ORDER BY status ASC, priority DESC");
         return FetchDeliveryReportAsync(jql);
@@ -370,6 +372,7 @@ public class JiraService : IJiraService
         var json = await FetchAllPagesAsync(encodedJql, fields);
         var (report, truncated) = ParseSprintReport(json, "");
         await FetchMissingWorklogsAsync(report, truncated);
+        await ReconcileLiveFieldsAsync(report);
 
         var epicKeys = report.Issues
             .Where(i => !string.IsNullOrEmpty(i.EpicKey))
@@ -386,6 +389,63 @@ public class JiraService : IJiraService
         }
 
         return report;
+    }
+
+    // The JQL search endpoint (/rest/api/3/search/jql) serves results from Jira's
+    // eventually-consistent search index, so a field that just changed — e.g. an issue
+    // moved to Done minutes (or longer) ago — can come back stale, and re-querying the
+    // same endpoint will keep returning the stale value. Re-read the authoritative
+    // status / resolution / timetracking straight from the issue store via the per-issue
+    // GET endpoint (live, not the index) and patch the report so the UI reflects Jira now.
+    private async Task ReconcileLiveFieldsAsync(SprintReport report)
+    {
+        var issues = report.Issues.Where(i => !string.IsNullOrEmpty(i.Key)).ToList();
+        if (issues.Count == 0) return;
+
+        const int batchSize = 10;
+        for (int i = 0; i < issues.Count; i += batchSize)
+        {
+            var batch = issues.Skip(i).Take(batchSize).ToList();
+            await Task.WhenAll(batch.Select(ReconcileOneIssueAsync));
+        }
+    }
+
+    private async Task ReconcileOneIssueAsync(SprintIssue issue)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync(
+                $"{_baseUrl}/rest/api/3/issue/{Uri.EscapeDataString(issue.Key)}?fields=status,resolutiondate,timetracking");
+            if (!response.IsSuccessStatusCode) return;
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            if (!doc.RootElement.TryGetProperty("fields", out var fields)) return;
+
+            if (fields.TryGetProperty("status", out var status) && status.ValueKind == JsonValueKind.Object)
+            {
+                if (status.TryGetProperty("name", out var sn) && sn.ValueKind == JsonValueKind.String)
+                    issue.Status = sn.GetString() ?? issue.Status;
+                if (status.TryGetProperty("statusCategory", out var sc) &&
+                    sc.TryGetProperty("key", out var sck) && sck.ValueKind == JsonValueKind.String)
+                    issue.StatusCategoryKey = sck.GetString() ?? issue.StatusCategoryKey;
+            }
+
+            issue.ResolutionDate =
+                fields.TryGetProperty("resolutiondate", out var resEl) && resEl.ValueKind == JsonValueKind.String &&
+                DateTime.TryParse(resEl.GetString(), out var rd) ? rd : null;
+
+            if (fields.TryGetProperty("timetracking", out var tt) && tt.ValueKind == JsonValueKind.Object)
+            {
+                issue.OriginalEstimateSeconds  = tt.TryGetProperty("originalEstimateSeconds",  out var oes) ? oes.GetInt32() : 0;
+                issue.RemainingEstimateSeconds = tt.TryGetProperty("remainingEstimateSeconds", out var res2) ? res2.GetInt32() : 0;
+                if (tt.TryGetProperty("timeSpentSeconds", out var tss)) issue.TimeSpentSeconds = tss.GetInt32();
+                issue.OriginalEstimate  = tt.TryGetProperty("originalEstimate",  out var oe) && oe.ValueKind == JsonValueKind.String ? oe.GetString() ?? "-" : "-";
+                issue.RemainingEstimate = tt.TryGetProperty("remainingEstimate", out var re) && re.ValueKind == JsonValueKind.String ? re.GetString() ?? "-" : "-";
+                if (tt.TryGetProperty("timeSpent", out var ts) && ts.ValueKind == JsonValueKind.String) issue.TimeSpent = ts.GetString() ?? "-";
+            }
+        }
+        catch { /* reconciliation is best-effort; fall back to the indexed values */ }
     }
 
     public async Task<Dictionary<string, string>> FetchEpicNamesAsync(List<string> epicKeys)
@@ -554,9 +614,9 @@ public class JiraService : IJiraService
                 {
                     var entry = new WorklogEntry
                     {
-                        Author = wl.TryGetProperty("author", out var author) && author.ValueKind != JsonValueKind.Null
-                            ? author.GetProperty("displayName").GetString() ?? ""
-                            : "",
+                        Author          = ParseWorklogAuthorName(wl),
+                        AuthorAccountId = ParseWorklogAuthorField(wl, "accountId"),
+                        AuthorEmail     = ParseWorklogAuthorField(wl, "emailAddress"),
                         TimeSpent = wl.TryGetProperty("timeSpent", out var tSpent) ? tSpent.GetString() ?? "" : "",
                         TimeSpentSeconds = wl.TryGetProperty("timeSpentSeconds", out var tSec) ? tSec.GetInt32() : 0,
                         Comment = ExtractAdfText(wl)
@@ -629,9 +689,9 @@ public class JiraService : IJiraService
             {
                 var entry = new WorklogEntry
                 {
-                    Author = wl.TryGetProperty("author", out var author) && author.ValueKind != JsonValueKind.Null
-                        ? author.GetProperty("displayName").GetString() ?? ""
-                        : "",
+                    Author          = ParseWorklogAuthorName(wl),
+                    AuthorAccountId = ParseWorklogAuthorField(wl, "accountId"),
+                    AuthorEmail     = ParseWorklogAuthorField(wl, "emailAddress"),
                     TimeSpent = wl.TryGetProperty("timeSpent", out var tSpent) ? tSpent.GetString() ?? "" : "",
                     TimeSpentSeconds = wl.TryGetProperty("timeSpentSeconds", out var tSec) ? tSec.GetInt32() : 0,
                     Comment = ExtractAdfText(wl)
@@ -643,6 +703,19 @@ public class JiraService : IJiraService
             }
         }
     }
+
+    // Worklog author helpers — the author object may be null, and emailAddress is often
+    // omitted by Jira privacy settings, so every field is read defensively.
+    private static string ParseWorklogAuthorName(JsonElement wl)
+        => ParseWorklogAuthorField(wl, "displayName");
+
+    private static string ParseWorklogAuthorField(JsonElement wl, string field)
+        => wl.TryGetProperty("author", out var author)
+           && author.ValueKind == JsonValueKind.Object
+           && author.TryGetProperty(field, out var val)
+           && val.ValueKind == JsonValueKind.String
+            ? val.GetString() ?? ""
+            : "";
 
     // Fetches QA rejection counts for each issue via individual GET calls (changelog not available in POST search)
     private async Task FetchQaRejectionCountsAsync(List<SprintIssue> issues)
@@ -722,7 +795,7 @@ public class JiraService : IJiraService
         return report;
     }
 
-    public async Task<SprintReport> GetEpicBugsAsync(string epicKey)
+    public async Task<SprintReport> GetEpicBugsAsync(string epicKey, bool bugsOnly = true)
     {
         var epicResponse = await _httpClient.GetAsync(
             $"{_baseUrl}/rest/api/3/issue/{epicKey}?fields=summary");
@@ -734,14 +807,19 @@ public class JiraService : IJiraService
             epicSummary = epicDoc.RootElement.GetProperty("fields").GetProperty("summary").GetString() ?? "";
         }
 
+        // bugsOnly=true → bugs only (Support Bugs/Analytics pages).
+        // bugsOnly=false → every issue type under the epic, matching a Jira "parent = EPIC"
+        // filter — used for worklog reconciliation so logged-hour totals line up with Jira.
+        var typeClause = bugsOnly ? "issueType = Bug" : "issueType != Epic";
         var jql = Uri.EscapeDataString(
-            $"issueType = Bug AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
+            $"{typeClause} AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
         var customerFieldId = await GetCustomerFieldIdAsync();
         var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate,duedate,labels"
             + (customerFieldId != null ? $",{customerFieldId}" : "");
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, truncated) = ParseSprintReport(json, "", customerFieldId);
         await FetchMissingWorklogsAsync(report, truncated);
+        await FetchLifecycleTransitionsAsync(report.Issues);
 
         foreach (var issue in report.Issues)
         {
@@ -750,6 +828,71 @@ public class JiraService : IJiraService
         }
 
         return report;
+    }
+
+    // For each resolved issue, walks the changelog ONCE (per-issue GET; POST search can't
+    // expand changelog) and extracts the lifecycle markers used by the Support dashboards:
+    //   • DevReadyDate    — FIRST transition into "Dev Ready"
+    //   • QaReadyDate     — FIRST transition into "QA Ready"
+    //   • QaRejectedCount — number of transitions into "QA REJECTED"
+    // Only resolved issues are queried — the Dev-Ready→QA-Ready→Done timings only complete
+    // for done bugs, and this keeps the request count identical to fetching Dev Ready alone.
+    private async Task FetchLifecycleTransitionsAsync(List<SprintIssue> issues)
+    {
+        var done = issues.Where(i => i.StatusCategoryKey == "done").ToList();
+        if (done.Count == 0) return;
+
+        const int batchSize = 10;
+        for (int i = 0; i < done.Count; i += batchSize)
+        {
+            var batch = done.Skip(i).Take(batchSize).ToList();
+            await Task.WhenAll(batch.Select(async issue =>
+            {
+                try
+                {
+                    var response = await _httpClient.GetAsync(
+                        $"{_baseUrl}/rest/api/3/issue/{Uri.EscapeDataString(issue.Key)}?expand=changelog&fields=key");
+                    if (!response.IsSuccessStatusCode) return;
+
+                    var json = await response.Content.ReadAsStringAsync();
+                    using var doc = JsonDocument.Parse(json);
+                    if (!doc.RootElement.TryGetProperty("changelog", out var changelog) ||
+                        !changelog.TryGetProperty("histories", out var histories) ||
+                        histories.ValueKind != JsonValueKind.Array) return;
+
+                    DateTime? devReady = null;
+                    DateTime? qaReady  = null;
+                    int qaRejected = 0;
+                    foreach (var history in histories.EnumerateArray())
+                    {
+                        if (!history.TryGetProperty("items", out var histItems)) continue;
+                        DateTime? created = history.TryGetProperty("created", out var createdEl) &&
+                                            DateTimeOffset.TryParse(createdEl.GetString(), out var dto)
+                            ? dto.DateTime : null;
+                        foreach (var change in histItems.EnumerateArray())
+                        {
+                            if (!change.TryGetProperty("field", out var fieldEl) ||
+                                fieldEl.GetString() != "status" ||
+                                !change.TryGetProperty("toString", out var toEl)) continue;
+                            var to = toEl.GetString();
+
+                            if (to?.Equals("Dev Ready", StringComparison.OrdinalIgnoreCase) == true &&
+                                created.HasValue && (devReady is null || created < devReady))
+                                devReady = created;
+                            else if (to?.Equals("QA Ready", StringComparison.OrdinalIgnoreCase) == true &&
+                                created.HasValue && (qaReady is null || created < qaReady))
+                                qaReady = created;
+                            else if (to?.Equals("QA REJECTED", StringComparison.OrdinalIgnoreCase) == true)
+                                qaRejected++;
+                        }
+                    }
+                    issue.DevReadyDate    = devReady;
+                    issue.QaReadyDate     = qaReady;
+                    issue.QaRejectedCount = qaRejected;
+                }
+                catch { /* ignore individual failures */ }
+            }));
+        }
     }
 
     public async Task<SprintReport> GetPriorityBugsAsync()

@@ -171,6 +171,20 @@ public class RosterMember
 
     /// <summary>Controls display order within a team on the board.</summary>
     public int SortOrder { get; set; }
+
+    /// <summary>
+    /// Jira accountId (e.g. "712020:e9a577e7-…"). When set, worklog/assignee matching uses
+    /// this exact id instead of the fragile display-name heuristic. Most reliable identifier.
+    /// </summary>
+    [MaxLength(100)]
+    public string? JiraAccountId { get; set; }
+
+    /// <summary>
+    /// Jira account email. Used to match worklog authors when no accountId is set and Jira
+    /// exposes the author's email. Easier to populate than accountId, but privacy-dependent.
+    /// </summary>
+    [MaxLength(200)]
+    public string? JiraEmail { get; set; }
 }
 
 /// <summary>

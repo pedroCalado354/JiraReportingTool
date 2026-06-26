@@ -33,8 +33,8 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
     public Task<SprintReport> GetIssuesByKeysAsync(List<string> issueKeys)
         => api.GetIssuesByKeysAsync(issueKeys);
 
-    public Task<SprintReport> GetEpicBugsAsync(string epicKey)
-        => api.GetEpicBugsAsync(epicKey);
+    public Task<SprintReport> GetEpicBugsAsync(string epicKey, bool bugsOnly = true)
+        => api.GetEpicBugsAsync(epicKey, bugsOnly);
 
     public Task<SprintReport> GetPriorityBugsAsync()
         => api.GetPriorityBugsAsync();
@@ -86,11 +86,13 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
         return report;
     }
 
-    public async Task<SprintReport> GetDeliveryDataAsync(int sprintId)
+    public async Task<SprintReport> GetDeliveryDataAsync(int sprintId, bool bypassCache = false)
     {
         var key = $"delivery:{sprintId}";
 
-        if (_useCache)
+        // bypassCache (hard refresh) skips the DB freshness check and always re-fetches
+        // from Jira, then upserts the cache so the stored copy is brought up to date too.
+        if (_useCache && !bypassCache)
         {
             var cached = await repo.GetSprintReportAsync(key);
             if (cached is not null && IsFresh(cached.SyncedAt)) return cached;
