@@ -185,6 +185,8 @@ public class SprintIssue
     public int                   QaRejectedCount { get; set; }
     [NotMapped] public string    JiraId          { get; set; } = "";
     [NotMapped] public string    Customer        { get; set; } = "";
+    /// <summary>"JS Project[Radio Buttons]" field — Rentway Legacy / Rentway Pro / Integrations. Not persisted.</summary>
+    [NotMapped] public string    Product         { get; set; } = "";
     [NotMapped] public DateTime? PrioListDate    { get; set; }
     /// <summary>First time the issue transitioned into the "Dev Ready" status (from changelog). Not persisted.</summary>
     [NotMapped] public DateTime? DevReadyDate    { get; set; }

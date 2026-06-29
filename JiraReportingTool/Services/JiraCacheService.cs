@@ -42,6 +42,9 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
     public Task<SprintReport> GetBugsByJqlAsync(string rawJql)
         => api.GetBugsByJqlAsync(rawJql);
 
+    public Task<SprintReport> GetSlaBugsByJqlAsync(string rawJql)
+        => api.GetSlaBugsByJqlAsync(rawJql);
+
     public Task<IssueDevStatus> GetDevStatusAsync(string jiraId)
         => api.GetDevStatusAsync(jiraId);
 

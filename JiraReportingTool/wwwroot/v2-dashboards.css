@@ -242,6 +242,32 @@
   color: var(--v2-ink-4); text-transform: none;
 }
 
+/* ── Section head with issue-type chips ── */
+.v2-kpi-section-head {
+  display: flex; align-items: center; flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 10px;
+}
+.v2-type-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.v2-type-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 6px 2px 10px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 600;
+  color: var(--v2-ink-2);
+  background: var(--v2-surface-2);
+  border: 1px solid var(--v2-border);
+  white-space: nowrap;
+}
+.v2-type-chip-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px; font-weight: 700;
+  color: var(--v2-brand);
+  background: var(--v2-brand-soft);
+}
+
 /* ── KPI hero tiles ── */
 .v2-kpi-grid {
   display: grid;

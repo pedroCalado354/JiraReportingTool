@@ -221,9 +221,119 @@
             </div>
         </div>
 
-        <!-- ═══ KPI GRID ════════════════════════════════════════════════════ -->
+        <!-- ═══ KPI GRID — DELIVERY WORK (all non-bug issue types) ══════════ -->
+        <div class="v2-kpi-section-head">
+            <div class="v2-section-title" style="margin-bottom:0"><i class="bi bi-check2-square"></i>Delivery Work <span class="v2-section-note">All issue types except bugs</span></div>
+            <div class="v2-type-chips">
+                @foreach (var t in DeliveryTypeBreakdown)
+                {
+                    <span class="v2-type-chip">@t.Type<span class="v2-type-chip-count">@t.Count</span></span>
+                }
+            </div>
+        </div>
         <div class="v2-kpi-grid">
-            <!-- Completion -->
+            <!-- Completion (tasks) -->
+            <div class="v2-kpi @(TaskCompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Completion</div>
+                <div class="v2-kpi-value">@((int)TaskCompletionPct)%</div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(TaskCompletionBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@Math.Min((int)TaskCompletionPct,100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@TaskDoneCount of @TaskOnlyIssues.Count done · @TaskInProgressCount active · @TaskToDoCount pending</div>
+                <div class="v2-kpi-sub" style="margin-top:4px">@($"{TaskDoneHours:F0}h") logged on done · @($"{TaskDoneAndInReviewHours:F0}h") proj. incl. in review</div>
+            </div>
+
+            <!-- Sprint Health (tasks) -->
+            <div class="v2-kpi v2-kpi-@TaskHealthBand">
+                <div class="v2-kpi-head"><i class="bi bi-heart-pulse"></i>Sprint Health</div>
+                <div class="v2-kpi-value @(TaskHealthBand == "success" ? "v2-text-success" : TaskHealthBand == "danger" ? "v2-text-danger" : "")">@TaskHealthScore<span class="v2-kpi-of">/ 100</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill v2-bar-fill-@TaskHealthBand" style="width:@TaskHealthScore%"></div>
+                </div>
+                <div class="v2-kpi-sub">@TaskHealthMessage</div>
+            </div>
+
+            <!-- Capacity (tasks) -->
+            <div class="v2-kpi @(TaskOverCapacity ? "v2-kpi-danger" : "")">
+                <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Capacity</div>
+                <div class="v2-kpi-value @(TaskOverCapacity ? "v2-text-danger" : "")">@($"{TaskCapacityHours:F0}h")<span class="v2-kpi-of">vs @($"{TaskRemainingHours:F0}h")</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(TaskOverCapacity ? "v2-bar-fill-danger" : "v2-bar-fill-success")"
+                         style="width:@(TaskCapacityHours > 0 ? Math.Min(TaskRemainingHours / TaskCapacityHours * 100, 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@(TaskOverCapacity ? $"⚠ {(TaskRemainingHours - TaskCapacityHours):F0}h over capacity" : $"+{(TaskCapacityHours - TaskRemainingHours):F0}h buffer")</div>
+            </div>
+
+            <!-- Burn Rate (tasks) -->
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-graph-up-arrow"></i>Burn Rate</div>
+                <div class="v2-kpi-value">@($"{TaskHoursLoggedPerWorkday:F1}h")<span class="v2-kpi-of">/ workday</span></div>
+                @if (TaskDailyBurndownHours.Count > 1)
+                {
+                    @SparklineSvg(TaskDailyBurndownHours, "#6366f1")
+                }
+                <div class="v2-kpi-sub">@($"{TaskTotalLoggedHours:F0}h logged") · projected @TaskProjectedFinishHours.ToString("F0")h by end</div>
+            </div>
+
+            <!-- Idle Tasks (tasks) -->
+            <div class="v2-kpi @(TaskIdleActiveCount == 0 ? "v2-kpi-success" : TaskIdleActiveCount > TaskInProgressCount * 0.5 ? "v2-kpi-danger" : "v2-kpi-warn")">
+                <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Idle Tasks</div>
+                <div class="v2-kpi-value">@TaskIdleActiveCount<span class="v2-kpi-of">of @TaskInProgressCount active</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(TaskIdleActiveCount == 0 ? "v2-bar-fill-success" : TaskIdleActiveCount > TaskInProgressCount * 0.5 ? "v2-bar-fill-danger" : "v2-bar-fill-warn")"
+                         style="width:@(TaskInProgressCount > 0 ? Math.Min(TaskIdleActiveCount * 100 / Math.Max(1, TaskInProgressCount), 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@TaskStaleCount stuck 2d+ · in-progress without log 24h+</div>
+            </div>
+
+            <!-- Throughput (tasks) -->
+            <div class="v2-kpi @(TaskThroughputBehind ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-speedometer2"></i>Throughput</div>
+                <div class="v2-kpi-value">@TaskThroughputPerDay.ToString("F1")<span class="v2-kpi-of">tasks / day</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(TaskThroughputBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@(TaskNeededThroughputPerDay > 0 ? Math.Min(TaskThroughputPerDay / TaskNeededThroughputPerDay * 100, 100) : 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">need @TaskNeededThroughputPerDay.ToString("F1")/day · @(TaskOnlyIssues.Count - TaskDoneCount) to go</div>
+            </div>
+
+            <!-- Workload Balance (tasks) -->
+            <div class="v2-kpi @(TaskWorkloadImbalancePct > 100 ? "v2-kpi-danger" : TaskWorkloadImbalancePct > 50 ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-bar-chart-steps"></i>Workload Balance</div>
+                <div class="v2-kpi-value">+@($"{TaskWorkloadImbalancePct:F0}")%<span class="v2-kpi-of">peak vs avg</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(TaskWorkloadImbalancePct > 100 ? "v2-bar-fill-danger" : TaskWorkloadImbalancePct > 50 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@Math.Min((int)TaskWorkloadImbalancePct, 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">
+                    @if (TaskHeaviestMember != null)
+                    {
+                        <span>@TaskHeaviestMember.Name carrying @($"{TaskHeaviestMember.RemainingHours:F0}h") · avg @($"{TaskAvgRemainingPerMember:F0}h")</span>
+                    }
+                    else
+                    {
+                        <span>no remaining work assigned</span>
+                    }
+                </div>
+            </div>
+
+            <!-- Estimation Quality (tasks) -->
+            <div class="v2-kpi @(TaskEstimationCoveragePct >= 90 ? "v2-kpi-success" : TaskEstimationCoveragePct >= 70 ? "v2-kpi-warn" : "v2-kpi-danger")">
+                <div class="v2-kpi-head"><i class="bi bi-rulers"></i>Estimation Quality</div>
+                <div class="v2-kpi-value">@($"{TaskEstimationCoveragePct:F0}%")<span class="v2-kpi-of">tasks estimated</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(TaskEstimationCoveragePct >= 90 ? "v2-bar-fill-success" : TaskEstimationCoveragePct >= 70 ? "v2-bar-fill-warn" : "v2-bar-fill-danger")"
+                         style="width:@Math.Min((int)TaskEstimationCoveragePct, 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@TaskUnestimatedCount unestimated · @TaskUnassignedCount unassigned</div>
+            </div>
+        </div>
+
+        <!-- ═══ KPI GRID — ALL ISSUE TYPES ══════════════════════════════════ -->
+        <div class="v2-section-title"><i class="bi bi-collection"></i>All Issue Types <span class="v2-section-note">Every issue in the sprint</span></div>
+        <div class="v2-kpi-grid">
+            <!-- Completion (all) -->
             <div class="v2-kpi @(CompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Completion</div>
                 <div class="v2-kpi-value">@((int)CompletionPct)%</div>
@@ -235,29 +345,17 @@
                 <div class="v2-kpi-sub" style="margin-top:4px">@($"{DoneHours:F0}h") logged on done · @($"{DoneAndInReviewHours:F0}h") proj. incl. in review</div>
             </div>
 
-            <!-- Task Completion (issue type Task & Sub-task only) -->
-            <div class="v2-kpi @(TaskCompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
-                <div class="v2-kpi-head"><i class="bi bi-check2-all"></i>Task Completion</div>
-                <div class="v2-kpi-value">@((int)TaskCompletionPct)%</div>
+            <!-- Sprint Health (all) -->
+            <div class="v2-kpi v2-kpi-@HealthBand">
+                <div class="v2-kpi-head"><i class="bi bi-heart-pulse"></i>Sprint Health</div>
+                <div class="v2-kpi-value @(HealthBand == "success" ? "v2-text-success" : HealthBand == "danger" ? "v2-text-danger" : "")">@HealthScore<span class="v2-kpi-of">/ 100</span></div>
                 <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(TaskCompletionBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
-                         style="width:@Math.Min((int)TaskCompletionPct,100)%"></div>
+                    <div class="v2-bar-fill v2-bar-fill-@HealthBand" style="width:@HealthScore%"></div>
                 </div>
-                <div class="v2-kpi-sub">@TaskDoneCount of @TaskOnlyIssues.Count done · @TaskInProgressCount active · tasks & sub-tasks only</div>
+                <div class="v2-kpi-sub">@HealthMessage</div>
             </div>
 
-            <!-- Sprint Health Score (tasks & sub-tasks only) -->
-            <div class="v2-kpi v2-kpi-@TaskHealthBand">
-                <div class="v2-kpi-head"><i class="bi bi-heart-pulse"></i>Sprint Health (Tasks)</div>
-                <div class="v2-kpi-value @(TaskHealthBand == "success" ? "v2-text-success" : TaskHealthBand == "danger" ? "v2-text-danger" : "")">@TaskHealthScore<span class="v2-kpi-of">/ 100</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill v2-bar-fill-@TaskHealthBand" style="width:@TaskHealthScore%"></div>
-                </div>
-                <div class="v2-kpi-sub">@TaskHealthMessage</div>
-                <div class="v2-kpi-sub" style="margin-top:4px">tasks &amp; sub-tasks only</div>
-            </div>
-
-            <!-- Story Points -->
+            <!-- Story Points (all) -->
             @if (Report.HasStoryPoints)
             {
                 <div class="v2-kpi">
@@ -270,19 +368,18 @@
                 </div>
             }
 
-            <!-- Hours (tasks & sub-tasks only) -->
-            <div class="v2-kpi @(TaskOverCapacity ? "v2-kpi-danger" : "")">
+            <!-- Capacity (all) -->
+            <div class="v2-kpi @(IsOverCapacity ? "v2-kpi-danger" : "")">
                 <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Capacity</div>
-                <div class="v2-kpi-value @(TaskOverCapacity ? "v2-text-danger" : "")">@($"{TaskCapacityHours:F0}h")<span class="v2-kpi-of">vs @($"{TaskRemainingHours:F0}h")</span></div>
+                <div class="v2-kpi-value @(IsOverCapacity ? "v2-text-danger" : "")">@($"{CapacityHours:F0}h")<span class="v2-kpi-of">vs @($"{TotalRemainingHours:F0}h")</span></div>
                 <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(TaskOverCapacity ? "v2-bar-fill-danger" : "v2-bar-fill-success")"
-                         style="width:@(TaskCapacityHours > 0 ? Math.Min(TaskRemainingHours / TaskCapacityHours * 100, 100) : 0)%"></div>
+                    <div class="v2-bar-fill @(IsOverCapacity ? "v2-bar-fill-danger" : "v2-bar-fill-success")"
+                         style="width:@(CapacityHours > 0 ? Math.Min(TotalRemainingHours / CapacityHours * 100, 100) : 0)%"></div>
                 </div>
-                <div class="v2-kpi-sub">@(TaskOverCapacity ? $"⚠ {(TaskRemainingHours - TaskCapacityHours):F0}h over capacity" : $"+{(TaskCapacityHours - TaskRemainingHours):F0}h buffer")</div>
-                <div class="v2-kpi-sub" style="margin-top:4px">tasks &amp; sub-tasks only</div>
+                <div class="v2-kpi-sub">@(IsOverCapacity ? $"⚠ {(TotalRemainingHours - CapacityHours):F0}h over capacity" : $"+{(CapacityHours - TotalRemainingHours):F0}h buffer")</div>
             </div>
 
-            <!-- Velocity / Burn rate -->
+            <!-- Burn Rate (all) -->
             <div class="v2-kpi v2-kpi-neutral">
                 <div class="v2-kpi-head"><i class="bi bi-graph-up-arrow"></i>Burn Rate</div>
                 <div class="v2-kpi-value">@($"{HoursLoggedPerWorkday:F1}h")<span class="v2-kpi-of">/ workday</span></div>
@@ -293,29 +390,29 @@
                 <div class="v2-kpi-sub">@($"{TotalLoggedHours:F0}h logged") · projected @ProjectedFinishHours.ToString("F0")h by end</div>
             </div>
 
-            <!-- Idle Tasks (tasks & sub-tasks only) -->
-            <div class="v2-kpi @(TaskIdleActiveCount == 0 ? "v2-kpi-success" : TaskIdleActiveCount > TaskInProgressCount * 0.5 ? "v2-kpi-danger" : "v2-kpi-warn")">
+            <!-- Idle Tasks (all) -->
+            <div class="v2-kpi @(IdleActiveCount == 0 ? "v2-kpi-success" : IdleActiveCount > InProgressCount * 0.5 ? "v2-kpi-danger" : "v2-kpi-warn")">
                 <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Idle Tasks</div>
-                <div class="v2-kpi-value">@TaskIdleActiveCount<span class="v2-kpi-of">of @TaskInProgressCount active</span></div>
+                <div class="v2-kpi-value">@IdleActiveCount<span class="v2-kpi-of">of @InProgressCount active</span></div>
                 <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(TaskIdleActiveCount == 0 ? "v2-bar-fill-success" : TaskIdleActiveCount > TaskInProgressCount * 0.5 ? "v2-bar-fill-danger" : "v2-bar-fill-warn")"
-                         style="width:@(TaskInProgressCount > 0 ? Math.Min(TaskIdleActiveCount * 100 / Math.Max(1, TaskInProgressCount), 100) : 0)%"></div>
+                    <div class="v2-bar-fill @(IdleActiveCount == 0 ? "v2-bar-fill-success" : IdleActiveCount > InProgressCount * 0.5 ? "v2-bar-fill-danger" : "v2-bar-fill-warn")"
+                         style="width:@(InProgressCount > 0 ? Math.Min(IdleActiveCount * 100 / Math.Max(1, InProgressCount), 100) : 0)%"></div>
                 </div>
-                <div class="v2-kpi-sub">@TaskStaleCount stuck 2d+ · in-progress without log 24h+ · tasks &amp; sub-tasks only</div>
+                <div class="v2-kpi-sub">@StaleCount stuck 2d+ · in-progress without log 24h+</div>
             </div>
 
-            <!-- Throughput (tasks & sub-tasks only) -->
-            <div class="v2-kpi @(TaskThroughputBehind ? "v2-kpi-warn" : "v2-kpi-success")">
+            <!-- Throughput (all) -->
+            <div class="v2-kpi @(ThroughputBehind ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-speedometer2"></i>Throughput</div>
-                <div class="v2-kpi-value">@TaskThroughputPerDay.ToString("F1")<span class="v2-kpi-of">tasks / day</span></div>
+                <div class="v2-kpi-value">@ThroughputPerDay.ToString("F1")<span class="v2-kpi-of">tasks / day</span></div>
                 <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(TaskThroughputBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
-                         style="width:@(TaskNeededThroughputPerDay > 0 ? Math.Min(TaskThroughputPerDay / TaskNeededThroughputPerDay * 100, 100) : 100)%"></div>
+                    <div class="v2-bar-fill @(ThroughputBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
+                         style="width:@(NeededThroughputPerDay > 0 ? Math.Min(ThroughputPerDay / NeededThroughputPerDay * 100, 100) : 100)%"></div>
                 </div>
-                <div class="v2-kpi-sub">need @TaskNeededThroughputPerDay.ToString("F1")/day · @(TaskOnlyIssues.Count - TaskDoneCount) to go · tasks &amp; sub-tasks only</div>
+                <div class="v2-kpi-sub">need @NeededThroughputPerDay.ToString("F1")/day · @(ActiveIssues.Count - DoneCount) to go</div>
             </div>
 
-            <!-- Workload Balance -->
+            <!-- Workload Balance (all) -->
             <div class="v2-kpi @(WorkloadImbalancePct > 100 ? "v2-kpi-danger" : WorkloadImbalancePct > 50 ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-bar-chart-steps"></i>Workload Balance</div>
                 <div class="v2-kpi-value">+@($"{WorkloadImbalancePct:F0}")%<span class="v2-kpi-of">peak vs avg</span></div>
@@ -335,7 +432,7 @@
                 </div>
             </div>
 
-            <!-- Estimation Quality -->
+            <!-- Estimation Quality (all) -->
             <div class="v2-kpi @(EstimationCoveragePct >= 90 ? "v2-kpi-success" : EstimationCoveragePct >= 70 ? "v2-kpi-warn" : "v2-kpi-danger")">
                 <div class="v2-kpi-head"><i class="bi bi-rulers"></i>Estimation Quality</div>
                 <div class="v2-kpi-value">@($"{EstimationCoveragePct:F0}%")<span class="v2-kpi-of">tasks estimated</span></div>
@@ -2707,13 +2804,22 @@
         : DoneCount * 100.0 / ActiveIssues.Count;
     private bool   CompletionBehind => Report != null && Report.SprintProgressPct - CompletionPct > 12;
 
-    // ── Task completion (issue type Task & Sub-task only) ────────────────────
-    private static bool IsTaskType(SprintIssue i) =>
-        string.Equals(i.IssueType, "Task",     StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(i.IssueType, "Sub-task", StringComparison.OrdinalIgnoreCase) ||
-        string.Equals(i.IssueType, "Subtask",  StringComparison.OrdinalIgnoreCase);
+    // ── Delivery work (all issue types except bugs) ──────────────────────────
+    // "Delivery Work" KPIs cover every issue type the team executes — Task,
+    // Sub-task, Redesign, etc. — and exclude only bugs, which are tracked separately.
+    private static bool IsBugType(SprintIssue i) =>
+        string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase);
 
-    private List<SprintIssue> TaskOnlyIssues => ActiveIssues.Where(IsTaskType).ToList();
+    private static bool IsDeliveryType(SprintIssue i) => !IsBugType(i);
+
+    private List<SprintIssue> TaskOnlyIssues => ActiveIssues.Where(IsDeliveryType).ToList();
+
+    // Issue-type chips for the Delivery Work header: distinct non-bug types + counts.
+    private List<(string Type, int Count)> DeliveryTypeBreakdown => TaskOnlyIssues
+        .GroupBy(i => string.IsNullOrWhiteSpace(i.IssueType) ? "Task" : i.IssueType)
+        .OrderByDescending(g => g.Count())
+        .Select(g => (g.Key, g.Count()))
+        .ToList();
     private int    TaskDoneCount       => TaskOnlyIssues.Count(i => i.StatusCategoryKey == "done");
     private int    TaskInProgressCount => TaskOnlyIssues.Count(i => i.StatusCategoryKey == "indeterminate");
     private double TaskCompletionPct   => TaskOnlyIssues.Count == 0 ? 0
@@ -2965,7 +3071,7 @@
             else if (TaskCapacityHours <= 0)   capacity = 0.0;
             else                               capacity = Math.Min(1.0, TaskCapacityHours / TaskRemainingHours);
 
-            var taskAtRisk = AtRiskIssuesScoped.Count(IsTaskType);
+            var taskAtRisk = AtRiskIssuesScoped.Count(IsDeliveryType);
             var risk = 1.0 - Math.Min(1.0, taskAtRisk / (double)Math.Max(1, TaskOnlyIssues.Count) * 2.0);
 
             var execution = 1.0 - Math.Min(1.0, TaskStaleCount / (double)Math.Max(1, TaskInProgressCount));
@@ -2984,6 +3090,98 @@
         >= 40 => "Task delivery at risk — re-balance or de-scope.",
         _     => "Critical — tasks are well behind the sprint pace."
     };
+
+    // ── Task-only hours / burn / workload / estimation (mirror all-issue KPIs) ─
+    private double TaskTotalLoggedHours => TaskOnlyIssues.Sum(i => i.TimeSpentSeconds) / 3600.0;
+    private double TaskDoneHours => TaskOnlyIssues
+        .Where(i => i.StatusCategoryKey == "done")
+        .Sum(i => i.TimeSpentSeconds) / 3600.0;
+    private double TaskDoneAndInReviewHours => TaskOnlyIssues
+        .Where(i => i.StatusCategoryKey == "done" ||
+                    string.Equals(i.Status, "In Review", StringComparison.OrdinalIgnoreCase))
+        .Sum(i => i.TimeSpentSeconds) / 3600.0;
+    private double TaskHoursLoggedPerWorkday
+    {
+        get
+        {
+            var elapsed = Math.Max(1, Report?.ElapsedDays ?? 1);
+            return TaskTotalLoggedHours / elapsed;
+        }
+    }
+    private double TaskProjectedFinishHours => TaskHoursLoggedPerWorkday * (Report?.TotalSprintDays ?? 0);
+
+    private int TaskUnassignedCount => TaskOnlyIssues.Count(i =>
+        string.IsNullOrWhiteSpace(i.Assignee) || i.Assignee.Equals("Unassigned", StringComparison.OrdinalIgnoreCase));
+    private int TaskUnestimatedCount => TaskOnlyIssues.Count(i => i.OriginalEstimateSeconds == 0 && i.StatusCategoryKey != "done");
+
+    private double TaskEstimationCoveragePct
+    {
+        get
+        {
+            var open = TaskOnlyIssues.Where(i => i.StatusCategoryKey != "done").ToList();
+            if (open.Count == 0) return 100;
+            var withEst = open.Count(i => i.OriginalEstimateSeconds > 0);
+            return withEst * 100.0 / open.Count;
+        }
+    }
+
+    private List<(string Name, double RemainingHours)> TaskRemainingPerMember => TaskOnlyIssues
+        .Where(i => i.StatusCategoryKey != "done"
+                 && !string.IsNullOrWhiteSpace(i.Assignee)
+                 && i.Assignee != "Unassigned")
+        .GroupBy(i => i.Assignee)
+        .Select(g => (g.Key, g.Sum(x => x.ComputedRemainingSeconds) / 3600.0))
+        .Where(x => x.Item2 > 0)
+        .ToList();
+
+    private double TaskAvgRemainingPerMember => TaskRemainingPerMember.Count == 0 ? 0
+        : TaskRemainingPerMember.Average(x => x.RemainingHours);
+
+    private HeaviestRow? TaskHeaviestMember
+    {
+        get
+        {
+            if (TaskRemainingPerMember.Count == 0) return null;
+            var top = TaskRemainingPerMember.OrderByDescending(x => x.RemainingHours).First();
+            return new HeaviestRow(top.Name, top.RemainingHours);
+        }
+    }
+
+    private double TaskWorkloadImbalancePct
+    {
+        get
+        {
+            if (TaskRemainingPerMember.Count == 0 || TaskAvgRemainingPerMember <= 0) return 0;
+            var max = TaskRemainingPerMember.Max(x => x.RemainingHours);
+            return (max - TaskAvgRemainingPerMember) / TaskAvgRemainingPerMember * 100.0;
+        }
+    }
+
+    private List<double> TaskDailyBurndownHours
+    {
+        get
+        {
+            if (Report == null) return new();
+            var start = Report.StartDate?.Date ?? DateTime.Today.AddDays(-13);
+            var end = Report.EndDate?.Date ?? DateTime.Today;
+            var totalHours = TaskOnlyIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
+            if (totalHours == 0) totalHours = TaskOnlyIssues.Count;
+            var loggedByDay = new Dictionary<DateTime, double>();
+            foreach (var w in TaskOnlyIssues.SelectMany(i => i.Worklogs))
+            {
+                var d = w.Started.Date;
+                loggedByDay[d] = (loggedByDay.ContainsKey(d) ? loggedByDay[d] : 0) + w.TimeSpentSeconds / 3600.0;
+            }
+            var points = new List<double>();
+            var remaining = totalHours;
+            for (var d = start; d <= end; d = d.AddDays(1))
+            {
+                if (loggedByDay.TryGetValue(d, out var logged)) remaining -= logged;
+                if (d <= DateTime.Today) points.Add(Math.Max(0, remaining));
+            }
+            return points;
+        }
+    }
 
     // ── Health score (0-100) — weighted composite ────────────────────────────
     private int HealthScore

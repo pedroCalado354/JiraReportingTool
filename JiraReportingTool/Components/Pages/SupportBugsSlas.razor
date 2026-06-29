@@ -1,0 +1,2327 @@
+@page "/support-bugs-slas"
+@rendermode InteractiveServer
+@using JiraReportingTool.Models
+@using Microsoft.JSInterop
+@inject IJiraService JiraService
+@inject IConfiguration Config
+@inject IJSRuntime JS
+@implements IDisposable
+
+<!-- ═══════════════════ HEADER ═══════════════════ -->
+<div class="sb-root">
+
+    <div class="sb-load-bar">
+        <div class="sb-load-inner">
+            <div class="sb-load-title-block">
+                <div class="sb-load-title-row">
+                    <span class="sb-load-title">Support Bugs · SLAs</span>
+                </div>
+                <span class="sb-load-sub">Priority list &amp; SLA compliance · live from Jira</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════ TABS ═══════════════════ -->
+    <div class="sb-tabs">
+        <button class="sb-tab @(_activeTab == "priority" ? "sb-tab-active" : "")" @onclick="ActivatePriorityTab">
+            Priority
+            @if (_masterLoaded && MasterTotalCount > 0) { <span class="sb-tab-badge">@MasterTotalCount</span> }
+        </button>
+        <button class="sb-tab @(_activeTab == "slas" ? "sb-tab-active" : "")" @onclick="SwitchToSlaTab">
+            SLAs
+        </button>
+    </div>
+
+    <!-- ═══════════════════ PRIORITY TAB — BUG MASTER DASHBOARD ═══════════════════ -->
+    @if (_activeTab == "priority")
+    {
+    @if (_masterLoading)
+    {
+        <div class="sb-empty" style="padding:40px;font-size:14px">Loading Bug Master Dashboard…</div>
+    }
+    else if (!string.IsNullOrEmpty(_masterError))
+    {
+        <div class="sb-empty" style="padding:24px;color:var(--danger)">@_masterError</div>
+    }
+    else if (_masterLoaded)
+    {
+        <!-- KPI summary row -->
+        <div class="sb-master-kpi-row">
+            <div class="sb-master-kpi sb-master-kpi-p0">
+                <div class="sb-master-kpi-label">🔴 Prio 0 — Overdue / Due Today</div>
+                <div class="sb-master-kpi-count">@_prio0Bugs.Count</div>
+            </div>
+            <div class="sb-master-kpi sb-master-kpi-p1">
+                <div class="sb-master-kpi-label">🟠 Prio 1 — Due in 3 Days</div>
+                <div class="sb-master-kpi-count">@_prio1Bugs.Count</div>
+            </div>
+            <div class="sb-master-kpi sb-master-kpi-p2">
+                <div class="sb-master-kpi-label">🔵 Prio 2 — Highest Priority</div>
+                <div class="sb-master-kpi-count">@_prio2Bugs.Count</div>
+            </div>
+            <div class="sb-master-kpi sb-master-kpi-p3">
+                <div class="sb-master-kpi-label">🟦 Prio 3 — High Priority</div>
+                <div class="sb-master-kpi-count">@_prio3Bugs.Count</div>
+            </div>
+            <div class="sb-master-kpi sb-master-kpi-watch">
+                <div class="sb-master-kpi-label">👁 Watchlist — Due in 7 Days</div>
+                <div class="sb-master-kpi-count">@_watchlistBugs.Count</div>
+            </div>
+            <button class="btn small" style="align-self:center;margin-left:auto" @onclick="LoadMasterDashboardAsync">↻ Refresh</button>
+        </div>
+
+        <!-- Prio 0 -->
+        <div class="sb-section sb-master-section sb-master-p0">
+            <div class="sb-section-header" style="cursor:default">
+                <span class="sb-master-badge sb-badge-p0">P0</span>
+                <span class="sb-section-title">Overdue / Due Today</span>
+                <span class="sb-section-sub">@_prio0Bugs.Count issue@(_prio0Bugs.Count == 1 ? "" : "s")</span>
+            </div>
+            <div class="sb-table-wrap">
+                <table class="sb-table">
+                    <thead><tr>
+                        <th class="sb-th sb-th-pri sortable @PtSI("p0","pri")" @onclick='() => PtSort("p0","pri")' title="Priority">P</th>
+                        <th class="sb-th sb-th-key sortable @PtSI("p0","key")" @onclick='() => PtSort("p0","key")'>Key</th>
+                        <th class="sb-th sb-th-title sortable @PtSI("p0","title")" @onclick='() => PtSort("p0","title")'>Title</th>
+                        <th class="sb-th sb-th-assignee sortable @PtSI("p0","assignee")" @onclick='() => PtSort("p0","assignee")'>Assignee</th>
+                        <th class="sb-th sb-th-status sortable @PtSI("p0","status")" @onclick='() => PtSort("p0","status")'>Status</th>
+                        <th class="sb-th sb-th-due sortable @PtSI("p0","due")" @onclick='() => PtSort("p0","due")'>Prio Date</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("p0","days")" @onclick='() => PtSort("p0","days")'>Days Open</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("p0","logged")" @onclick='() => PtSort("p0","logged")'>Logged</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var bug in PtSorted(_prio0Bugs, "p0"))
+                        {
+                            var daysOpen = GetDaysOpen(bug);
+                            <tr class="sb-row">
+                                <td class="sb-td sb-td-pri"><span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span></td>
+                                <td class="sb-td sb-td-key"><a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a></td>
+                                <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
+                                <td class="sb-td sb-td-due" style="color:var(--danger);font-weight:600">@FormatPrioDate(bug.PrioListDate)</td>
+                                <td class="sb-td sb-td-est @(daysOpen > 30 ? "kpi-red" : daysOpen > 14 ? "kpi-amber" : "")">@daysOpen d</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                            </tr>
+                        }
+                        @if (_prio0Bugs.Count == 0) { <tr><td colspan="8" class="sb-empty">No issues.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Prio 1 -->
+        <div class="sb-section sb-master-section sb-master-p1">
+            <div class="sb-section-header" style="cursor:default">
+                <span class="sb-master-badge sb-badge-p1">P1</span>
+                <span class="sb-section-title">Due in Next 3 Days</span>
+                <span class="sb-section-sub">@_prio1Bugs.Count issue@(_prio1Bugs.Count == 1 ? "" : "s")</span>
+            </div>
+            <div class="sb-table-wrap">
+                <table class="sb-table">
+                    <thead><tr>
+                        <th class="sb-th sb-th-pri sortable @PtSI("p1","pri")" @onclick='() => PtSort("p1","pri")' title="Priority">P</th>
+                        <th class="sb-th sb-th-key sortable @PtSI("p1","key")" @onclick='() => PtSort("p1","key")'>Key</th>
+                        <th class="sb-th sb-th-title sortable @PtSI("p1","title")" @onclick='() => PtSort("p1","title")'>Title</th>
+                        <th class="sb-th sb-th-assignee sortable @PtSI("p1","assignee")" @onclick='() => PtSort("p1","assignee")'>Assignee</th>
+                        <th class="sb-th sb-th-status sortable @PtSI("p1","status")" @onclick='() => PtSort("p1","status")'>Status</th>
+                        <th class="sb-th sb-th-due sortable @PtSI("p1","due")" @onclick='() => PtSort("p1","due")'>Prio Date</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("p1","days")" @onclick='() => PtSort("p1","days")'>Days Open</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("p1","logged")" @onclick='() => PtSort("p1","logged")'>Logged</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var bug in PtSorted(_prio1Bugs, "p1"))
+                        {
+                            var daysOpen = GetDaysOpen(bug);
+                            <tr class="sb-row">
+                                <td class="sb-td sb-td-pri"><span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span></td>
+                                <td class="sb-td sb-td-key"><a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a></td>
+                                <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
+                                <td class="sb-td sb-td-due" style="color:var(--warning);font-weight:600">@FormatPrioDate(bug.PrioListDate)</td>
+                                <td class="sb-td sb-td-est @(daysOpen > 30 ? "kpi-red" : daysOpen > 14 ? "kpi-amber" : "")">@daysOpen d</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                            </tr>
+                        }
+                        @if (_prio1Bugs.Count == 0) { <tr><td colspan="8" class="sb-empty">No issues.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Prio 2 -->
+        <div class="sb-section sb-master-section sb-master-p2">
+            <div class="sb-section-header" style="cursor:default">
+                <span class="sb-master-badge sb-badge-p2">P2</span>
+                <span class="sb-section-title">Highest Priority Pro Bugs</span>
+                <span class="sb-section-sub">@_prio2Bugs.Count issue@(_prio2Bugs.Count == 1 ? "" : "s") · Rentway Pro &amp; Integrations · Highest priority</span>
+            </div>
+            <div class="sb-table-wrap">
+                <table class="sb-table">
+                    <thead><tr>
+                        <th class="sb-th sb-th-pri sortable @PtSI("p2","pri")" @onclick='() => PtSort("p2","pri")' title="Priority">P</th>
+                        <th class="sb-th sb-th-key sortable @PtSI("p2","key")" @onclick='() => PtSort("p2","key")'>Key</th>
+                        <th class="sb-th sb-th-title sortable @PtSI("p2","title")" @onclick='() => PtSort("p2","title")'>Title</th>
+                        <th class="sb-th sb-th-customer sortable @PtSI("p2","customer")" @onclick='() => PtSort("p2","customer")'>Customer</th>
+                        <th class="sb-th sb-th-assignee sortable @PtSI("p2","assignee")" @onclick='() => PtSort("p2","assignee")'>Assignee</th>
+                        <th class="sb-th sb-th-status sortable @PtSI("p2","status")" @onclick='() => PtSort("p2","status")'>Status</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("p2","days")" @onclick='() => PtSort("p2","days")'>Days Open</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("p2","logged")" @onclick='() => PtSort("p2","logged")'>Logged</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var bug in PtSorted(_prio2Bugs, "p2"))
+                        {
+                            var daysOpen = GetDaysOpen(bug);
+                            <tr class="sb-row">
+                                <td class="sb-td sb-td-pri"><span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span></td>
+                                <td class="sb-td sb-td-key"><a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a></td>
+                                <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                <td class="sb-td sb-td-customer">@(string.IsNullOrEmpty(bug.Customer) ? "—" : bug.Customer)</td>
+                                <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
+                                <td class="sb-td sb-td-est @(daysOpen > 30 ? "kpi-red" : daysOpen > 14 ? "kpi-amber" : "")">@daysOpen d</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                            </tr>
+                        }
+                        @if (_prio2Bugs.Count == 0) { <tr><td colspan="8" class="sb-empty">No issues.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Prio 3 -->
+        <div class="sb-section sb-master-section sb-master-p3">
+            <div class="sb-section-header" style="cursor:default">
+                <span class="sb-master-badge sb-badge-p3">P3</span>
+                <span class="sb-section-title">High Priority Pro Bugs</span>
+                <span class="sb-section-sub">@_prio3Bugs.Count issue@(_prio3Bugs.Count == 1 ? "" : "s") · Rentway Pro &amp; Integrations · High priority</span>
+            </div>
+            <div class="sb-table-wrap">
+                <table class="sb-table">
+                    <thead><tr>
+                        <th class="sb-th sb-th-pri sortable @PtSI("p3","pri")" @onclick='() => PtSort("p3","pri")' title="Priority">P</th>
+                        <th class="sb-th sb-th-key sortable @PtSI("p3","key")" @onclick='() => PtSort("p3","key")'>Key</th>
+                        <th class="sb-th sb-th-title sortable @PtSI("p3","title")" @onclick='() => PtSort("p3","title")'>Title</th>
+                        <th class="sb-th sb-th-customer sortable @PtSI("p3","customer")" @onclick='() => PtSort("p3","customer")'>Customer</th>
+                        <th class="sb-th sb-th-assignee sortable @PtSI("p3","assignee")" @onclick='() => PtSort("p3","assignee")'>Assignee</th>
+                        <th class="sb-th sb-th-status sortable @PtSI("p3","status")" @onclick='() => PtSort("p3","status")'>Status</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("p3","days")" @onclick='() => PtSort("p3","days")'>Days Open</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("p3","logged")" @onclick='() => PtSort("p3","logged")'>Logged</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var bug in PtSorted(_prio3Bugs, "p3"))
+                        {
+                            var daysOpen = GetDaysOpen(bug);
+                            <tr class="sb-row">
+                                <td class="sb-td sb-td-pri"><span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span></td>
+                                <td class="sb-td sb-td-key"><a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a></td>
+                                <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                <td class="sb-td sb-td-customer">@(string.IsNullOrEmpty(bug.Customer) ? "—" : bug.Customer)</td>
+                                <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
+                                <td class="sb-td sb-td-est @(daysOpen > 30 ? "kpi-red" : daysOpen > 14 ? "kpi-amber" : "")">@daysOpen d</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                            </tr>
+                        }
+                        @if (_prio3Bugs.Count == 0) { <tr><td colspan="8" class="sb-empty">No issues.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Watchlist -->
+        <div class="sb-section sb-master-section sb-master-watch">
+            <div class="sb-section-header" style="cursor:default">
+                <span class="sb-master-badge sb-badge-watch">W</span>
+                <span class="sb-section-title">Watchlist — Due in 4–7 Days</span>
+                <span class="sb-section-sub">@_watchlistBugs.Count issue@(_watchlistBugs.Count == 1 ? "" : "s") · monitor closely</span>
+            </div>
+            <div class="sb-table-wrap">
+                <table class="sb-table">
+                    <thead><tr>
+                        <th class="sb-th sb-th-pri sortable @PtSI("w","pri")" @onclick='() => PtSort("w","pri")' title="Priority">P</th>
+                        <th class="sb-th sb-th-key sortable @PtSI("w","key")" @onclick='() => PtSort("w","key")'>Key</th>
+                        <th class="sb-th sb-th-title sortable @PtSI("w","title")" @onclick='() => PtSort("w","title")'>Title</th>
+                        <th class="sb-th sb-th-assignee sortable @PtSI("w","assignee")" @onclick='() => PtSort("w","assignee")'>Assignee</th>
+                        <th class="sb-th sb-th-status sortable @PtSI("w","status")" @onclick='() => PtSort("w","status")'>Status</th>
+                        <th class="sb-th sb-th-due sortable @PtSI("w","due")" @onclick='() => PtSort("w","due")'>Prio Date</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("w","days")" @onclick='() => PtSort("w","days")'>Days Open</th>
+                        <th class="sb-th sb-th-est sortable @PtSI("w","logged")" @onclick='() => PtSort("w","logged")'>Logged</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var bug in PtSorted(_watchlistBugs, "w"))
+                        {
+                            var daysOpen = GetDaysOpen(bug);
+                            <tr class="sb-row">
+                                <td class="sb-td sb-td-pri"><span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span></td>
+                                <td class="sb-td sb-td-key"><a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a></td>
+                                <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
+                                <td class="sb-td sb-td-due">@FormatPrioDate(bug.PrioListDate)</td>
+                                <td class="sb-td sb-td-est @(daysOpen > 30 ? "kpi-red" : daysOpen > 14 ? "kpi-amber" : "")">@daysOpen d</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                            </tr>
+                        }
+                        @if (_watchlistBugs.Count == 0) { <tr><td colspan="8" class="sb-empty">No issues.</td></tr> }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    }
+    } <!-- end priority tab -->
+
+    <!-- ═══════════════════ SLAs TAB ═══════════════════ -->
+    @if (_activeTab == "slas")
+    {
+        if (_slaLoading)
+        {
+            <div class="sb-section"><div class="sb-empty" style="padding:48px;text-align:center">Loading SLA data…</div></div>
+        }
+        else if (!string.IsNullOrEmpty(_slaError))
+        {
+            <div class="sb-section"><div class="sb-empty" style="padding:48px;text-align:center;color:var(--danger)">@_slaError</div></div>
+        }
+        else
+        {
+            <div class="sb-sla-toolbar">
+                <span class="sb-section-sub">SLA thresholds — P2: 24h · P3: 72h · P4: 2 weeks · P5: 4 weeks · all customers &amp; products · last 3 weeks · click a bar to list tickets</span>
+                <button class="btn small" style="margin-left:auto" @onclick="LoadSlaDashboardAsync">↻ Refresh</button>
+            </div>
+
+            @foreach (var tier in SlaTiers)
+            {
+                var tierBugs = SlaBugsFor(tier.Id);
+                <div class="sb-section sb-sla-tier">
+                    <div class="sb-sla-tier-head">
+                        <span class="sb-sla-tier-badge sb-sla-badge-@tier.Id.ToLowerInvariant()">@tier.Num</span>
+                        <div class="sb-sla-tier-titles">
+                            <span class="sb-sla-tier-title">@tier.Title</span>
+                            <span class="sb-sla-tier-sub">@tier.Sub · @tierBugs.Count open now</span>
+                        </div>
+                        <div class="sb-sla-filters">
+                            <span class="sb-sla-filters-label">Open in Jira</span>
+                            <a class="sb-sla-filter-link" href="@SlaJiraUrl(SlaOutsideJql(tier))" target="_blank" rel="noopener noreferrer" title="@SlaOutsideJql(tier)">Outside SLA ↗</a>
+                            <a class="sb-sla-filter-link" href="@SlaJiraUrl(SlaInsideJql(tier))" target="_blank" rel="noopener noreferrer" title="@SlaInsideJql(tier)">Inside SLA ↗</a>
+                            <a class="sb-sla-filter-link" href="@SlaJiraUrl(tier.Jql)" target="_blank" rel="noopener noreferrer" title="@tier.Jql">All open ↗</a>
+                        </div>
+                    </div>
+                    <div class="sb-sla-canvas-wrap">
+                        <canvas id="sb-sla-chart-@tier.Id"></canvas>
+                    </div>
+
+                    @if (_slaDrillTier == tier.Id && _slaDrillBucket >= 0)
+                    {
+                        var drill      = SlaDrillBugs(tier, _slaDrillWeek, _slaDrillBucket);
+                        var byProduct  = drill.GroupBy(b => string.IsNullOrEmpty(b.Product)  ? "—" : b.Product)
+                                              .OrderByDescending(g => g.Count()).ToList();
+                        var byCustomer = drill.GroupBy(b => string.IsNullOrEmpty(b.Customer) ? "—" : b.Customer)
+                                              .OrderByDescending(g => g.Count()).ToList();
+                        <div class="sb-sla-drill">
+                            <div class="sb-sla-drill-head">
+                                <span class="sb-sla-drill-title">
+                                    Drill-down · @tier.Num · @SlaBucketLabel(_slaDrillBucket) · @SlaWeekLabel(_slaDrillWeek)
+                                    · <strong>@drill.Count ticket@(drill.Count == 1 ? "" : "s")</strong>
+                                </span>
+                                <button class="sb-sla-drill-close" title="Close" @onclick="ClearSlaDrill">✕</button>
+                            </div>
+
+                            <div class="sb-sla-chips-row">
+                                <span class="sb-sla-chips-label">By product</span>
+                                @foreach (var g in byProduct)
+                                {
+                                    <span class="sb-sla-chip">@g.Key: <strong>@g.Count()</strong></span>
+                                }
+                            </div>
+                            <div class="sb-sla-chips-row">
+                                <span class="sb-sla-chips-label">By customer</span>
+                                @foreach (var g in byCustomer)
+                                {
+                                    <span class="sb-sla-chip">@g.Key: <strong>@g.Count()</strong></span>
+                                }
+                            </div>
+
+                            <div class="sb-table-wrap">
+                                <table class="sb-table">
+                                    <thead><tr>
+                                        <th class="sb-th sb-th-key">Key</th>
+                                        <th class="sb-th sb-th-title">Summary</th>
+                                        <th class="sb-th sb-th-status">Status</th>
+                                        <th class="sb-th sb-th-assignee">Assignee</th>
+                                        <th class="sb-th">Customer</th>
+                                        <th class="sb-th">Product</th>
+                                        <th class="sb-th sb-th-est">Age (d)</th>
+                                    </tr></thead>
+                                    <tbody>
+                                        @foreach (var bug in drill)
+                                        {
+                                            <tr class="sb-row">
+                                                <td class="sb-td sb-td-key"><a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a></td>
+                                                <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                                <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
+                                                <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
+                                                <td class="sb-td">@(string.IsNullOrEmpty(bug.Customer) ? "—" : bug.Customer)</td>
+                                                <td class="sb-td">@(string.IsNullOrEmpty(bug.Product) ? "—" : bug.Product)</td>
+                                                <td class="sb-td sb-td-est">@GetDaysOpen(bug)</td>
+                                            </tr>
+                                        }
+                                        @if (drill.Count == 0) { <tr><td colspan="7" class="sb-empty">No tickets in this bucket.</td></tr> }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        }
+    } <!-- end slas tab -->
+
+</div>
+
+@code {
+    private string _activeTab = "priority";
+    private string _jiraBase => Config["Jira:BaseUrl"]?.TrimEnd('/') ?? "";
+
+    // ── Priority (Bug Master Dashboard) ─────────────────────────────────────────
+    private List<SprintIssue> _prio0Bugs     = new();
+    private List<SprintIssue> _prio1Bugs     = new();
+    private List<SprintIssue> _prio2Bugs     = new();
+    private List<SprintIssue> _prio3Bugs     = new();
+    private List<SprintIssue> _watchlistBugs = new();
+    private bool   _masterLoading = false;
+    private bool   _masterLoaded  = false;
+    private string _masterError   = "";
+
+    private const string Prio0Jql     = "\"JS Project[Radio Buttons]\" IS NOT EMPTY AND \"JM Prio List[Date]\" <= 1d and status not in (done,rejected) ORDER BY cf[12437] ASC";
+    private const string Prio1Jql     = "\"JM Prio List[Date]\" <= 3d and \"JM Prio List[Date]\" >1d and status not in (done,rejected, Canceled)";
+    private const string Prio2Jql     = "project = JM AND \"Customers Jimpisoft[Dropdown]\" IS NOT EMPTY AND status NOT IN (Done, Canceled, Rejected) AND issuetype = Bug AND creator NOT IN (\"Pedro Calado\") AND \"JS Project[Radio Buttons]\" IN (\"Rentway Pro\", \"Integrations\") and \"Customers Jimpisoft[Dropdown]\" not in (\"000 - Emotion\") and priority in (Highest) order BY createdDate asc";
+    private const string Prio3Jql     = "project = JM AND \"Customers Jimpisoft[Dropdown]\" IS NOT EMPTY AND status NOT IN (Done, Canceled, Rejected) AND issuetype = Bug AND creator NOT IN (\"Pedro Calado\") AND \"JS Project[Radio Buttons]\" IN (\"Rentway Pro\", \"Integrations\") and \"Customers Jimpisoft[Dropdown]\" not in (\"000 - Emotion\") and priority in (High) order BY createdDate asc";
+    private const string WatchlistJql = "\"JM Prio List[Date]\" > 3d and \"JM Prio List[Date]\" <= 7d and status not in (done,rejected)";
+
+    private static readonly string[] PriorityOrder = ["Critical", "Highest", "High", "Medium", "Low", "Lowest"];
+    private static int PriOrder(SprintIssue b)
+    {
+        var idx = Array.FindIndex(PriorityOrder, p => p.Equals(b.Priority, StringComparison.OrdinalIgnoreCase));
+        return idx < 0 ? 99 : idx;
+    }
+
+    // ── Priority table per-table sort state ─────────────────────────────────────
+    private Dictionary<string, string> _ptCol = new() { ["p0"]="", ["p1"]="", ["p2"]="", ["p3"]="", ["w"]="" };
+    private Dictionary<string, bool>   _ptAsc = new() { ["p0"]=true, ["p1"]=true, ["p2"]=true, ["p3"]=true, ["w"]=true };
+    private void PtSort(string t, string col) { if (_ptCol[t] == col) _ptAsc[t] = !_ptAsc[t]; else { _ptCol[t] = col; _ptAsc[t] = true; } }
+    private string PtSI(string t, string col) => _ptCol[t] == col ? (_ptAsc[t] ? "sort-asc" : "sort-desc") : "";
+    private IEnumerable<SprintIssue> PtSorted(List<SprintIssue> list, string t)
+    {
+        var asc = _ptAsc[t];
+        return _ptCol[t] switch
+        {
+            "key"      => asc ? list.OrderBy(b => b.Key)                               : list.OrderByDescending(b => b.Key),
+            "title"    => asc ? list.OrderBy(b => b.Summary)                           : list.OrderByDescending(b => b.Summary),
+            "assignee" => asc ? list.OrderBy(b => b.Assignee)                          : list.OrderByDescending(b => b.Assignee),
+            "customer" => asc ? list.OrderBy(b => b.Customer)                          : list.OrderByDescending(b => b.Customer),
+            "status"   => asc ? list.OrderBy(b => b.Status)                            : list.OrderByDescending(b => b.Status),
+            "pri"      => asc ? list.OrderBy(b => PriOrder(b))                         : list.OrderByDescending(b => PriOrder(b)),
+            "due"      => asc ? list.OrderBy(b => b.PrioListDate ?? DateTime.MaxValue) : list.OrderByDescending(b => b.PrioListDate ?? DateTime.MinValue),
+            "days"     => asc ? list.OrderBy(b => GetDaysOpen(b))                      : list.OrderByDescending(b => GetDaysOpen(b)),
+            "logged"   => asc ? list.OrderBy(b => b.TimeSpentSeconds)                  : list.OrderByDescending(b => b.TimeSpentSeconds),
+            _          => list.AsEnumerable()
+        };
+    }
+
+    private async Task ActivatePriorityTab()
+    {
+        _activeTab = "priority";
+        if (!_masterLoaded && !_masterLoading)
+            await LoadMasterDashboardAsync();
+    }
+
+    private async Task LoadMasterDashboardAsync()
+    {
+        _masterLoading = true;
+        _masterError   = "";
+        StateHasChanged();
+        try
+        {
+            var t0 = JiraService.GetBugsByJqlAsync(Prio0Jql);
+            var t1 = JiraService.GetBugsByJqlAsync(Prio1Jql);
+            var t2 = JiraService.GetBugsByJqlAsync(Prio2Jql);
+            var t3 = JiraService.GetBugsByJqlAsync(Prio3Jql);
+            var t4 = JiraService.GetBugsByJqlAsync(WatchlistJql);
+            await Task.WhenAll(t0, t1, t2, t3, t4);
+            _prio0Bugs     = t0.Result.Issues ?? new();
+            _prio1Bugs     = t1.Result.Issues ?? new();
+            _prio2Bugs     = t2.Result.Issues ?? new();
+            _prio3Bugs     = t3.Result.Issues ?? new();
+            _watchlistBugs = t4.Result.Issues ?? new();
+            _masterLoaded  = true;
+        }
+        catch (Exception ex)
+        {
+            _masterError = $"Failed to load Bug Master Dashboard: {ex.Message}";
+        }
+        finally
+        {
+            _masterLoading = false;
+        }
+    }
+
+    private static string FormatPrioDate(DateTime? d)
+    {
+        if (d == null) return "—";
+        var days = (int)Math.Round((d.Value.Date - DateTime.Today).TotalDays);
+        var label = d.Value.ToString("dd MMM");
+        if (days < 0)   return $"{label} ({-days}d overdue)";
+        if (days == 0)  return $"{label} (today)";
+        if (days == 1)  return $"{label} (tomorrow)";
+        return $"{label} (+{days}d)";
+    }
+
+    private int MasterTotalCount => _prio0Bugs.Count + _prio1Bugs.Count + _prio2Bugs.Count + _prio3Bugs.Count + _watchlistBugs.Count;
+
+    // ── SLA Dashboard ───────────────────────────────────────────────────────────
+    private bool   _slaLoading          = false;
+    private bool   _slaLoaded           = false;
+    private string _slaError            = "";
+    private bool   _slaChartsNeedRender = false;
+    private List<SprintIssue> _slaP2 = new();
+    private List<SprintIssue> _slaP3 = new();
+    private List<SprintIssue> _slaP4 = new();
+    private List<SprintIssue> _slaP5 = new();
+    private DotNetObjectReference<SupportBugsSlas>? _slaDotNetRef;
+
+    // Drill-down selection (set from a bar click)
+    private string _slaDrillTier   = "";
+    private int    _slaDrillWeek   = -1;   // index into SlaWeekOffsets
+    private int    _slaDrillBucket = -1;   // 0=inside, 1=<7d, 2=7–30d, 3=>30d past
+
+    // Week snapshots: 2 weeks ago, 1 week ago, now (oldest → newest)
+    private static readonly int[] SlaWeekOffsets = { 14, 7, 0 };
+
+    // Age = the Jira createdDate token that marks the SLA breach line (used to build inside/outside Jira filter links).
+    private record SlaTier(string Id, string Num, string Title, string Sub, double SlaHours, string Age, string Jql);
+
+    private const string SlaBaseJql =
+        "project = JM AND \"Customers Jimpisoft[Dropdown]\" IS NOT EMPTY AND issuetype = Bug "
+      + "AND creator NOT IN (\"Pedro Calado\") AND status NOT IN (Done, Rejected)";
+
+    // One "all open" query per tier (the createdDate split is applied client-side from the SLA threshold).
+    private static readonly SlaTier[] SlaTiers =
+    {
+        new("P2", "P2", "P2 — Highest priority",     "SLA 24h",     24,      "-24h", $"{SlaBaseJql} AND priority in (Highest)"),
+        new("P3", "P3", "P3 — High priority",        "SLA 72h",     72,      "-72h", $"{SlaBaseJql} AND priority in (High)"),
+        new("P4", "P4", "P4 — Medium priority",      "SLA 2 weeks", 24 * 14, "-2w",  $"{SlaBaseJql} AND priority in (Medium)"),
+        new("P5", "P5", "P5 — Low / Lowest priority","SLA 4 weeks", 24 * 28, "-4w",  $"{SlaBaseJql} AND priority in (Low, Lowest)"),
+    };
+
+    // Jira issue-navigator URL for an arbitrary JQL string (opens as a filter the user can save).
+    private string SlaJiraUrl(string jql) => $"{_jiraBase}/issues/?jql={Uri.EscapeDataString(jql)}";
+    private string SlaOutsideJql(SlaTier t) => $"{t.Jql} AND createdDate <= {t.Age}";
+    private string SlaInsideJql(SlaTier t)  => $"{t.Jql} AND createdDate > {t.Age}";
+
+    private List<SprintIssue> SlaBugsFor(string tierId) => tierId switch
+    {
+        "P2" => _slaP2, "P3" => _slaP3, "P4" => _slaP4, "P5" => _slaP5, _ => new()
+    };
+
+    // Bucket of a bug as it would have appeared at a given snapshot time:
+    // 0=inside, 1=<7d past, 2=7–30d past, 3=>30d past, -1 if it didn't exist yet at the snapshot.
+    private static int SlaBucketAt(SprintIssue b, double slaHours, DateTime snapshot)
+    {
+        if (!b.Created.HasValue || b.Created.Value > snapshot) return -1;
+        var breachHours = (snapshot - b.Created.Value).TotalHours - slaHours;
+        if (breachHours <= 0) return 0;
+        var breachDays = breachHours / 24.0;
+        if (breachDays < 7)  return 1;
+        if (breachDays <= 30) return 2;
+        return 3;
+    }
+
+    private static string SlaBucketLabel(int bucket) => bucket switch
+    {
+        0 => "Inside SLA",
+        1 => "Outside SLA · <7d past",
+        2 => "Outside SLA · 7–30d past",
+        3 => "Outside SLA · >30d past",
+        _ => ""
+    };
+
+    private static string SlaWeekLabel(int week)
+    {
+        if (week < 0 || week >= SlaWeekOffsets.Length) return "";
+        var off  = SlaWeekOffsets[week];
+        var date = DateTime.Today.AddDays(-off);
+        return off == 0 ? $"week of {date:dd MMM} (now)" : $"week of {date:dd MMM}";
+    }
+
+    private List<SprintIssue> SlaDrillBugs(SlaTier tier, int week, int bucket)
+    {
+        if (week < 0 || week >= SlaWeekOffsets.Length || bucket < 0) return new();
+        var snap = DateTime.Now.AddDays(-SlaWeekOffsets[week]);
+        return SlaBugsFor(tier.Id)
+            .Where(b => SlaBucketAt(b, tier.SlaHours, snap) == bucket)
+            .OrderByDescending(b => GetDaysOpen(b))
+            .ToList();
+    }
+
+    private void ClearSlaDrill()
+    {
+        _slaDrillTier = ""; _slaDrillWeek = -1; _slaDrillBucket = -1;
+    }
+
+    [JSInvokable]
+    public void OnSlaBarClick(string tierId, int week, int bucket)
+    {
+        _slaDrillTier   = tierId;
+        _slaDrillWeek   = week;
+        _slaDrillBucket = bucket;
+        StateHasChanged();
+    }
+
+    private async Task SwitchToSlaTab()
+    {
+        _activeTab = "slas";
+        if (!_slaLoaded && !_slaLoading)
+            await LoadSlaDashboardAsync();
+        else
+            _slaChartsNeedRender = true;
+    }
+
+    private async Task LoadSlaDashboardAsync()
+    {
+        _slaLoading = true;
+        _slaError   = "";
+        ClearSlaDrill();
+        StateHasChanged();
+        try
+        {
+            var tasks = SlaTiers.Select(t => JiraService.GetSlaBugsByJqlAsync(t.Jql)).ToArray();
+            await Task.WhenAll(tasks);
+            _slaP2 = tasks[0].Result.Issues ?? new();
+            _slaP3 = tasks[1].Result.Issues ?? new();
+            _slaP4 = tasks[2].Result.Issues ?? new();
+            _slaP5 = tasks[3].Result.Issues ?? new();
+            _slaLoaded           = true;
+            _slaChartsNeedRender = true;
+        }
+        catch (Exception ex)
+        {
+            _slaError = $"Failed to load SLA data: {ex.Message}";
+        }
+        finally
+        {
+            _slaLoading = false;
+        }
+    }
+
+    private async Task RenderSlaChartsAsync()
+    {
+        _slaDotNetRef ??= DotNetObjectReference.Create(this);
+        foreach (var tier in SlaTiers)
+            await RenderSlaTierChartAsync(tier);
+    }
+
+    private async Task RenderSlaTierChartAsync(SlaTier tier)
+    {
+        var canvasId = $"sb-sla-chart-{tier.Id}";
+        var bugs     = SlaBugsFor(tier.Id);
+
+        // brighter = more recent week
+        var weekColors = new[] { "rgba(37,99,235,0.30)", "rgba(37,99,235,0.60)", "rgba(37,99,235,0.95)" };
+
+        var datasets = new List<object>();
+        for (int w = 0; w < SlaWeekOffsets.Length; w++)
+        {
+            var snap = DateTime.Now.AddDays(-SlaWeekOffsets[w]);
+            var data = new int[4];
+            foreach (var b in bugs)
+            {
+                var bk = SlaBucketAt(b, tier.SlaHours, snap);
+                if (bk >= 0) data[bk]++;
+            }
+            datasets.Add(new
+            {
+                label           = $"Week of {DateTime.Today.AddDays(-SlaWeekOffsets[w]):dd MMM}" + (SlaWeekOffsets[w] == 0 ? " (now)" : ""),
+                backgroundColor = weekColors[w],
+                data,
+                borderRadius    = 3,
+                maxBarThickness = 48
+            });
+        }
+
+        await JS.InvokeVoidAsync("renderClickableBarChart", canvasId, new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = new[] { "Inside SLA", "Outside <7d past", "Outside 7–30d past", "Outside >30d past" },
+                datasets
+            },
+            options = new
+            {
+                responsive = true,
+                maintainAspectRatio = false,
+                plugins = new { legend = new { position = "top" } },
+                scales = new
+                {
+                    x = new { grid = new { display = false } },
+                    y = new
+                    {
+                        beginAtZero = true,
+                        ticks = new { stepSize = 1, precision = 0 },
+                        title = new { display = true, text = $"Open {tier.Id} tickets" },
+                        grid  = new { color = "rgba(0,0,0,0.05)" }
+                    }
+                }
+            }
+        }, _slaDotNetRef, "OnSlaBarClick", tier.Id);
+    }
+
+    // ── Shared helpers ────────────────────────────────────────────────────────
+    private static int GetDaysOpen(SprintIssue b) =>
+        b.Created.HasValue ? (int)(DateTime.Today - b.Created.Value.Date).TotalDays : 0;
+
+    private static string GetStatusClass(string? status) => status?.ToLowerInvariant() switch
+    {
+        "dev ready"   => "status-dev-ready",
+        "in progress" => "status-in-progress",
+        "in review"   => "status-in-review",
+        "qa ready"    => "status-qa-ready",
+        "done"        => "status-done",
+        "on hold"     => "status-on-hold",
+        _             => "status-default"
+    };
+
+    private static string GetPriorityClass(string? p) => p?.ToLowerInvariant() switch
+    {
+        "highest" or "critical" => "pri-critical",
+        "high"                  => "pri-high",
+        "medium"                => "pri-medium",
+        "low"                   => "pri-low",
+        "lowest"                => "pri-lowest",
+        _                       => "pri-medium"
+    };
+
+    private static string FormatSeconds(int s)
+    {
+        if (s == 0) return "—";
+        var abs = Math.Abs(s);
+        var h = abs / 3600;
+        var m = (abs % 3600) / 60;
+        var fmt = h > 0 ? (m > 0 ? $"{h}h {m}m" : $"{h}h") : $"{m}m";
+        return s < 0 ? $"-{fmt}" : fmt;
+    }
+
+    // ── Lifecycle ───────────────────────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadMasterDashboardAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_slaChartsNeedRender && _activeTab == "slas" && _slaLoaded)
+        {
+            _slaChartsNeedRender = false;
+            await RenderSlaChartsAsync();
+        }
+    }
+
+    public void Dispose() => _slaDotNetRef?.Dispose();
+}
+
+<style>
+    /* ── Root ────────────────────────────────────────────────────── */
+    .sb-root {
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        max-width: 1600px;
+    }
+
+    /* ── Load bar (title + controls in one card) ─────────────────── */
+    .sb-load-bar {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 16px 20px;
+        box-shadow: var(--sh-xs);
+        margin-bottom: 0;
+    }
+
+    .sb-load-inner {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 16px;
+    }
+
+    .sb-load-title-block {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        margin-right: 8px;
+        align-self: center;
+    }
+
+    .sb-load-title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .sb-load-title {
+        font-size: 20px;
+        font-weight: 700;
+        color: var(--txt-1);
+        letter-spacing: -0.2px;
+    }
+
+    .sb-load-sub {
+        font-size: 12px;
+        color: var(--txt-3);
+    }
+
+    .sb-epic-badge {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--primary);
+        text-decoration: none;
+        background: var(--primary-light);
+        border: 1px solid var(--primary-border);
+        padding: 2px 10px;
+        border-radius: 20px;
+        transition: background 0.15s;
+    }
+    .sb-epic-badge:hover { background: #dbeafe; text-decoration: none; }
+
+    .sb-cfg-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .sb-cfg-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+    }
+
+    .sb-input {
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 13px;
+        font-family: inherit;
+        outline: none;
+        transition: border-color .15s, box-shadow .15s;
+        background: #fff;
+        color: var(--txt-1);
+    }
+    .sb-input:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.10);
+    }
+
+    .sb-epic-input { width: 130px; }
+    .sb-input-date { width: 148px; }
+    .sb-jss-section { margin-top: 8px; }
+    .sb-jss-input-row { display: flex; gap: 10px; align-items: flex-start; padding: 12px 16px 4px; }
+    .sb-jss-textarea { width: 320px; resize: vertical; min-height: 72px; line-height: 1.5; font-family: monospace; font-size: 12px; }
+
+    .sb-load-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .sb-btn {
+        border: none;
+        border-radius: 6px;
+        padding: 7px 16px;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: inherit;
+        cursor: pointer;
+        transition: opacity .15s;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .sb-btn:disabled { opacity: .45; cursor: not-allowed; }
+    .sb-btn:hover:not(:disabled) { opacity: .88; }
+
+    .sb-btn-primary { background: var(--primary); color: #fff; }
+    .sb-btn-ghost   { background: transparent; border: 1px solid #d1d5db; color: var(--txt-2); }
+    .sb-btn-ghost:hover:not(:disabled) { background: var(--surface-2); opacity: 1; }
+
+    .sb-spinner {
+        width: 13px; height: 13px;
+        border: 2px solid rgba(255,255,255,.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: sb-spin .7s linear infinite;
+        display: inline-block;
+        flex-shrink: 0;
+    }
+    @@keyframes sb-spin { to { transform: rotate(360deg); } }
+
+    .sb-error {
+        background: var(--danger-light);
+        color: var(--danger);
+        border: 1px solid var(--danger-border);
+        border-radius: var(--r-sm);
+        padding: 10px 14px;
+        font-size: 13px;
+    }
+
+    /* ── Metric strip ────────────────────────────────────────────── */
+    .sb-metrics {
+        display: flex;
+        align-items: stretch;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .sb-metric {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 14px 20px;
+        min-width: 100px;
+        box-shadow: var(--sh-xs);
+        border-left-width: 3px;
+        flex: 1;
+    }
+
+    .sb-metric-neutral { border-left-color: var(--border); }
+    .sb-metric-green   { border-left-color: var(--success); }
+    .sb-metric-blue    { border-left-color: var(--primary); }
+    .sb-metric-red     { border-left-color: var(--danger); }
+    .sb-metric-amber   { border-left-color: var(--warning); }
+    .sb-metric-time    { border-left-color: #8b5cf6; background: #faf5ff; border-color: #e9d5ff; border-left-color: #8b5cf6; }
+
+    .sb-metric-divider {
+        width: 1px;
+        background: var(--border);
+        margin: 4px 4px;
+        flex-shrink: 0;
+        align-self: stretch;
+    }
+
+    .sb-metric-val {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--txt-1);
+        line-height: 1.15;
+    }
+    .sb-metric-val-sm { font-size: 18px; }
+
+    .sb-metric-green .sb-metric-val  { color: var(--success); }
+    .sb-metric-blue .sb-metric-val   { color: var(--primary); }
+    .sb-metric-red .sb-metric-val    { color: var(--danger); }
+    .sb-metric-amber .sb-metric-val  { color: var(--warning); }
+    .sb-metric-time .sb-metric-val   { color: #7c3aed; }
+
+    .sb-metric-pct {
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--txt-3);
+        margin-left: 3px;
+    }
+
+    .sb-metric-lbl {
+        font-size: 11px;
+        color: var(--txt-3);
+        margin-top: 3px;
+        white-space: nowrap;
+        font-weight: 500;
+    }
+
+    /* ── Filter panel ────────────────────────────────────────────── */
+    .sb-filters-panel {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        overflow: hidden;
+        box-shadow: var(--sh-xs);
+    }
+
+    /* ── Checkbox+date-range grid (top row) ──────────────────────── */
+    .sb-filter-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 0;
+    }
+
+    .sb-filter-col {
+        padding: 12px 16px 14px;
+        border-right: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+    }
+    /* no right border at the end of each row of 3 */
+    .sb-filter-col:nth-child(3n) { border-right: none; }
+    /* no bottom border on the last row */
+    .sb-filter-col:nth-last-child(-n+3) { border-bottom: none; }
+
+    .sb-filter-empty {
+        font-size: 12px;
+        color: var(--txt-3);
+        font-style: italic;
+        padding: 4px 0;
+    }
+
+    .sb-filter-col-hdr {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .sb-filter-clear-link {
+        background: none;
+        border: none;
+        color: var(--primary);
+        font-size: 11px;
+        cursor: pointer;
+        padding: 0;
+        font-weight: 500;
+    }
+    .sb-filter-clear-link:hover { text-decoration: underline; }
+
+    .sb-filter-col-actions {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .sb-filter-action-sep { color: var(--txt-4); font-size: 11px; }
+
+    .sb-filter-count {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--primary);
+        background: var(--primary-light);
+        border-radius: 10px;
+        padding: 1px 6px;
+    }
+
+    .sb-section-clear { margin-left: auto; }
+
+    .sb-person-mode {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        color: var(--txt-2);
+        cursor: pointer;
+        margin: 2px 0 8px;
+        user-select: none;
+    }
+    .sb-person-mode input { cursor: pointer; }
+
+    .sb-check-list {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        max-height: 150px;
+        overflow-y: auto;
+    }
+
+    .sb-check-item {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 12px;
+        color: var(--txt-2);
+        cursor: pointer;
+        user-select: none;
+        white-space: nowrap;
+    }
+    .sb-check-item input[type="checkbox"] {
+        width: 13px;
+        height: 13px;
+        cursor: pointer;
+        accent-color: var(--primary);
+        flex-shrink: 0;
+    }
+    .sb-check-item:hover { color: var(--txt-1); }
+
+    .sb-date-range {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .sb-date-range-lbl {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--txt-4);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        margin-top: 4px;
+    }
+    .sb-date-range-lbl:first-child { margin-top: 0; }
+
+    .sb-filter-date {
+        font-size: 12px;
+        padding: 4px 8px;
+        height: 28px;
+    }
+
+    /* ── Chip-filter row (bottom row) ────────────────────────────── */
+    .sb-filter-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+        padding: 10px 16px;
+    }
+
+    .sb-filter-row-inline {
+        align-items: center;
+        background: var(--surface-2);
+    }
+
+    .sb-filter-sep {
+        height: 1px;
+        background: var(--border);
+    }
+
+    .sb-filter-inline-sep {
+        width: 1px;
+        background: var(--border);
+        align-self: stretch;
+        margin: 0 4px;
+    }
+
+    .sb-filter-inline-group {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .sb-filter-label {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .07em;
+        white-space: nowrap;
+    }
+
+    .sb-filter-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+    }
+
+    .sb-chip-btn {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 10px;
+        border-radius: 20px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--txt-2);
+        font-size: 12px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.12s;
+        line-height: 1.5;
+    }
+    .sb-chip-btn:hover {
+        border-color: var(--primary-border);
+        background: var(--primary-light);
+        color: var(--primary);
+    }
+    .sb-chip-btn.active {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: #fff;
+        font-weight: 600;
+    }
+
+    /* Health chip colour overrides when active */
+    .sb-chip-health-overdue.active    { background: var(--danger);  border-color: var(--danger); }
+    .sb-chip-health-at-risk.active    { background: var(--warning); border-color: var(--warning); }
+    .sb-chip-health-on-track.active   { background: var(--success); border-color: var(--success); }
+    .sb-chip-health-no-due-date.active { background: #6b7280; border-color: #6b7280; }
+    .sb-chip-health-done.active       { background: var(--success); border-color: var(--success); }
+
+    /* ── Sections ────────────────────────────────────────────────── */
+    .sb-section {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        overflow: hidden;
+        box-shadow: var(--sh-xs);
+    }
+
+    .sb-section-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 11px 16px;
+        cursor: pointer;
+        user-select: none;
+        background: var(--surface-2);
+        border-bottom: 1px solid var(--border);
+        transition: background 0.1s;
+    }
+    .sb-section-header:hover { background: #e9ecef; }
+
+    .sb-section-toggle { font-size: 11px; color: var(--txt-4); }
+
+    .sb-section-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--txt-1);
+    }
+
+    .sb-section-sub {
+        font-size: 12px;
+        color: var(--txt-3);
+    }
+
+    /* ── Assignee Cards ──────────────────────────────────────────── */
+    .sb-assignee-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px;
+        padding: 16px;
+    }
+
+    .sb-assignee-card {
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 14px 16px;
+        background: var(--surface);
+        transition: box-shadow 0.15s, border-color 0.15s;
+    }
+    .sb-assignee-card:hover {
+        box-shadow: var(--sh-sm);
+        border-color: #d1d5db;
+    }
+
+    .sb-ac-head {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .sb-ac-avatar {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-size: 12px;
+        font-weight: 700;
+        flex-shrink: 0;
+        letter-spacing: 0.5px;
+    }
+
+    .sb-ac-head-info { min-width: 0; }
+
+    .sb-ac-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--txt-1);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .sb-ac-pct-label {
+        font-size: 11px;
+        color: var(--txt-3);
+        margin-top: 1px;
+    }
+
+    .sb-ac-progress {
+        height: 4px;
+        background: var(--border);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-bottom: 10px;
+    }
+
+    .sb-ac-progress-fill {
+        height: 100%;
+        background: var(--success);
+        border-radius: 2px;
+        transition: width 0.3s;
+    }
+
+    .sb-ac-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-bottom: 10px;
+    }
+
+    .ac-chip {
+        display: inline-block;
+        padding: 2px 7px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+    .ac-chip-red   { background: #fee2e2; color: #b91c1c; }
+    .ac-chip-amber { background: #fef3c7; color: #92400e; }
+    .ac-chip-blue  { background: #dbeafe; color: #1e40af; }
+    .ac-chip-green { background: #dcfce7; color: #15803d; }
+    .ac-chip-gray  { background: #f3f4f6; color: #4b5563; }
+
+    .sb-ac-time {
+        display: flex;
+        gap: 14px;
+        font-size: 12px;
+        color: var(--txt-2);
+        font-weight: 600;
+    }
+
+    .sb-ac-time-lbl {
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--txt-4);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        margin-right: 2px;
+    }
+
+    /* ── Main Table ──────────────────────────────────────────────── */
+    .sb-table-wrap { overflow-x: auto; }
+
+    .sb-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+    }
+
+    .sb-th {
+        padding: 9px 10px;
+        text-align: left;
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        background: var(--surface-2);
+        border-bottom: 2px solid var(--border);
+        white-space: nowrap;
+    }
+
+    .sb-th-pri      { width: 28px; text-align: center; }
+    .sb-th-key      { width: 90px; }
+    .sb-th-title    { min-width: 220px; max-width: 320px; }
+    .sb-th-customer { width: 110px; }
+    .sb-th-assignee { width: 120px; }
+    .sb-th-labels   { width: 160px; }
+    .sb-td-customer { font-size: 12px; color: var(--txt-2); white-space: nowrap; }
+    .sb-th-status   { width: 110px; }
+    .sb-th-due      { width: 130px; }
+    .sb-th-forecast { width: 110px; }
+    .sb-th-est      { width: 80px; text-align: right; }
+    .sb-th-pct      { width: 90px; text-align: center; }
+    .sb-th-activity { width: 130px; }
+    .sb-th-expand   { width: 60px; text-align: center; }
+
+    .sb-td {
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: middle;
+        color: var(--txt-2);
+    }
+
+    .sb-row:hover .sb-td { background: #f8fafc; }
+    .sb-row-expanded .sb-td { background: #eff6ff; }
+
+    .sb-td-key { font-family: monospace; font-size: 12px; }
+    .sb-td-title { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sb-td-assignee { font-size: 12px; }
+    .sb-td-labels   { font-size: 11px; }
+    .sb-label-chip  { display: inline-block; padding: 1px 6px; margin: 1px 2px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); color: var(--txt-2); white-space: nowrap; }
+    .sb-td-est { text-align: right; font-size: 12px; color: var(--txt-3); white-space: nowrap; }
+    .sb-td-pct { text-align: center; }
+    .sb-td-activity { font-size: 12px; color: var(--txt-2); white-space: nowrap; }
+    .sb-td-stale { font-size: 12px; background: #fee2e2 !important; color: #991b1b; white-space: nowrap; }
+    .sb-td-expand { text-align: center; }
+
+    .sb-sprint-time { color: var(--primary); font-weight: 600; }
+
+    .sb-key-link {
+        color: var(--primary);
+        text-decoration: none;
+        font-weight: 600;
+        font-size: 12px;
+    }
+    .sb-key-link:hover { text-decoration: underline; }
+
+    .sb-never { color: var(--txt-4); font-style: italic; }
+    .sb-no-due { color: var(--txt-4); }
+
+    /* ── Priority dot ────────────────────────────────────────────── */
+    .sb-td-pri { text-align: center; }
+
+    .sb-pri-dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+    }
+
+    .pri-critical { background: #dc2626; }
+    .pri-high     { background: #f97316; }
+    .pri-medium   { background: #eab308; }
+    .pri-low      { background: #22c55e; }
+    .pri-lowest   { background: #94a3b8; }
+
+    /* ── Due date cell ───────────────────────────────────────────── */
+    .sb-due-date  { font-size: 12px; font-weight: 600; color: var(--txt-1); display: block; }
+    .sb-due-delta { font-size: 11px; display: block; margin-top: 1px; }
+
+    .sb-delta-red   { color: var(--danger); font-weight: 600; }
+    .sb-delta-amber { color: var(--warning); font-weight: 600; }
+    .sb-delta-green { color: var(--success); }
+
+    .sb-due-overdue { background: #fff1f2 !important; }
+    .sb-due-at-risk { background: #fffbeb !important; }
+
+    /* ── Forecast badge ──────────────────────────────────────────── */
+    .sb-forecast-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .fc-done    { background: #dcfce7; color: #15803d; }
+    .fc-meet    { background: #dbeafe; color: #1d4ed8; }
+    .fc-miss    { background: #fee2e2; color: #b91c1c; }
+    .fc-blocked { background: #f3f4f6; color: #374151; }
+    .fc-noest   { background: #fef9c3; color: #854d0e; }
+    .fc-nodue   { background: #f3f4f6; color: #6b7280; }
+
+    /* ── % Bar ───────────────────────────────────────────────────── */
+    .sb-pct-bar-wrap {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .sb-pct-bar {
+        display: inline-block;
+        height: 5px;
+        background: var(--primary);
+        border-radius: 3px;
+        min-width: 2px;
+        max-width: 50px;
+    }
+
+    .sb-pct-label { font-size: 11px; color: var(--txt-3); }
+
+    /* ── Expand button ───────────────────────────────────────────── */
+    .sb-expand-btn { font-size: 11px; padding: 2px 6px; }
+
+    /* ── Worklog section ─────────────────────────────────────────── */
+    .sb-worklog-row .sb-worklog-cell {
+        padding: 0;
+        background: #f8fafc;
+        border-bottom: 2px solid var(--primary);
+    }
+
+    /* ── Expanded row panels ─────────────────────────────────────── */
+    .sb-expanded-panels {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+    }
+
+    .sb-worklog-wrap { padding: 12px 24px 14px; }
+    .sb-dev-panel { padding: 12px 24px 14px; border-top: 1px dashed var(--border); }
+
+    .sb-worklog-header {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--txt-2);
+        margin-bottom: 8px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .sb-wl-sprint-note {
+        background: #dbeafe;
+        color: #1d4ed8;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+
+    .sb-wl-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+    }
+
+    .sb-wl-table th {
+        padding: 5px 10px;
+        background: #e2e8f0;
+        text-align: left;
+        font-weight: 600;
+        color: var(--txt-3);
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    .sb-wl-table td {
+        padding: 5px 10px;
+        border-bottom: 1px solid #e2e8f0;
+        color: var(--txt-2);
+    }
+
+    .sb-wl-in-sprint { background: #eff6ff; }
+    .sb-wl-time  { font-weight: 600; white-space: nowrap; }
+    .sb-wl-comment { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--txt-3); }
+    .sb-wl-sprint-flag { text-align: center; color: var(--primary); font-weight: 700; }
+
+    /* ── Dashboard Control ──────────────────────────────────────── */
+    .sb-dash-kpis {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .sb-dash-kpi {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 12px 18px;
+        flex: 1;
+        min-width: 110px;
+        box-shadow: var(--sh-xs);
+    }
+
+    .sb-dash-kpi-warn { border-color: #fbbf24; background: #fffbeb; }
+
+    .sb-dash-kpi-val {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--txt-1);
+        line-height: 1.2;
+    }
+
+    .sb-dash-kpi-lbl {
+        font-size: 11px;
+        color: var(--txt-3);
+        margin-top: 3px;
+        font-weight: 500;
+    }
+
+    .sb-dash-legend {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 14px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+    }
+
+    .sb-dash-legend-title {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--txt-4);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        margin-right: 4px;
+    }
+
+    .sb-dash-legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        font-size: 12px;
+        color: var(--txt-2);
+        font-weight: 500;
+    }
+
+    /* Swimlane */
+    .sb-swimlane-outer {
+        overflow-x: auto;
+        padding-bottom: 6px;
+    }
+
+    .sb-swimlane-table {
+        border-collapse: collapse;
+        min-width: max-content;
+    }
+
+    .sb-sw-sticky-l {
+        position: sticky;
+        left: 0;
+        z-index: 2;
+        box-shadow: 2px 0 6px rgba(0,0,0,.07);
+    }
+
+    .sb-sw-info {
+        min-width: 230px;
+        max-width: 230px;
+        padding: 6px 12px;
+        border-right: 2px solid var(--border);
+        vertical-align: middle;
+        background: inherit;
+    }
+
+    .sb-swimlane-table thead .sb-sw-info {
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+    }
+
+    .sb-sw-bug-key { font-size: 12px; font-weight: 700; }
+    .sb-sw-bug-key a { color: var(--primary); text-decoration: none; }
+    .sb-sw-bug-key a:hover { text-decoration: underline; }
+
+    .sb-sw-bug-sum {
+        font-size: 11px;
+        color: var(--txt-3);
+        margin-top: 2px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 206px;
+    }
+
+    .sb-sw-day-th {
+        min-width: 38px;
+        width: 38px;
+        text-align: center;
+        padding: 4px 2px;
+        border-right: 1px solid #efefef;
+        cursor: pointer;
+        user-select: none;
+        transition: filter .1s;
+        vertical-align: middle;
+    }
+
+    .sb-sw-day-th:hover { filter: brightness(.94); }
+
+    .sb-sw-day-hdr {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+    }
+
+    .sb-sw-day-name {
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+    }
+
+    .sb-sw-day-num {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--txt-2);
+        width: 22px;
+        height: 22px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+    }
+
+    .sb-sw-today-num { background: var(--primary) !important; color: #fff !important; }
+
+    .sb-sw-cell {
+        min-width: 38px;
+        width: 38px;
+        text-align: center;
+        padding: 3px 2px;
+        border-right: 1px solid #f2f2f2;
+        border-bottom: 1px solid #f8f8f8;
+        vertical-align: middle;
+        cursor: pointer;
+        transition: filter .1s;
+    }
+
+    .sb-sw-cell:hover { filter: brightness(.93); }
+
+    .sb-sw-row:hover .sb-sw-info { background: #f9fafb; }
+
+    .sb-sw-end-th {
+        min-width: 100px;
+        padding: 5px 10px;
+        border-left: 2px solid var(--border);
+        vertical-align: middle;
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        white-space: nowrap;
+    }
+
+    .sb-sw-end-status { min-width: 120px; }
+
+    .sb-sw-dot {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        color: #fff;
+        font-size: 7.5px;
+        font-weight: 800;
+        cursor: default;
+        flex-shrink: 0;
+        margin: 1px;
+        vertical-align: middle;
+    }
+
+    .sb-sw-dot-more {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #d1d5db;
+        color: var(--txt-3);
+        font-size: 8px;
+        font-weight: 700;
+        margin: 1px;
+        vertical-align: middle;
+    }
+
+    /* Day detail panel */
+    .sb-dash-day-panel {
+        border: 1px solid #93c5fd;
+        border-radius: 6px;
+        margin: 10px 0 0;
+        overflow: hidden;
+    }
+
+    .sb-dash-day-panel-hdr {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 14px;
+        background: #dbeafe;
+        border-bottom: 1px solid #bfdbfe;
+        flex-wrap: wrap;
+    }
+
+    .sb-dash-day-panel-title { font-weight: 700; font-size: 13px; color: var(--txt-1); }
+    .sb-dash-day-panel-sub   { font-size: 12px; color: #1e40af; }
+
+    /* Untouched banner */
+    .sb-dash-untouched-banner {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        background: #fffbeb;
+        border: 1px solid #fbbf24;
+        border-radius: var(--r-md);
+        font-size: 13px;
+        color: #92400e;
+    }
+
+    /* Contributor cards */
+    .sb-dash-contrib-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+        gap: 12px;
+        padding: 14px;
+    }
+
+    .sb-dash-contrib-card {
+        background: var(--surface-2);
+        border-radius: 8px;
+        padding: 12px 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .sb-dash-contrib-head { display: flex; align-items: center; gap: 10px; }
+
+    .sb-dash-contrib-bugs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+    }
+
+    /* ── Development panel ───────────────────────────────────────── */
+    .sb-dev-loading { font-size: 12px; color: var(--txt-3); display: flex; align-items: center; gap: 6px; padding: 4px 0; }
+    .sb-dev-empty   { font-size: 12px; color: var(--txt-4); font-style: italic; padding: 4px 0; }
+
+    .sb-dev-summary-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .sb-dev-badge {
+        display: inline-flex; align-items: center; gap: 4px;
+        padding: 3px 9px; border-radius: 10px; font-size: 11px; font-weight: 600;
+    }
+    .sb-dev-badge-branch  { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .sb-dev-badge-commit  { background: #f5f3ff; color: #6d28d9; border: 1px solid #ddd6fe; }
+    .sb-dev-badge-build-ok   { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .sb-dev-badge-build-fail { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+
+    .sb-dev-table { margin-top: 2px; }
+    .sb-dev-pr-status {
+        display: inline-block; padding: 1px 7px; border-radius: 8px;
+        font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+    }
+    .sb-dev-pr-open    { background: #dbeafe; color: #1d4ed8; }
+    .sb-dev-pr-merged  { background: #ede9fe; color: #6d28d9; }
+    .sb-dev-pr-declined { background: #fee2e2; color: #b91c1c; }
+    .sb-dev-pr-link {
+        color: var(--primary); font-weight: 600; font-size: 11px;
+        text-decoration: none; white-space: nowrap;
+    }
+    .sb-dev-pr-link:hover { text-decoration: underline; }
+
+    /* ── Empty states ────────────────────────────────────────────── */
+    .sb-empty-state {
+        text-align: center;
+        padding: 48px 24px;
+        color: var(--txt-3);
+        font-size: 14px;
+    }
+
+    .sb-empty {
+        text-align: center;
+        padding: 24px;
+        color: var(--txt-3);
+        font-style: italic;
+    }
+
+    /* ── Tabs ────────────────────────────────────────────────────── */
+    .sb-tabs {
+        display: flex;
+        border-bottom: 2px solid var(--border);
+        gap: 0;
+        background: var(--surface);
+        border-radius: var(--r-md) var(--r-md) 0 0;
+        border: 1px solid var(--border);
+        border-bottom: 2px solid var(--border);
+        padding: 0 4px;
+    }
+
+    .sb-tab {
+        padding: 10px 20px;
+        font-size: 13px;
+        font-weight: 500;
+        font-family: inherit;
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        color: var(--txt-3);
+        cursor: pointer;
+        margin-bottom: -2px;
+        transition: color .15s, border-color .15s;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+    .sb-tab:hover { color: var(--txt-1); }
+    .sb-tab-active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+
+    .sb-tab-badge {
+        background: var(--danger);
+        color: #fff;
+        border-radius: 10px;
+        padding: 1px 7px;
+        font-size: 11px;
+        font-weight: 600;
+    }
+    .sb-tab-badge-neutral { background: var(--txt-4); }
+
+    /* ── Bug Master Dashboard ────────────────────────────────────── */
+    .sb-master-kpi-row  { display: flex; flex-wrap: wrap; gap: 10px; padding: 14px 16px; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: stretch; }
+    .sb-master-kpi      { display: flex; flex-direction: column; gap: 4px; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); min-width: 150px; flex: 1; }
+    .sb-master-kpi-label { font-size: 11px; font-weight: 600; color: var(--txt-2); }
+    .sb-master-kpi-count { font-size: 28px; font-weight: 700; line-height: 1; }
+    .sb-master-kpi-p0   { border-left: 4px solid var(--danger); }
+    .sb-master-kpi-p0 .sb-master-kpi-count { color: var(--danger); }
+    .sb-master-kpi-p1   { border-left: 4px solid var(--warning); }
+    .sb-master-kpi-p1 .sb-master-kpi-count { color: var(--warning); }
+    .sb-master-kpi-p2   { border-left: 4px solid var(--primary); }
+    .sb-master-kpi-p2 .sb-master-kpi-count { color: var(--primary); }
+    .sb-master-kpi-p3   { border-left: 4px solid #6366f1; }
+    .sb-master-kpi-p3 .sb-master-kpi-count { color: #6366f1; }
+    .sb-master-kpi-watch { border-left: 4px solid var(--txt-3); }
+    .sb-master-kpi-watch .sb-master-kpi-count { color: var(--txt-2); }
+    .sb-master-section  { margin-bottom: 0; border-bottom: 1px solid var(--border); }
+    .sb-master-section:last-child { border-bottom: none; }
+    .sb-master-badge    { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 20px; border-radius: 4px; font-size: 11px; font-weight: 700; color: #fff; margin-right: 6px; flex-shrink: 0; }
+    .sb-badge-p0        { background: var(--danger); }
+    .sb-badge-p1        { background: var(--warning); }
+    .sb-badge-p2        { background: var(--primary); }
+    .sb-badge-p3        { background: #6366f1; }
+    .sb-badge-watch     { background: var(--txt-3); }
+    .sb-master-p0 .sb-section-header { background: #fef2f2; border-left: 4px solid var(--danger); }
+    .sb-master-p1 .sb-section-header { background: #fffbeb; border-left: 4px solid var(--warning); }
+    .sb-master-p2 .sb-section-header { background: #eff6ff; border-left: 4px solid var(--primary); }
+    .sb-master-p3 .sb-section-header { background: #eef2ff; border-left: 4px solid #6366f1; }
+    .sb-master-watch .sb-section-header { background: var(--surface-2); border-left: 4px solid var(--txt-3); }
+
+    /* ── Calendar ────────────────────────────────────────────────── */
+    .sb-cal-root        { padding: 16px; }
+    .sb-cal-header      { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+    .sb-cal-month-label { font-size: 15px; font-weight: 700; color: var(--txt-1); min-width: 155px; text-align: center; }
+    .sb-cal-nav         { font-size: 22px; font-weight: 400; line-height: 1; padding: 2px 12px !important; }
+    .sb-cal-badge       { background: var(--primary-light); color: var(--primary); border: 1px solid var(--primary-border); border-radius: 12px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-left: 4px; }
+    .sb-cal-empty-month { font-size: 12px; color: var(--txt-3); margin-left: 4px; }
+    .sb-cal-grid-wrap   { overflow-x: auto; }
+
+    .sb-cal-table       { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 700px; }
+    .sb-cal-th          { padding: 7px 4px; text-align: center; font-size: 11px; font-weight: 700; color: var(--txt-3); text-transform: uppercase; letter-spacing: .05em; border-bottom: 2px solid var(--border); background: var(--surface-2); }
+    .sb-cal-cell        { vertical-align: top; height: 120px; border: 1px solid var(--border); padding: 6px 5px 4px; background: var(--surface); }
+    .sb-cal-blank       { background: #f7f7f9; }
+    .sb-cal-weekend     { background: #fafafa; }
+    .sb-cal-today       { background: #eff6ff !important; outline: 2px solid var(--primary); outline-offset: -2px; }
+    .sb-cal-daynum      { font-size: 11px; font-weight: 600; color: var(--txt-3); margin-bottom: 5px; }
+    .sb-cal-daynum-today {
+        display: inline-flex; align-items: center; justify-content: center;
+        background: var(--primary); color: #fff;
+        width: 20px; height: 20px; border-radius: 50%; font-size: 11px;
+    }
+
+    .sb-cal-chip {
+        display: flex;
+        flex-direction: column;
+        padding: 2px 5px 3px;
+        border-radius: 4px;
+        margin-bottom: 3px;
+        font-size: 10.5px;
+        border-left: 3px solid transparent;
+        overflow: hidden;
+        cursor: pointer;
+        text-decoration: none;
+    }
+    .sb-cal-chip:hover { filter: brightness(0.93); text-decoration: none; }
+    .sb-cal-chip-key { font-weight: 700; font-size: 10px; white-space: nowrap; }
+    .sb-cal-chip-sum { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+
+    .sb-cal-chip-done          { background: #dcfce7; border-left-color: #16a34a; color: #14532d; opacity: .65; }
+    .sb-cal-chip-indeterminate { background: #dbeafe; border-left-color: var(--primary); color: #1e3a8a; }
+    .sb-cal-chip-new           { background: #fef9c3; border-left-color: #eab308; color: #713f12; }
+
+    /* ── Filter active bar ───────────────────────────────────────── */
+    /* ── Metric label inline ─────────────────────────────────────── */
+    .sb-metric-lbl-inline { font-size: 14px; font-weight: 400; color: var(--txt-3); margin-left: 1px; }
+
+    /* ── Age buckets ─────────────────────────────────────────────── */
+    .sb-age-buckets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .sb-age-bucket  {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 20px;
+        box-shadow: var(--sh-xs);
+        border-left-width: 4px;
+        text-align: center;
+    }
+    .sb-age-bucket-val   { font-size: 36px; font-weight: 700; line-height: 1; }
+    .sb-age-bucket-lbl   { font-size: 13px; font-weight: 700; color: var(--txt-2); margin-top: 4px; }
+    .sb-age-bucket-range { font-size: 11px; color: var(--txt-4); margin-top: 2px; }
+
+    .sb-age-fresh  { border-left-color: var(--success); }
+    .sb-age-fresh  .sb-age-bucket-val { color: var(--success); }
+    .sb-age-recent { border-left-color: var(--primary); }
+    .sb-age-recent .sb-age-bucket-val { color: var(--primary); }
+    .sb-age-aging  { border-left-color: var(--warning); }
+    .sb-age-aging  .sb-age-bucket-val { color: var(--warning); }
+    .sb-age-old    { border-left-color: #9ca3af; }
+    .sb-age-old    .sb-age-bucket-val { color: #6b7280; }
+    .sb-age-old-alert { border-left-color: var(--danger); }
+    .sb-age-old-alert .sb-age-bucket-val { color: var(--danger); }
+
+    .sb-age-badge          { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; }
+    .sb-age-badge-fresh    { background: #dcfce7; color: #15803d; }
+    .sb-age-badge-recent   { background: #dbeafe; color: #1d4ed8; }
+    .sb-age-badge-aging    { background: #fef3c7; color: #92400e; }
+    .sb-age-badge-old      { background: #fee2e2; color: #b91c1c; }
+
+    /* ── KPI colour helpers (kept for table cells) ───────────────── */
+    .kpi-green  { color: var(--success); }
+    .kpi-amber  { color: var(--warning); }
+    .kpi-red    { color: var(--danger); }
+    .kpi-blue   { color: var(--primary); }
+    .kpi-neutral { color: var(--txt-2); }
+
+    /* ── Status chips ────────────────────────────────────────────── */
+    .rpt-status-chip {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        white-space: nowrap;
+    }
+
+    .status-dev-ready   { background: #e0f2fe; color: #0369a1; }
+    .status-in-progress { background: #fef3c7; color: #b45309; }
+    .status-in-review   { background: #ede9fe; color: #6d28d9; }
+    .status-qa-ready    { background: #f0fdf4; color: #166534; }
+    .status-done        { background: #f0fdf4; color: #047857; }
+    .status-on-hold     { background: #fdf4ff; color: #7e22ce; border: 1px solid #e9d5ff; }
+    .status-default     { background: #e5e7eb; color: #374151; }
+
+    /* ── SLAs tab ────────────────────────────────────────────────── */
+    .sb-sla-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 4px 4px 12px;
+        flex-wrap: wrap;
+    }
+
+    .sb-sla-tier { padding: 0; }
+
+    .sb-sla-tier-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 14px 18px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .sb-sla-tier-badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 30px;
+        height: 30px;
+        padding: 0 8px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 700;
+        color: #fff;
+        background: var(--primary);
+    }
+    .sb-sla-badge-p2 { background: var(--danger); }
+    .sb-sla-badge-p3 { background: #f97316; }
+    .sb-sla-badge-p4 { background: var(--primary); }
+    .sb-sla-badge-p5 { background: #6b7280; }
+
+    .sb-sla-tier-titles { display: flex; flex-direction: column; }
+    .sb-sla-tier-title  { font-size: 14px; font-weight: 700; color: var(--txt-1); }
+    .sb-sla-tier-sub    { font-size: 12px; color: var(--txt-3); margin-top: 1px; }
+
+    .sb-sla-filters {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .sb-sla-filters-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--txt-3);
+    }
+    .sb-sla-filter-link {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--primary);
+        text-decoration: none;
+        padding: 3px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        white-space: nowrap;
+    }
+    .sb-sla-filter-link:hover { border-color: var(--primary); background: var(--surface-2); }
+
+    .sb-sla-canvas-wrap {
+        height: 300px;
+        position: relative;
+        padding: 16px;
+    }
+
+    /* ── SLA drill-down ──────────────────────────────────────────── */
+    .sb-sla-drill {
+        border-top: 1px solid var(--border);
+        background: var(--surface-2);
+        padding: 14px 18px 4px;
+    }
+    .sb-sla-drill-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+    }
+    .sb-sla-drill-title { font-size: 13px; color: var(--txt-1); }
+    .sb-sla-drill-close {
+        margin-left: auto;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        border-radius: var(--r-md);
+        width: 26px;
+        height: 26px;
+        cursor: pointer;
+        color: var(--txt-3);
+        line-height: 1;
+    }
+    .sb-sla-drill-close:hover { color: var(--danger); border-color: var(--danger); }
+
+    .sb-sla-chips-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 8px;
+    }
+    .sb-sla-chips-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--txt-3);
+        margin-right: 4px;
+    }
+    .sb-sla-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        font-size: 12px;
+        color: var(--txt-2);
+    }
+    .sb-sla-chip strong { color: var(--txt-1); }
+
+    /* ── Summary strip (replaces metric cards) ──────────────────── */
+    .sb-summary-strip {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        box-shadow: var(--sh-xs);
+        padding: 12px 20px;
+        display: flex;
+        align-items: center;
+        gap: 0;
+        flex-wrap: wrap;
+        row-gap: 10px;
+    }
+
+    .sb-stat-section {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 5px;
+        padding-right: 4px;
+    }
+
+    .sb-stat-label {
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        color: var(--txt-4);
+        margin-right: 2px;
+    }
+
+    .sb-stat-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 9px;
+        border-radius: 20px;
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--txt-2);
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        white-space: nowrap;
+    }
+    .sb-stat-chip strong { font-weight: 700; color: var(--txt-1); }
+
+    .sb-chip-green  { background: #dcfce7; border-color: #86efac; color: #166534; }
+    .sb-chip-green strong  { color: #15803d; }
+    .sb-chip-blue   { background: #dbeafe; border-color: #93c5fd; color: #1e40af; }
+    .sb-chip-blue strong   { color: #1d4ed8; }
+    .sb-chip-amber  { background: #fef3c7; border-color: #fcd34d; color: #92400e; }
+    .sb-chip-amber strong  { color: #b45309; }
+    .sb-chip-red    { background: #fee2e2; border-color: #fca5a5; color: #991b1b; }
+    .sb-chip-red strong    { color: #b91c1c; }
+    .sb-chip-gray   { background: #f3f4f6; border-color: #d1d5db; color: #6b7280; }
+    .sb-chip-stale  { background: #fef9c3; border-color: #fde047; color: #854d0e; }
+    .sb-chip-stale strong  { color: #92400e; }
+
+    .sb-stat-vdivider {
+        width: 1px;
+        height: 28px;
+        background: var(--border);
+        margin: 0 14px;
+        flex-shrink: 0;
+    }
+
+    .sb-stat-kpis {
+        display: flex;
+        align-items: stretch;
+        flex: 1;
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .sb-stat-kpi {
+        padding: 7px 12px;
+        text-align: center;
+        flex: 1;
+        min-width: 68px;
+        border-right: 1px solid var(--border);
+    }
+    .sb-stat-kpi:last-child { border-right: none; }
+    .sb-stat-kpi-purple { background: #f5f3ff; }
+    .sb-stat-kpi-warn   { background: #fef9c3; }
+
+    .sb-stat-kpi-val {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--txt-1);
+        line-height: 1.2;
+        white-space: nowrap;
+    }
+    .sb-stat-kpi-purple .sb-stat-kpi-val { color: #6d28d9; }
+    .sb-stat-kpi-warn .sb-stat-kpi-val   { color: var(--warning); }
+
+    .sb-stat-kpi-lbl   { font-size: 10px; color: var(--txt-3); margin-top: 2px; white-space: nowrap; }
+    .sb-stat-kpi-sub   { font-size: 10px; color: var(--txt-4); font-weight: 400; }
+    .sb-stat-kpi-unit  { font-size: 11px; color: var(--txt-3); }
+    .sb-stat-kpi-range { font-size: 9px; color: var(--txt-4); margin-top: 1px; white-space: nowrap; }
+
+    /* ── Bugs toolbar ───────────────────────────────────────────── */
+    .sb-bugs-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface-2);
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .sb-bugs-count {
+        font-size: 12px;
+        color: var(--txt-3);
+        font-weight: 500;
+    }
+
+    .sb-bugs-toolbar-right {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .sb-bug-search-wrap {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        background: #fff;
+        padding: 0 8px;
+        transition: border-color .15s, box-shadow .15s;
+    }
+    .sb-bug-search-wrap:focus-within {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(37,99,235,0.10);
+    }
+
+    .sb-bug-search-icon {
+        color: var(--txt-4);
+        flex-shrink: 0;
+    }
+
+    .sb-bug-search-input {
+        border: none;
+        outline: none;
+        background: transparent;
+        font-size: 12.5px;
+        font-family: inherit;
+        color: var(--txt-1);
+        padding: 5px 6px;
+        width: 200px;
+    }
+
+    .sb-bug-search-clear {
+        border: none;
+        background: transparent;
+        color: var(--txt-4);
+        cursor: pointer;
+        font-size: 11px;
+        padding: 0 2px;
+        line-height: 1;
+    }
+    .sb-bug-search-clear:hover { color: var(--txt-2); }
+
+    /* ── Summary strip mini charts ─────────────────────────────── */
+    .sb-strip-mini-chart-wrap {
+        width: 76px;
+        height: 76px;
+        position: relative;
+        flex-shrink: 0;
+        margin-left: 8px;
+    }
+
+    /* ── Charts tab ─────────────────────────────────────────────── */
+    .sb-charts-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 16px;
+        padding: 4px 0;
+    }
+
+    .sb-chart-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 16px;
+        box-shadow: var(--sh-xs);
+    }
+
+    .sb-chart-card-wide {
+        grid-column: 1 / -1;
+    }
+
+    .sb-chart-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--txt-1);
+        margin-bottom: 12px;
+    }
+
+    .sb-chart-canvas-wrap {
+        position: relative;
+        height: 250px;
+    }
+</style>

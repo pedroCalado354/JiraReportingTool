@@ -59,6 +59,12 @@ public interface IJiraService
     Task<SprintReport> GetBugsByJqlAsync(string rawJql);
 
     /// <summary>
+    /// Fetches bugs from a raw JQL string, additionally resolving the "JS Project" (Product) radio-button field.
+    /// Used by the SLA dashboard so tickets can be grouped by both customer and product.
+    /// </summary>
+    Task<SprintReport> GetSlaBugsByJqlAsync(string rawJql);
+
+    /// <summary>
     /// Fetches development status (branches, commits, PRs with URLs, builds) for a Jira issue.
     /// </summary>
     Task<IssueDevStatus> GetDevStatusAsync(string jiraId);

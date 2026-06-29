@@ -12,6 +12,9 @@ public class JiraService : IJiraService
     private string? _customerFieldId;
     private bool    _customerFieldIdLookedUp;
 
+    private string? _jsProjectFieldId;
+    private bool    _jsProjectFieldIdLookedUp;
+
     private string? _committedDateFieldId;
     private string? _committedCustomersFieldId;
     private bool    _epicMetaFieldsLookedUp;
@@ -48,6 +51,31 @@ public class JiraService : IJiraService
                 {
                     _customerFieldId = idEl.GetString();
                     return _customerFieldId;
+                }
+            }
+        }
+        catch { }
+        return null;
+    }
+
+    public async Task<string?> GetJsProjectFieldIdAsync()
+    {
+        if (_jsProjectFieldIdLookedUp) return _jsProjectFieldId;
+        _jsProjectFieldIdLookedUp = true;
+        try
+        {
+            var resp = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/field");
+            if (!resp.IsSuccessStatusCode) return null;
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            foreach (var field in doc.RootElement.EnumerateArray())
+            {
+                if (!field.TryGetProperty("name", out var nameEl)) continue;
+                if ((nameEl.GetString() ?? "").Equals("JS Project", StringComparison.OrdinalIgnoreCase) &&
+                    field.TryGetProperty("id", out var idEl))
+                {
+                    _jsProjectFieldId = idEl.GetString();
+                    return _jsProjectFieldId;
                 }
             }
         }
@@ -471,7 +499,7 @@ public class JiraService : IJiraService
         return map;
     }
 
-    private (SprintReport Report, List<string> TruncatedKeys) ParseSprintReport(string json, string projectKey, string? customerFieldId = null)
+    private (SprintReport Report, List<string> TruncatedKeys) ParseSprintReport(string json, string projectKey, string? customerFieldId = null, string? productFieldId = null)
     {
         using var doc = JsonDocument.Parse(json);
         var report = new SprintReport { ProjectKey = projectKey.ToUpper() };
@@ -575,6 +603,13 @@ public class JiraService : IJiraService
                 custEl.ValueKind != JsonValueKind.Null &&
                 custEl.TryGetProperty("value", out var custVal))
                 issue.Customer = custVal.GetString() ?? "";
+
+            // JS Project radio-button field (Rentway Legacy / Rentway Pro / Integrations)
+            if (productFieldId != null &&
+                fields.TryGetProperty(productFieldId, out var prodEl) &&
+                prodEl.ValueKind != JsonValueKind.Null &&
+                prodEl.TryGetProperty("value", out var prodVal))
+                issue.Product = prodVal.GetString() ?? "";
 
             // Sprint metadata from customfield_10020 (array of sprints the issue belongs to)
             if (fields.TryGetProperty("customfield_10020", out var sprints) &&
@@ -913,6 +948,19 @@ public class JiraService : IJiraService
         var jql = Uri.EscapeDataString(rawJql);
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, _) = ParseSprintReport(json, "", customerFieldId);
+        return report;
+    }
+
+    public async Task<SprintReport> GetSlaBugsByJqlAsync(string rawJql)
+    {
+        var customerFieldId  = await GetCustomerFieldIdAsync();
+        var jsProjectFieldId = await GetJsProjectFieldIdAsync();
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,created,duedate,labels,customfield_12437"
+            + (customerFieldId  != null ? $",{customerFieldId}"  : "")
+            + (jsProjectFieldId != null ? $",{jsProjectFieldId}" : "");
+        var jql = Uri.EscapeDataString(rawJql);
+        var json = await FetchAllPagesAsync(jql, fields);
+        var (report, _) = ParseSprintReport(json, "", customerFieldId, jsProjectFieldId);
         return report;
     }
 
