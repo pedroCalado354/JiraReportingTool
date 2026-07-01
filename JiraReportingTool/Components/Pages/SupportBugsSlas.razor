@@ -2,6 +2,8 @@
 @rendermode InteractiveServer
 @using JiraReportingTool.Models
 @using Microsoft.JSInterop
+@using ClosedXML.Excel
+@using System.IO
 @inject IJiraService JiraService
 @inject IConfiguration Config
 @inject IJSRuntime JS
@@ -67,7 +69,8 @@
                 <div class="sb-master-kpi-label">👁 Watchlist — Due in 7 Days</div>
                 <div class="sb-master-kpi-count">@_watchlistBugs.Count</div>
             </div>
-            <button class="btn small" style="align-self:center;margin-left:auto" @onclick="LoadMasterDashboardAsync">↻ Refresh</button>
+            <button class="btn small" style="align-self:center;margin-left:auto" @onclick="ExportPriorityAsync">⬇ Export .xlsx</button>
+            <button class="btn small" style="align-self:center" @onclick="LoadMasterDashboardAsync">↻ Refresh</button>
         </div>
 
         <!-- Prio 0 -->
@@ -287,12 +290,99 @@
         {
             <div class="sb-sla-toolbar">
                 <span class="sb-section-sub">SLA thresholds — P2: 24h · P3: 72h · P4: 2 weeks · P5: 4 weeks · all customers &amp; products · last 3 weeks · click a bar to list tickets</span>
-                <button class="btn small" style="margin-left:auto" @onclick="LoadSlaDashboardAsync">↻ Refresh</button>
+                <button class="btn small" style="margin-left:auto" @onclick="ExportSlaAsync">⬇ Export .xlsx</button>
+                <button class="btn small" @onclick="LoadSlaDashboardAsync">↻ Refresh</button>
+            </div>
+
+            <div class="sb-section sb-sla-filterbar">
+                <div class="sb-section-header" style="cursor:default">
+                    <span class="sb-section-title">Filters</span>
+                    <span class="sb-section-sub">@(SlaHasFilter ? "filtering all charts below" : "select products / customers to filter all charts below")</span>
+                    @if (SlaHasFilter)
+                    {
+                        <button class="btn small" style="margin-left:auto" @onclick="ClearSlaFilters">✕ Clear filters</button>
+                    }
+                </div>
+                <div class="sb-sla-filter-body">
+                    <div class="sb-sla-filter-row">
+                        <span class="sb-sla-filter-cap">By product</span>
+                        <div class="sb-dd">
+                            <button class="sb-dd-btn @(_slaProductFilter.Count > 0 ? "active" : "")" @onclick="() => _productDdOpen = !_productDdOpen">
+                                @(_slaProductFilter.Count == 0 ? "All products" : $"{_slaProductFilter.Count} selected")
+                                <span class="sb-dd-caret">▾</span>
+                            </button>
+                            @if (_productDdOpen)
+                            {
+                                <div class="sb-dd-backdrop" @onclick="() => _productDdOpen = false"></div>
+                                <div class="sb-dd-panel">
+                                    <div class="sb-dd-head">
+                                        <input class="sb-dd-search" placeholder="Search products…" @bind="_productSearch" @bind:event="oninput" />
+                                        @if (_slaProductFilter.Count > 0)
+                                        {
+                                            <button class="sb-dd-clear" @onclick="() => { _slaProductFilter.Clear(); _slaChartsNeedRender = true; }">Clear</button>
+                                        }
+                                    </div>
+                                    <div class="sb-dd-list">
+                                        @foreach (var p in SlaAllProducts.Where(p => string.IsNullOrEmpty(_productSearch) || p.Name.Contains(_productSearch, StringComparison.OrdinalIgnoreCase)))
+                                        {
+                                            <label class="sb-dd-opt">
+                                                <input type="checkbox" checked="@_slaProductFilter.Contains(p.Name)" @onchange="() => ToggleSlaProduct(p.Name)" />
+                                                <span class="sb-dd-opt-name">@p.Name</span>
+                                                <span class="sb-dd-opt-n">@p.Count</span>
+                                            </label>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                        @foreach (var p in _slaProductFilter.OrderBy(x => x))
+                        {
+                            <button class="sb-sla-fchip active" @onclick="() => ToggleSlaProduct(p)" title="Remove">@p ✕</button>
+                        }
+                    </div>
+                    <div class="sb-sla-filter-row">
+                        <span class="sb-sla-filter-cap">By customer</span>
+                        <div class="sb-dd">
+                            <button class="sb-dd-btn @(_slaCustomerFilter.Count > 0 ? "active" : "")" @onclick="() => _customerDdOpen = !_customerDdOpen">
+                                @(_slaCustomerFilter.Count == 0 ? "All customers" : $"{_slaCustomerFilter.Count} selected")
+                                <span class="sb-dd-caret">▾</span>
+                            </button>
+                            @if (_customerDdOpen)
+                            {
+                                <div class="sb-dd-backdrop" @onclick="() => _customerDdOpen = false"></div>
+                                <div class="sb-dd-panel">
+                                    <div class="sb-dd-head">
+                                        <input class="sb-dd-search" placeholder="Search customers…" @bind="_customerSearch" @bind:event="oninput" />
+                                        @if (_slaCustomerFilter.Count > 0)
+                                        {
+                                            <button class="sb-dd-clear" @onclick="() => { _slaCustomerFilter.Clear(); _slaChartsNeedRender = true; }">Clear</button>
+                                        }
+                                    </div>
+                                    <div class="sb-dd-list">
+                                        @foreach (var c in SlaAllCustomers.Where(c => string.IsNullOrEmpty(_customerSearch) || c.Name.Contains(_customerSearch, StringComparison.OrdinalIgnoreCase)))
+                                        {
+                                            <label class="sb-dd-opt">
+                                                <input type="checkbox" checked="@_slaCustomerFilter.Contains(c.Name)" @onchange="() => ToggleSlaCustomer(c.Name)" />
+                                                <span class="sb-dd-opt-name">@c.Name</span>
+                                                <span class="sb-dd-opt-n">@c.Count</span>
+                                            </label>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                        @foreach (var c in _slaCustomerFilter.OrderBy(x => x))
+                        {
+                            <button class="sb-sla-fchip active" @onclick="() => ToggleSlaCustomer(c)" title="Remove">@c ✕</button>
+                        }
+                    </div>
+                </div>
             </div>
 
             @foreach (var tier in SlaTiers)
             {
                 var tierBugs = SlaBugsFor(tier.Id);
+                var stats    = SlaNowStats(tier);
                 <div class="sb-section sb-sla-tier">
                     <div class="sb-sla-tier-head">
                         <span class="sb-sla-tier-badge sb-sla-badge-@tier.Id.ToLowerInvariant()">@tier.Num</span>
@@ -300,12 +390,32 @@
                             <span class="sb-sla-tier-title">@tier.Title</span>
                             <span class="sb-sla-tier-sub">@tier.Sub · @tierBugs.Count open now</span>
                         </div>
+                        <div class="sb-sla-compliance sb-sla-comp-@SlaComplianceLevel(stats.pct)" title="@stats.inside in SLA · @stats.breached breached">
+                            <span class="sb-sla-comp-pct">@stats.pct%</span>
+                            <span class="sb-sla-comp-lbl">in SLA · @stats.breached breached</span>
+                        </div>
                         <div class="sb-sla-filters">
                             <span class="sb-sla-filters-label">Open in Jira</span>
                             <a class="sb-sla-filter-link" href="@SlaJiraUrl(SlaOutsideJql(tier))" target="_blank" rel="noopener noreferrer" title="@SlaOutsideJql(tier)">Outside SLA ↗</a>
                             <a class="sb-sla-filter-link" href="@SlaJiraUrl(SlaInsideJql(tier))" target="_blank" rel="noopener noreferrer" title="@SlaInsideJql(tier)">Inside SLA ↗</a>
                             <a class="sb-sla-filter-link" href="@SlaJiraUrl(tier.Jql)" target="_blank" rel="noopener noreferrer" title="@tier.Jql">All open ↗</a>
                         </div>
+                    </div>
+                    <div class="sb-sla-legend">
+                        <span class="sb-sla-legend-grp">
+                            <span class="sb-sla-legend-cap">Recency</span>
+                            <span class="sb-sla-wk" style="opacity:.32"></span>
+                            <span class="sb-sla-wk" style="opacity:.58"></span>
+                            <span class="sb-sla-wk" style="opacity:1"></span>
+                            <span class="sb-sla-legend-txt">@(DateTime.Today.AddDays(-14).ToString("dd MMM")) → now</span>
+                        </span>
+                        <span class="sb-sla-legend-grp">
+                            <span class="sb-sla-legend-cap">SLA age</span>
+                            <span class="sb-sla-dot" style="background:#16a34a"></span>Inside
+                            <span class="sb-sla-dot" style="background:#d97706"></span>&lt;7d
+                            <span class="sb-sla-dot" style="background:#f97316"></span>7–30d
+                            <span class="sb-sla-dot" style="background:#dc2626"></span>&gt;30d
+                        </span>
                     </div>
                     <div class="sb-sla-canvas-wrap">
                         <canvas id="sb-sla-chart-@tier.Id"></canvas>
@@ -324,7 +434,10 @@
                                     Drill-down · @tier.Num · @SlaBucketLabel(_slaDrillBucket) · @SlaWeekLabel(_slaDrillWeek)
                                     · <strong>@drill.Count ticket@(drill.Count == 1 ? "" : "s")</strong>
                                 </span>
-                                <button class="sb-sla-drill-close" title="Close" @onclick="ClearSlaDrill">✕</button>
+                                <div class="sb-sla-drill-actions">
+                                    <button class="btn small" @onclick="ExportSlaDrillAsync" disabled="@(drill.Count == 0)">⬇ Export .xlsx</button>
+                                    <button class="sb-sla-drill-close" title="Close" @onclick="ClearSlaDrill">✕</button>
+                                </div>
                             </div>
 
                             <div class="sb-sla-chips-row">
@@ -345,13 +458,13 @@
                             <div class="sb-table-wrap">
                                 <table class="sb-table">
                                     <thead><tr>
-                                        <th class="sb-th sb-th-key">Key</th>
-                                        <th class="sb-th sb-th-title">Summary</th>
-                                        <th class="sb-th sb-th-status">Status</th>
-                                        <th class="sb-th sb-th-assignee">Assignee</th>
-                                        <th class="sb-th">Customer</th>
-                                        <th class="sb-th">Product</th>
-                                        <th class="sb-th sb-th-est">Age (d)</th>
+                                        <th class="sb-th sb-th-key sortable @SISlaDrill("key")" @onclick='() => SortSlaDrill("key")'>Key</th>
+                                        <th class="sb-th sb-th-title sortable @SISlaDrill("title")" @onclick='() => SortSlaDrill("title")'>Summary</th>
+                                        <th class="sb-th sb-th-status sortable @SISlaDrill("status")" @onclick='() => SortSlaDrill("status")'>Status</th>
+                                        <th class="sb-th sb-th-assignee sortable @SISlaDrill("assignee")" @onclick='() => SortSlaDrill("assignee")'>Assignee</th>
+                                        <th class="sb-th sortable @SISlaDrill("customer")" @onclick='() => SortSlaDrill("customer")'>Customer</th>
+                                        <th class="sb-th sortable @SISlaDrill("product")" @onclick='() => SortSlaDrill("product")'>Product</th>
+                                        <th class="sb-th sb-th-est sortable @SISlaDrill("age")" @onclick='() => SortSlaDrill("age")'>Age (d)</th>
                                     </tr></thead>
                                     <tbody>
                                         @foreach (var bug in drill)
@@ -495,6 +608,18 @@
     private int    _slaDrillWeek   = -1;   // index into SlaWeekOffsets
     private int    _slaDrillBucket = -1;   // 0=inside, 1=<7d, 2=7–30d, 3=>30d past
 
+    // Global filters (apply to every chart, compliance stat & drill-down). Empty = no constraint.
+    private HashSet<string> _slaProductFilter  = new();
+    private HashSet<string> _slaCustomerFilter = new();
+    private bool   _productDdOpen  = false;
+    private bool   _customerDdOpen = false;
+    private string _productSearch  = "";
+    private string _customerSearch = "";
+
+    // Drill-down table sort
+    private string _slaDrillSortCol = "age";
+    private bool   _slaDrillSortAsc = false;
+
     // Week snapshots: 2 weeks ago, 1 week ago, now (oldest → newest)
     private static readonly int[] SlaWeekOffsets = { 14, 7, 0 };
 
@@ -519,10 +644,67 @@
     private string SlaOutsideJql(SlaTier t) => $"{t.Jql} AND createdDate <= {t.Age}";
     private string SlaInsideJql(SlaTier t)  => $"{t.Jql} AND createdDate > {t.Age}";
 
-    private List<SprintIssue> SlaBugsFor(string tierId) => tierId switch
+    private List<SprintIssue> SlaBugsRaw(string tierId) => tierId switch
     {
         "P2" => _slaP2, "P3" => _slaP3, "P4" => _slaP4, "P5" => _slaP5, _ => new()
     };
+
+    // Tier bugs with the global product/customer filter applied — used by every chart, stat & drill-down.
+    private List<SprintIssue> SlaBugsFor(string tierId) =>
+        SlaBugsRaw(tierId).Where(SlaMatchesFilter).ToList();
+
+    private static string SlaProductOf(SprintIssue b)  => string.IsNullOrEmpty(b.Product)  ? "—" : b.Product;
+    private static string SlaCustomerOf(SprintIssue b) => string.IsNullOrEmpty(b.Customer) ? "—" : b.Customer;
+
+    private bool SlaMatchesFilter(SprintIssue b)
+    {
+        if (_slaProductFilter.Count  > 0 && !_slaProductFilter.Contains(SlaProductOf(b)))   return false;
+        if (_slaCustomerFilter.Count > 0 && !_slaCustomerFilter.Contains(SlaCustomerOf(b)))  return false;
+        return true;
+    }
+
+    private bool SlaHasFilter => _slaProductFilter.Count > 0 || _slaCustomerFilter.Count > 0;
+
+    // Distinct products/customers across every tier's open bugs, with counts, most-common first.
+    private List<(string Name, int Count)> SlaAllProducts =>
+        SlaTiers.SelectMany(t => SlaBugsRaw(t.Id))
+                .GroupBy(SlaProductOf)
+                .Select(g => (g.Key, g.Count()))
+                .OrderByDescending(x => x.Item2).ThenBy(x => x.Key)
+                .ToList();
+
+    private List<(string Name, int Count)> SlaAllCustomers =>
+        SlaTiers.SelectMany(t => SlaBugsRaw(t.Id))
+                .GroupBy(SlaCustomerOf)
+                .Select(g => (g.Key, g.Count()))
+                .OrderByDescending(x => x.Item2).ThenBy(x => x.Key)
+                .ToList();
+
+    private void ToggleSlaProduct(string p)
+    {
+        if (!_slaProductFilter.Remove(p)) _slaProductFilter.Add(p);
+        _slaChartsNeedRender = true;
+    }
+
+    private void ToggleSlaCustomer(string c)
+    {
+        if (!_slaCustomerFilter.Remove(c)) _slaCustomerFilter.Add(c);
+        _slaChartsNeedRender = true;
+    }
+
+    private void ClearSlaFilters()
+    {
+        _slaProductFilter.Clear();
+        _slaCustomerFilter.Clear();
+        _slaChartsNeedRender = true;
+    }
+
+    private void SortSlaDrill(string col)
+    {
+        if (_slaDrillSortCol == col) _slaDrillSortAsc = !_slaDrillSortAsc;
+        else { _slaDrillSortCol = col; _slaDrillSortAsc = true; }
+    }
+    private string SISlaDrill(string col) => _slaDrillSortCol == col ? (_slaDrillSortAsc ? "sort-asc" : "sort-desc") : "";
 
     // Bucket of a bug as it would have appeared at a given snapshot time:
     // 0=inside, 1=<7d past, 2=7–30d past, 3=>30d past, -1 if it didn't exist yet at the snapshot.
@@ -554,14 +736,40 @@
         return off == 0 ? $"week of {date:dd MMM} (now)" : $"week of {date:dd MMM}";
     }
 
+    // Current-snapshot SLA compliance for a tier: inside vs breached, and compliance %.
+    private (int inside, int breached, int pct) SlaNowStats(SlaTier tier)
+    {
+        var now = DateTime.Now;
+        int inside = 0, breached = 0;
+        foreach (var b in SlaBugsFor(tier.Id))
+        {
+            var bk = SlaBucketAt(b, tier.SlaHours, now);
+            if (bk == 0) inside++;
+            else if (bk > 0) breached++;
+        }
+        var total = inside + breached;
+        var pct = total > 0 ? (int)Math.Round(inside * 100.0 / total) : 100;
+        return (inside, breached, pct);
+    }
+
+    private static string SlaComplianceLevel(int pct) => pct >= 90 ? "good" : pct >= 70 ? "warn" : "bad";
+
     private List<SprintIssue> SlaDrillBugs(SlaTier tier, int week, int bucket)
     {
         if (week < 0 || week >= SlaWeekOffsets.Length || bucket < 0) return new();
         var snap = DateTime.Now.AddDays(-SlaWeekOffsets[week]);
-        return SlaBugsFor(tier.Id)
-            .Where(b => SlaBucketAt(b, tier.SlaHours, snap) == bucket)
-            .OrderByDescending(b => GetDaysOpen(b))
-            .ToList();
+        var q = SlaBugsFor(tier.Id).Where(b => SlaBucketAt(b, tier.SlaHours, snap) == bucket);
+        var asc = _slaDrillSortAsc;
+        return (_slaDrillSortCol switch
+        {
+            "key"      => asc ? q.OrderBy(b => b.Key)               : q.OrderByDescending(b => b.Key),
+            "title"    => asc ? q.OrderBy(b => b.Summary)           : q.OrderByDescending(b => b.Summary),
+            "status"   => asc ? q.OrderBy(b => b.Status)            : q.OrderByDescending(b => b.Status),
+            "assignee" => asc ? q.OrderBy(b => b.Assignee)          : q.OrderByDescending(b => b.Assignee),
+            "customer" => asc ? q.OrderBy(SlaCustomerOf)            : q.OrderByDescending(SlaCustomerOf),
+            "product"  => asc ? q.OrderBy(SlaProductOf)             : q.OrderByDescending(SlaProductOf),
+            _          => asc ? q.OrderBy(b => GetDaysOpen(b))      : q.OrderByDescending(b => GetDaysOpen(b)),
+        }).ToList();
     }
 
     private void ClearSlaDrill()
@@ -621,13 +829,14 @@
             await RenderSlaTierChartAsync(tier);
     }
 
+    // Bucket hue conveys SLA severity; per-week opacity conveys recency (faded = older, solid = now).
+    private static readonly string[] SlaBucketRgb = { "22,163,74", "217,119,6", "249,115,22", "220,38,38" };
+    private static readonly string[] SlaWeekAlpha = { "0.32", "0.58", "1" };
+
     private async Task RenderSlaTierChartAsync(SlaTier tier)
     {
         var canvasId = $"sb-sla-chart-{tier.Id}";
         var bugs     = SlaBugsFor(tier.Id);
-
-        // brighter = more recent week
-        var weekColors = new[] { "rgba(37,99,235,0.30)", "rgba(37,99,235,0.60)", "rgba(37,99,235,0.95)" };
 
         var datasets = new List<object>();
         for (int w = 0; w < SlaWeekOffsets.Length; w++)
@@ -639,17 +848,18 @@
                 var bk = SlaBucketAt(b, tier.SlaHours, snap);
                 if (bk >= 0) data[bk]++;
             }
+            var colors = SlaBucketRgb.Select(c => $"rgba({c},{SlaWeekAlpha[w]})").ToArray();
             datasets.Add(new
             {
                 label           = $"Week of {DateTime.Today.AddDays(-SlaWeekOffsets[w]):dd MMM}" + (SlaWeekOffsets[w] == 0 ? " (now)" : ""),
-                backgroundColor = weekColors[w],
+                backgroundColor = colors,
                 data,
                 borderRadius    = 3,
                 maxBarThickness = 48
             });
         }
 
-        await JS.InvokeVoidAsync("renderClickableBarChart", canvasId, new
+        await JS.InvokeVoidAsync("renderSlaBarChart", canvasId, new
         {
             type = "bar",
             data = new
@@ -661,7 +871,8 @@
             {
                 responsive = true,
                 maintainAspectRatio = false,
-                plugins = new { legend = new { position = "top" } },
+                layout = new { padding = new { top = 22 } },
+                plugins = new { legend = new { display = false } },
                 scales = new
                 {
                     x = new { grid = new { display = false } },
@@ -710,6 +921,141 @@
         var m = (abs % 3600) / 60;
         var fmt = h > 0 ? (m > 0 ? $"{h}h {m}m" : $"{h}h") : $"{m}m";
         return s < 0 ? $"-{fmt}" : fmt;
+    }
+
+    private static string SlaBucketName(int bk) => bk switch
+    {
+        0 => "Inside SLA",
+        1 => "Outside <7d",
+        2 => "Outside 7-30d",
+        3 => "Outside >30d",
+        _ => ""
+    };
+
+    // ── Excel export ──────────────────────────────────────────────────────────
+    private const string XlsxMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+    private async Task DownloadWorkbookAsync(XLWorkbook wb, string fileName)
+    {
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        var base64 = Convert.ToBase64String(ms.ToArray());
+        await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, XlsxMime);
+    }
+
+    // Priority tab — one sheet per list, respecting the current per-table sort.
+    private async Task ExportPriorityAsync()
+    {
+        using var wb = new XLWorkbook();
+
+        void AddSheet(string name, List<SprintIssue> bugs, string sortKey, bool withCustomer)
+        {
+            var ws = wb.Worksheets.Add(name);
+            var headers = withCustomer
+                ? new[] { "Key", "Summary", "Customer", "Assignee", "Status", "Priority", "Prio Date", "Days Open", "Logged (h)" }
+                : new[] { "Key", "Summary", "Assignee", "Status", "Priority", "Prio Date", "Days Open", "Logged (h)" };
+            for (int i = 0; i < headers.Length; i++) ws.Cell(1, i + 1).Value = headers[i];
+            ws.Row(1).Style.Font.Bold = true;
+
+            var row = 2;
+            foreach (var b in PtSorted(bugs, sortKey))
+            {
+                var c = 1;
+                ws.Cell(row, c++).Value = b.Key;
+                ws.Cell(row, c++).Value = b.Summary;
+                if (withCustomer) ws.Cell(row, c++).Value = SlaCustomerOf(b);
+                ws.Cell(row, c++).Value = b.Assignee;
+                ws.Cell(row, c++).Value = b.Status;
+                ws.Cell(row, c++).Value = b.Priority;
+                ws.Cell(row, c++).Value = b.PrioListDate.HasValue ? b.PrioListDate.Value.ToString("yyyy-MM-dd") : "—";
+                ws.Cell(row, c++).Value = GetDaysOpen(b);
+                ws.Cell(row, c++).Value = Math.Round(b.TimeSpentSeconds / 3600.0, 2);
+                row++;
+            }
+            ws.Columns().AdjustToContents();
+        }
+
+        AddSheet("P0 Overdue", _prio0Bugs, "p0", false);
+        AddSheet("P1 Due 3d", _prio1Bugs, "p1", false);
+        AddSheet("P2 Highest", _prio2Bugs, "p2", true);
+        AddSheet("P3 High", _prio3Bugs, "p3", true);
+        AddSheet("Watchlist", _watchlistBugs, "w", false);
+
+        await DownloadWorkbookAsync(wb, $"Priority-Export-{DateTime.Today:yyyy-MM-dd}.xlsx");
+    }
+
+    // Writes the standard SLA ticket columns for a tier into a worksheet.
+    private void WriteSlaSheet(IXLWorksheet ws, SlaTier tier, IEnumerable<SprintIssue> bugs, DateTime now)
+    {
+        var headers = new[] { "Key", "Summary", "Status", "Priority", "Assignee", "Customer", "Product", "Created", "Age (d)", "SLA Status", "In SLA" };
+        for (int i = 0; i < headers.Length; i++) ws.Cell(1, i + 1).Value = headers[i];
+        ws.Row(1).Style.Font.Bold = true;
+
+        var row = 2;
+        foreach (var b in bugs)
+        {
+            var bk = SlaBucketAt(b, tier.SlaHours, now);
+            ws.Cell(row, 1).Value = b.Key;
+            ws.Cell(row, 2).Value = b.Summary;
+            ws.Cell(row, 3).Value = b.Status;
+            ws.Cell(row, 4).Value = b.Priority;
+            ws.Cell(row, 5).Value = b.Assignee;
+            ws.Cell(row, 6).Value = SlaCustomerOf(b);
+            ws.Cell(row, 7).Value = SlaProductOf(b);
+            if (b.Created.HasValue) ws.Cell(row, 8).Value = b.Created.Value;
+            ws.Cell(row, 9).Value = GetDaysOpen(b);
+            ws.Cell(row, 10).Value = SlaBucketName(bk);
+            ws.Cell(row, 11).Value = bk == 0 ? "Yes" : "No";
+            row++;
+        }
+        ws.Columns().AdjustToContents();
+    }
+
+    // SLA tab — summary + one sheet per tier of the currently-filtered open bugs.
+    private async Task ExportSlaAsync()
+    {
+        var now = DateTime.Now;
+        using var wb = new XLWorkbook();
+
+        var sum = wb.Worksheets.Add("Summary");
+        var sumHeaders = new[] { "Tier", "SLA", "Open", "Inside SLA", "Breached", "Compliance %" };
+        for (int i = 0; i < sumHeaders.Length; i++) sum.Cell(1, i + 1).Value = sumHeaders[i];
+        sum.Row(1).Style.Font.Bold = true;
+        var sr = 2;
+        foreach (var tier in SlaTiers)
+        {
+            var s = SlaNowStats(tier);
+            sum.Cell(sr, 1).Value = tier.Num;
+            sum.Cell(sr, 2).Value = tier.Sub;
+            sum.Cell(sr, 3).Value = s.inside + s.breached;
+            sum.Cell(sr, 4).Value = s.inside;
+            sum.Cell(sr, 5).Value = s.breached;
+            sum.Cell(sr, 6).Value = s.pct;
+            sr++;
+        }
+        sum.Columns().AdjustToContents();
+
+        foreach (var tier in SlaTiers)
+            WriteSlaSheet(wb.Worksheets.Add(tier.Num), tier, SlaBugsFor(tier.Id).OrderByDescending(b => GetDaysOpen(b)), now);
+
+        var suffix = SlaHasFilter ? "filtered-" : "";
+        await DownloadWorkbookAsync(wb, $"SLA-Export-{suffix}{DateTime.Today:yyyy-MM-dd}.xlsx");
+    }
+
+    // Drill-down — just the tickets in the currently-open (tier · week · bucket) panel, honoring filters.
+    private async Task ExportSlaDrillAsync()
+    {
+        var tier = SlaTiers.FirstOrDefault(t => t.Id == _slaDrillTier);
+        if (tier == null || _slaDrillBucket < 0) return;
+
+        var drill = SlaDrillBugs(tier, _slaDrillWeek, _slaDrillBucket);
+        if (drill.Count == 0) return;
+
+        using var wb = new XLWorkbook();
+        WriteSlaSheet(wb.Worksheets.Add("Tickets"), tier, drill, DateTime.Now);
+
+        var bucketSlug = _slaDrillBucket switch { 0 => "inside", 1 => "lt7d", 2 => "7-30d", 3 => "gt30d", _ => "bucket" };
+        await DownloadWorkbookAsync(wb, $"SLA-{tier.Num}-{bucketSlug}-{DateTime.Today:yyyy-MM-dd}.xlsx");
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -1999,6 +2345,134 @@
 
     .sb-sla-tier { padding: 0; }
 
+    /* ── Global filter bar ───────────────────────────────────────── */
+    /* Allow the dropdown panel to escape the card (which otherwise clips with overflow:hidden). */
+    .sb-sla-filterbar { overflow: visible; }
+    .sb-sla-filter-body {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding: 12px 16px 14px;
+        overflow: visible;
+    }
+    .sb-sla-filter-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px;
+    }
+    .sb-sla-filter-cap {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--txt-3);
+        min-width: 86px;
+    }
+
+    /* ── Multi-select dropdown ───────────────────────────────────── */
+    .sb-dd { position: relative; display: inline-block; }
+    .sb-dd-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 12px;
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        background: var(--surface);
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--txt-1);
+        cursor: pointer;
+        min-width: 150px;
+        justify-content: space-between;
+    }
+    .sb-dd-btn:hover { border-color: var(--primary); }
+    .sb-dd-btn.active { border-color: var(--primary); color: var(--primary); }
+    .sb-dd-caret { font-size: 10px; color: var(--txt-3); }
+    .sb-dd-backdrop { position: fixed; inset: 0; z-index: 40; }
+    .sb-dd-panel {
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        z-index: 41;
+        width: 280px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        box-shadow: var(--sh-md);
+        overflow: hidden;
+    }
+    .sb-dd-head {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        padding: 8px;
+        border-bottom: 1px solid var(--border);
+    }
+    .sb-dd-search {
+        flex: 1;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 9px;
+        font-size: 13px;
+        outline: none;
+        background: var(--surface);
+        color: var(--txt-1);
+    }
+    .sb-dd-search:focus { border-color: var(--primary); }
+    .sb-dd-clear {
+        border: none;
+        background: none;
+        color: var(--primary);
+        font-size: 12px;
+        font-weight: 600;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    .sb-dd-list { max-height: 300px; overflow-y: auto; padding: 4px 0; }
+    .sb-dd-opt {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 12px;
+        font-size: 13px;
+        color: var(--txt-1);
+        cursor: pointer;
+    }
+    .sb-dd-opt:hover { background: var(--surface-2); }
+    .sb-dd-opt input { cursor: pointer; }
+    .sb-dd-opt-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .sb-dd-opt-n { font-size: 11px; font-weight: 700; color: var(--txt-3); }
+
+    .sb-sla-fchip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 3px 10px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        font-size: 12px;
+        color: var(--txt-2);
+        cursor: pointer;
+        transition: all 0.12s;
+        white-space: nowrap;
+    }
+    .sb-sla-fchip:hover { border-color: var(--primary); background: var(--surface-2); }
+    .sb-sla-fchip.active {
+        border-color: var(--primary);
+        background: var(--primary);
+        color: #fff;
+    }
+    .sb-sla-fchip-n {
+        font-weight: 700;
+        font-size: 11px;
+        color: var(--txt-3);
+    }
+    .sb-sla-fchip:hover .sb-sla-fchip-n { color: var(--txt-2); }
+    .sb-sla-fchip.active .sb-sla-fchip-n { color: rgba(255,255,255,0.85); }
+
     .sb-sla-tier-head {
         display: flex;
         align-items: center;
@@ -2028,6 +2502,49 @@
     .sb-sla-tier-titles { display: flex; flex-direction: column; }
     .sb-sla-tier-title  { font-size: 14px; font-weight: 700; color: var(--txt-1); }
     .sb-sla-tier-sub    { font-size: 12px; color: var(--txt-3); margin-top: 1px; }
+
+    /* Compliance pill */
+    .sb-sla-compliance {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        line-height: 1.15;
+        padding: 4px 12px;
+        margin-left: 18px;
+        border-radius: var(--r-md);
+        border: 1px solid var(--border);
+    }
+    .sb-sla-comp-pct { font-size: 18px; font-weight: 800; }
+    .sb-sla-comp-lbl { font-size: 11px; color: var(--txt-3); }
+    .sb-sla-comp-good { background: rgba(22,163,74,0.08);  border-color: rgba(22,163,74,0.35); }
+    .sb-sla-comp-good .sb-sla-comp-pct { color: var(--success); }
+    .sb-sla-comp-warn { background: rgba(180,83,9,0.08);   border-color: rgba(180,83,9,0.35); }
+    .sb-sla-comp-warn .sb-sla-comp-pct { color: var(--warning); }
+    .sb-sla-comp-bad  { background: rgba(185,28,28,0.08);  border-color: rgba(185,28,28,0.35); }
+    .sb-sla-comp-bad  .sb-sla-comp-pct { color: var(--danger); }
+
+    /* Chart legend (severity hue + recency opacity) */
+    .sb-sla-legend {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 18px;
+        padding: 10px 18px 0;
+        font-size: 12px;
+        color: var(--txt-2);
+    }
+    .sb-sla-legend-grp { display: inline-flex; align-items: center; gap: 5px; }
+    .sb-sla-legend-cap {
+        font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;
+        color: var(--txt-4); margin-right: 2px;
+    }
+    .sb-sla-legend-txt { color: var(--txt-3); margin-left: 2px; }
+    .sb-sla-wk {
+        width: 14px; height: 12px; border-radius: 2px; background: var(--txt-2);
+    }
+    .sb-sla-dot {
+        width: 11px; height: 11px; border-radius: 2px; display: inline-block; margin-left: 6px;
+    }
 
     .sb-sla-filters {
         margin-left: auto;
@@ -2075,8 +2592,8 @@
         margin-bottom: 10px;
     }
     .sb-sla-drill-title { font-size: 13px; color: var(--txt-1); }
+    .sb-sla-drill-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
     .sb-sla-drill-close {
-        margin-left: auto;
         border: 1px solid var(--border);
         background: var(--surface);
         border-radius: var(--r-md);

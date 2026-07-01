@@ -448,6 +448,18 @@
 .v2-tab-badge-warn    { background: var(--v2-warn-2); }
 .v2-tab-badge-brand   { background: var(--v2-brand); }
 
+/* ── Risk dot (Epics Progress) ── */
+.v2-rdot {
+  display: inline-block;
+  width: 9px; height: 9px;
+  border-radius: 999px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.v2-rdot-2 { background: var(--v2-danger); box-shadow: 0 0 0 3px color-mix(in srgb, var(--v2-danger) 18%, transparent); }
+.v2-rdot-1 { background: var(--v2-warn-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--v2-warn-2) 18%, transparent); }
+.v2-rdot-0 { background: var(--v2-success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--v2-success) 18%, transparent); }
+
 /* ── Tables ── */
 .v2-table-wrap {
   background: var(--v2-elevated);

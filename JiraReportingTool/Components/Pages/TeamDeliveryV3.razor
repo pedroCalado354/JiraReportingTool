@@ -515,6 +515,10 @@
                 <button class="v2-tab @(ActiveTab=="epics" ? "is-active" : "")" @onclick='() => ActiveTab="epics"'>
                     <i class="bi bi-collection"></i>Epics
                 </button>
+                <button class="v2-tab @(ActiveTab=="epicprogress" ? "is-active" : "")" @onclick='() => ActiveTab="epicprogress"'>
+                    <i class="bi bi-bar-chart-steps"></i>Epics Progress
+                    @if (EpicProgressRows.Count(r => r.RiskLevel == 2) is var epCrit && epCrit > 0) { <span class="v2-tab-badge">@epCrit</span> }
+                </button>
                 <button class="v2-tab @(ActiveTab=="calendar" ? "is-active" : "")" @onclick='() => ActiveTab="calendar"'>
                     <i class="bi bi-calendar3"></i>Calendar
                     @if (EpicsWithCommittedDate.Count > 0) { <span class="v2-tab-badge">@EpicsWithCommittedDate.Count</span> }
@@ -1139,6 +1143,137 @@
                     </div>
                 }
             </div>
+        }
+        else if (ActiveTab == "epicprogress")
+        {
+            <!-- ── Filters + legend ───────────────────────────────────────────── -->
+            <div class="v2-section" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+                <select class="v2-select" style="min-width:240px" @bind="_epicsFilterKey">
+                    <option value="">All Epics</option>
+                    @foreach (var e in EpicRows.OrderBy(e => e.Name))
+                    {
+                        <option value="@e.Key">@(e.Name == "No Epic" ? e.Key : $"{e.Key} — {e.Name}")</option>
+                    }
+                </select>
+                <select class="v2-select" style="min-width:200px" @bind="_epicsFilterMember">
+                    <option value="">All Team Members</option>
+                    @foreach (var m in EpicRows.SelectMany(e => e.Issues)
+                                               .Where(i => !string.IsNullOrWhiteSpace(i.Assignee) && i.Assignee != "Unassigned")
+                                               .Select(i => i.Assignee)
+                                               .Distinct()
+                                               .OrderBy(n => n))
+                    {
+                        <option value="@m">@m</option>
+                    }
+                </select>
+                @if (!string.IsNullOrEmpty(_epicsFilterKey) || !string.IsNullOrEmpty(_epicsFilterMember))
+                {
+                    <button class="v2-btn v2-btn-ghost" @onclick="ClearEpicsFilters">Clear</button>
+                }
+                <span class="v2-hint" style="margin-left:auto;display:flex;gap:12px;align-items:center">
+                    <span><span class="v2-rdot v2-rdot-2"></span> @EpicProgressRows.Count(r => r.RiskLevel == 2) critical</span>
+                    <span><span class="v2-rdot v2-rdot-1"></span> @EpicProgressRows.Count(r => r.RiskLevel == 1) at risk</span>
+                    <span><span class="v2-rdot v2-rdot-0"></span> @EpicProgressRows.Count(r => r.RiskLevel == 0) on track</span>
+                </span>
+            </div>
+
+            @if (!EpicProgressRows.Any())
+            {
+                <div class="v2-empty">
+                    <div class="v2-empty-icon"><i class="bi bi-bar-chart-steps"></i></div>
+                    <div class="v2-empty-title">No epics match the current filters</div>
+                    <div>Try clearing them to see all epics.</div>
+                </div>
+            }
+            else
+            {
+                <div class="v2-card v2-card-lg" style="padding:0;overflow:hidden">
+                    <div class="v2-table-wrap" style="margin:0">
+                        <table class="v2-table v2-table-epro">
+                            <thead>
+                                <tr>
+                                    <th class="@SI("Risk", _sortEP, _ascEP)" @onclick='() => SortEP("Risk")' style="width:34px" title="Risk"></th>
+                                    <th class="@SI("Epic", _sortEP, _ascEP)" @onclick='() => SortEP("Epic")'>Epic</th>
+                                    <th class="v2-table-num @SI("Progress", _sortEP, _ascEP)" @onclick='() => SortEP("Progress")'>Progress</th>
+                                    <th title="Done / Active / To do">Tasks</th>
+                                    <th class="v2-table-num @SI("Bugs", _sortEP, _ascEP)" @onclick='() => SortEP("Bugs")' title="Open bugs">Bugs</th>
+                                    <th title="Stale · Blocked · Unestimated">Flags</th>
+                                    <th class="v2-table-num @SI("Logged", _sortEP, _ascEP)" @onclick='() => SortEP("Logged")' title="Sprint logged / estimated hours">Logged / Est</th>
+                                    <th class="v2-table-num @SI("Remaining", _sortEP, _ascEP)" @onclick='() => SortEP("Remaining")'>Rem.</th>
+                                    <th class="@SI("Forecast", _sortEP, _ascEP)" @onclick='() => SortEP("Forecast")' title="Will the sprint scope finish at the current burn?">Forecast</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var r in ApplySortEP(EpicProgressRows))
+                                {
+                                    var ep         = r.Epic;
+                                    var rowTint    = r.RiskLevel == 2 ? "#fef2f2" : r.RiskLevel == 1 ? "#fffbeb" : "transparent";
+                                    var rowBorder  = r.RiskLevel == 2 ? "#ef4444" : r.RiskLevel == 1 ? "#f59e0b" : "#e5e7eb";
+                                    var burnPct    = r.EstH > 0 ? Math.Min(100, (int)Math.Round(r.LoggedH / r.EstH * 100)) : 0;
+                                    var hasFull    = ep.Key != "—" && !string.IsNullOrEmpty(ep.Key);
+                                    <tr style="background:@rowTint;border-left:3px solid @rowBorder">
+                                        <td><span class="v2-rdot v2-rdot-@r.RiskLevel" title="@string.Join(" · ", r.Reasons.DefaultIfEmpty("On track"))"></span></td>
+                                        <td>
+                                            <div class="v2-truncate" style="font-weight:700;font-size:12.5px;max-width:240px" title="@ep.Name">@ep.Name</div>
+                                            <div class="v2-hint" style="font-size:10.5px">
+                                                @if (hasFull)
+                                                {
+                                                    <a href="@JiraBase/browse/@ep.Key" target="_blank" class="v2-key-link">@ep.Key</a>
+                                                }
+                                                else { <span>@ep.Key</span> }
+                                                · @ep.Total task@(ep.Total == 1 ? "" : "s")
+                                                @if (r.CommittedDate.HasValue)
+                                                {
+                                                    <span> · <i class="bi bi-calendar-check"></i> <span style="@(r.Overdue ? "color:var(--v2-danger);font-weight:600" : "")">@r.CommittedDate.Value.ToString("d MMM")</span>@(r.Overdue ? " overdue" : "")</span>
+                                                }
+                                            </div>
+                                        </td>
+                                        <td>
+                                            <div style="display:flex;align-items:center;gap:8px;justify-content:flex-end">
+                                                <span style="font-weight:700;min-width:34px;text-align:right">@r.DonePct%</span>
+                                                <div class="v2-bar-stack" style="width:90px;height:7px;flex-shrink:0">
+                                                    <span style="width:@(ep.Total > 0 ? ep.Done * 100 / ep.Total : 0)%;background:var(--v2-success-grad)" title="Done @ep.Done"></span>
+                                                    <span style="width:@(ep.Total > 0 ? ep.InProgress * 100 / ep.Total : 0)%;background:var(--v2-brand-grad)" title="Active @ep.InProgress"></span>
+                                                    <span style="width:@(ep.Total > 0 ? ep.ToDo * 100 / ep.Total : 0)%;background:linear-gradient(90deg,#94a3b8,#64748b)" title="To do @ep.ToDo"></span>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td style="white-space:nowrap;font-variant-numeric:tabular-nums">
+                                            <span style="color:var(--v2-success);font-weight:600" title="Done">@r.TaskDone</span><span style="opacity:.4"> / </span><span style="color:var(--v2-brand);font-weight:600" title="Active">@r.TaskActive</span><span style="opacity:.4"> / </span><span title="To do">@r.TaskToDo</span>
+                                        </td>
+                                        <td class="v2-table-num">
+                                            @if (r.BugOpen > 0) { <span class="v2-pill v2-pill-danger" style="font-size:10px;padding:1px 6px">@r.BugOpen</span> }
+                                            else if (r.BugTotal > 0) { <span class="v2-hint">0</span> }
+                                            else { <span class="v2-hint">—</span> }
+                                        </td>
+                                        <td style="white-space:nowrap">
+                                            @if (r.Blocked > 0) { <span class="v2-pill v2-pill-danger" style="font-size:10px;padding:1px 5px" title="blocked"><i class="bi bi-slash-circle"></i> @r.Blocked</span> }
+                                            @if (r.Stale > 0)   { <span class="v2-pill v2-pill-warn" style="font-size:10px;padding:1px 5px" title="active, no log 2d+"><i class="bi bi-hourglass-split"></i> @r.Stale</span> }
+                                            @if (r.Unest > 0)   { <span class="v2-pill v2-pill-warn" style="font-size:10px;padding:1px 5px" title="unestimated"><i class="bi bi-question-circle"></i> @r.Unest</span> }
+                                            @if (r.Blocked == 0 && r.Stale == 0 && r.Unest == 0) { <span class="v2-hint">—</span> }
+                                        </td>
+                                        <td class="v2-table-num">
+                                            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+                                                <span class="@(r.OverBudget ? "v2-text-danger" : "")" style="font-weight:600;white-space:nowrap">
+                                                    @($"{r.LoggedH:F0}") / @($"{r.EstH:F0}h")
+                                                    @if (r.OverBudget) { <span title="over estimate">⚠ +@($"{(r.LoggedH - r.EstH):F0}h")</span> }
+                                                </span>
+                                                <div class="v2-bar" style="width:80px;height:5px">
+                                                    <div class="v2-bar-fill @(r.OverBudget ? "v2-bar-fill-danger" : "v2-bar-fill-neutral")" style="width:@burnPct%"></div>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td class="v2-table-num" style="font-weight:600">@($"{r.RemH:F0}h")</td>
+                                        <td><span class="v2-pill @r.ForecastPill" style="font-size:10px;padding:1px 7px;white-space:nowrap">@r.ForecastLabel</span></td>
+                                        <td><span class="v2-pill @r.StatusPill" style="font-size:10px;padding:1px 7px;white-space:nowrap">@r.StatusLabel</span></td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
         }
         else if (ActiveTab == "calendar")
         {
@@ -3467,6 +3602,96 @@
         _epicsFilterKey = "";
         _epicsFilterMember = "";
     }
+
+    // ── Epics Progress tab — one compact, risk-scored row per epic ───────────
+    private record EpicProgRow(
+        EpicRow Epic, int DonePct,
+        int TaskDone, int TaskActive, int TaskToDo,
+        int BugOpen, int BugTotal,
+        int Stale, int Blocked, int Unest,
+        double EstH, double LoggedH, double RemH,
+        bool OverBudget, bool WillFinish, double ShortfallH, double ProjectedDonePct,
+        DateTime? CommittedDate, bool Overdue,
+        int RiskLevel,
+        string ForecastLabel, string ForecastPill,
+        string StatusLabel, string StatusPill,
+        List<string> Reasons);
+
+    private List<EpicProgRow> EpicProgressRows => FilteredEpicRows
+        .Select(ep =>
+        {
+            var taskList = ep.Issues.Where(i => !string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
+            var bugList  = ep.Issues.Where(i =>  string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
+            var donePct  = ep.Total > 0 ? ep.Done * 100 / ep.Total : 0;
+
+            var taskDone   = taskList.Count(i => i.StatusCategoryKey == "done");
+            var taskActive = taskList.Count(i => i.StatusCategoryKey == "indeterminate");
+            var taskToDo   = taskList.Count(i => i.StatusCategoryKey == "new");
+            var bugOpen    = bugList.Count(i => i.StatusCategoryKey != "done");
+
+            var stale   = ep.Issues.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);
+            var blocked = ep.Issues.Count(IsBlocked);
+            var unest   = ep.Issues.Count(i => i.OriginalEstimateSeconds == 0 && i.StatusCategoryKey != "done");
+
+            var overBudget = ep.EstimateHours > 0 && ep.LoggedHours > ep.EstimateHours;
+            var proj       = EpicProjection(ep);
+
+            var overdue = ep.Key != "—" && _epicMeta.TryGetValue(ep.Key, out var m)
+                       && m.CommittedDate.HasValue && m.CommittedDate.Value.Date < DateTime.Today
+                       && ep.Done < ep.Total;
+            DateTime? committed = ep.Key != "—" && _epicMeta.TryGetValue(ep.Key, out var m2) ? m2.CommittedDate : null;
+
+            // Forecast verdict (sprint scope)
+            string fLabel, fPill;
+            if (ep.RemainingHours <= 0 && ep.Done >= ep.Total) { fLabel = "Complete";     fPill = "v2-pill-success"; }
+            else if (!proj.willFinish && ep.RemainingHours > 0) { fLabel = $"Won't finish · −{proj.shortfallH:F0}h"; fPill = "v2-pill-danger"; }
+            else if (proj.projectedDonePct < 95 && ep.RemainingHours > 0) { fLabel = "Tight"; fPill = "v2-pill-warn"; }
+            else { fLabel = "On track"; fPill = "v2-pill-success"; }
+
+            // Overall status (health)
+            string sLabel, sPill;
+            if (overdue)            { sLabel = "Overdue";     sPill = "v2-pill-danger"; }
+            else if (overBudget)    { sLabel = "Over budget"; sPill = "v2-pill-danger"; }
+            else if (stale > 0 || blocked > 0 || bugOpen > 0) { sLabel = "Watch"; sPill = "v2-pill-warn"; }
+            else                    { sLabel = "Healthy";     sPill = "v2-pill-success"; }
+
+            // Reasons + composite risk level
+            var reasons = new List<string>();
+            if (overBudget)                          reasons.Add($"Over budget +{(ep.LoggedHours - ep.EstimateHours):F0}h");
+            if (!proj.willFinish && ep.RemainingHours > 0) reasons.Add($"Short {proj.shortfallH:F0}h to finish");
+            if (overdue)                             reasons.Add("Committed date overdue");
+            if (blocked > 0)                         reasons.Add($"{blocked} blocked");
+            if (stale > 0)                           reasons.Add($"{stale} stale 2d+");
+            if (bugOpen > 0)                         reasons.Add($"{bugOpen} open bugs");
+            if (unest > 0)                           reasons.Add($"{unest} unestimated");
+
+            var riskLevel =
+                (overBudget || (!proj.willFinish && ep.RemainingHours > 0) || overdue) ? 2
+                : (stale > 0 || blocked > 0 || bugOpen > 0 || (proj.projectedDonePct < 95 && ep.RemainingHours > 0)) ? 1
+                : 0;
+
+            return new EpicProgRow(ep, donePct, taskDone, taskActive, taskToDo, bugOpen, bugList.Count,
+                stale, blocked, unest, ep.EstimateHours, ep.LoggedHours, ep.RemainingHours,
+                overBudget, proj.willFinish, proj.shortfallH, proj.projectedDonePct,
+                committed, overdue, riskLevel, fLabel, fPill, sLabel, sPill, reasons);
+        })
+        .ToList();
+
+    private string _sortEP = "Risk"; private bool _ascEP = false;
+    private void SortEP(string c) { if (_sortEP == c) _ascEP = !_ascEP; else { _sortEP = c; _ascEP = c == "Epic"; } }
+
+    private IEnumerable<EpicProgRow> ApplySortEP(IEnumerable<EpicProgRow> src) => _sortEP switch
+    {
+        "Epic"      => _ascEP ? src.OrderBy(r => r.Epic.Name)        : src.OrderByDescending(r => r.Epic.Name),
+        "Progress"  => _ascEP ? src.OrderBy(r => r.DonePct)          : src.OrderByDescending(r => r.DonePct),
+        "Bugs"      => _ascEP ? src.OrderBy(r => r.BugOpen)          : src.OrderByDescending(r => r.BugOpen),
+        "Logged"    => _ascEP ? src.OrderBy(r => r.LoggedH)          : src.OrderByDescending(r => r.LoggedH),
+        "Remaining" => _ascEP ? src.OrderBy(r => r.RemH)             : src.OrderByDescending(r => r.RemH),
+        "Forecast"  => _ascEP ? src.OrderBy(r => r.WillFinish).ThenByDescending(r => r.ShortfallH)
+                              : src.OrderByDescending(r => r.WillFinish).ThenBy(r => r.ShortfallH),
+        _           => _ascEP ? src.OrderBy(r => r.RiskLevel).ThenBy(r => r.RemH)
+                              : src.OrderByDescending(r => r.RiskLevel).ThenByDescending(r => r.RemH),
+    };
 
     // ── Epics → Excel export (all sprint epics) ──────────────────────────────
     private async Task ExportEpicsToXlsxAsync()

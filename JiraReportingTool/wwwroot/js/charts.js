@@ -32,6 +32,89 @@ window.renderClickableBarChart = (canvasId, config, dotNetRef, methodName, tag) 
     _charts[canvasId] = new Chart(canvas.getContext('2d'), config);
 };
 
+// SLA tier chart: clickable bars + value labels on top of each bar + a tinted
+// "breached" region with a dashed divider after the first (Inside SLA) category.
+window.renderSlaBarChart = (canvasId, config, dotNetRef, methodName, tag) => {
+    if (_charts[canvasId]) {
+        _charts[canvasId].destroy();
+        delete _charts[canvasId];
+    }
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+
+    const txtColor = (getComputedStyle(document.documentElement).getPropertyValue('--txt-1') || '#374151').trim();
+
+    config.options = config.options || {};
+    config.options.onClick = (evt, elements) => {
+        if (!elements || elements.length === 0) return;
+        const el = elements[0];
+        dotNetRef.invokeMethodAsync(methodName, tag, el.datasetIndex, el.index);
+    };
+    config.options.onHover = (evt, elements) => {
+        evt.native.target.style.cursor = (elements && elements.length) ? 'pointer' : 'default';
+    };
+
+    // Faint red band over the "Outside SLA" categories (everything past category 0) + dashed boundary.
+    const insideOutside = {
+        id: 'slaInsideOutside',
+        beforeDatasetsDraw(chart) {
+            const { ctx, chartArea, scales } = chart;
+            const x = scales.x;
+            if (!chartArea || !x) return;
+            const x0 = x.getPixelForValue(0);
+            const x1 = x.getPixelForValue(1);
+            if (x1 == null || isNaN(x1)) return;
+            const boundary = (x0 + x1) / 2;
+            ctx.save();
+            ctx.fillStyle = 'rgba(220,38,38,0.05)';
+            ctx.fillRect(boundary, chartArea.top, chartArea.right - boundary, chartArea.bottom - chartArea.top);
+            ctx.strokeStyle = 'rgba(220,38,38,0.45)';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 4]);
+            ctx.beginPath();
+            ctx.moveTo(boundary, chartArea.top);
+            ctx.lineTo(boundary, chartArea.bottom);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.font = '600 10px system-ui, sans-serif';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = 'rgba(22,163,74,0.85)';
+            ctx.textAlign = 'right';
+            ctx.fillText('IN SLA', boundary - 6, chartArea.top + 2);
+            ctx.fillStyle = 'rgba(220,38,38,0.8)';
+            ctx.textAlign = 'left';
+            ctx.fillText('BREACHED', boundary + 6, chartArea.top + 2);
+            ctx.restore();
+        }
+    };
+
+    // Value label above each non-zero bar.
+    const valueLabels = {
+        id: 'slaValueLabels',
+        afterDatasetsDraw(chart) {
+            const { ctx } = chart;
+            ctx.save();
+            ctx.font = '600 11px system-ui, sans-serif';
+            ctx.fillStyle = txtColor || '#374151';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'bottom';
+            chart.data.datasets.forEach((ds, di) => {
+                const meta = chart.getDatasetMeta(di);
+                if (meta.hidden) return;
+                meta.data.forEach((bar, i) => {
+                    const v = ds.data[i];
+                    if (!v) return;
+                    ctx.fillText(v, bar.x, bar.y - 2);
+                });
+            });
+            ctx.restore();
+        }
+    };
+
+    config.plugins = [insideOutside, valueLabels];
+    _charts[canvasId] = new Chart(canvas.getContext('2d'), config);
+};
+
 window.destroyChart = (canvasId) => {
     if (_charts[canvasId]) {
         _charts[canvasId].destroy();
