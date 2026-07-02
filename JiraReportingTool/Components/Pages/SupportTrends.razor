@@ -161,47 +161,15 @@
 
         </div>
 
-        <!-- ═══ 2. EFFORT & TIME ══════════════════════════════════════════════ -->
-        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-stopwatch"></i> Effort &amp; Time</span></div>
-        <div class="v2-kpi-grid">
+        <!-- ═══ 2. EFFORT & TIME — BUGS ════════════════════════════════════════ -->
+        var bugEffort = EffortStatsFor(BugTypeIssues);
+        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-bug"></i> Effort &amp; Time <span class="st-scope">Bug type · @bugEffort.Count</span></span></div>
+        @EffortGrid(bugEffort, "Bug")
 
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Logged in Window</div>
-                <div class="v2-kpi-value">@FmtHM(WindowLoggedSeconds)</div>
-                <div class="v2-kpi-sub">across @WindowWorklogCount worklog@(WindowWorklogCount == 1 ? "" : "s")</div>
-            </div>
-
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Total Logged</div>
-                <div class="v2-kpi-value">@FmtHM(TotalLoggedSeconds)</div>
-                <div class="v2-kpi-sub">+ @FmtHM(RemainingSeconds) remaining (all time)</div>
-            </div>
-
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-speedometer"></i>Weekly Burn</div>
-                <div class="v2-kpi-value">@($"{WeeklyBurnHours:0.0}")<span class="v2-kpi-of">h / wk</span></div>
-                <div class="v2-kpi-sub">@WindowWeeks week@(WindowWeeks == 1 ? "" : "s") in window</div>
-            </div>
-
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-clock"></i>Avg Logged / Bug</div>
-                <div class="v2-kpi-value">@FmtHM(AvgLoggedPerBugSeconds)</div>
-                <div class="v2-kpi-sub">bugs with time logged</div>
-            </div>
-
-            <div class="v2-kpi @(BugsNoTimeOpen == 0 ? "v2-kpi-success" : "v2-kpi-warn")">
-                <div class="v2-kpi-head"><i class="bi bi-slash-circle"></i>Open · No Time</div>
-                <div class="v2-kpi-value">@BugsNoTimeOpen</div>
-                <div class="v2-kpi-sub">open bugs with zero logged</div>
-            </div>
-
-            <div class="v2-kpi @(OverdueCount == 0 ? "v2-kpi-success" : "v2-kpi-danger")">
-                <div class="v2-kpi-head"><i class="bi bi-exclamation-triangle"></i>Overdue</div>
-                <div class="v2-kpi-value">@OverdueCount</div>
-                <div class="v2-kpi-sub">@SlaBreachedCount past SLA · avg age @($"{AvgOpenAgeDays:0}")d</div>
-            </div>
-
-        </div>
+        <!-- ═══ 2b. EFFORT & TIME — REDESIGN ═══════════════════════════════════ -->
+        var redesignEffort = EffortStatsFor(RedesignTypeIssues);
+        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-pencil-square"></i> Effort &amp; Time <span class="st-scope">Redesign type · @redesignEffort.Count</span></span></div>
+        @EffortGrid(redesignEffort, "Redesign")
 
         <!-- ═══ TICKETS BY PRIORITY ════════════════════════════════════════════ -->
         <div class="v2-section"><span class="v2-section-title"><i class="bi bi-flag-fill"></i> Tickets by priority <span class="st-scope">all time</span></span></div>
@@ -303,45 +271,76 @@
             </div>
         </div>
 
-        <!-- ═══ PRIORITY BREAKDOWN PER SPRINT ══════════════════════════════════ -->
+        <!-- ═══ PER-SPRINT BREAKDOWNS (collapsible) ════════════════════════════ -->
         <div class="v2-section" style="margin-top:16px">
-            <span class="v2-section-title"><i class="bi bi-flag-fill"></i> Priority breakdown per sprint <span class="st-scope">bugs created in each sprint window</span></span>
+            <span class="v2-section-title"><i class="bi bi-diagram-3"></i> Per-sprint breakdowns <span class="st-scope">bugs created in each sprint window · click a sprint to expand</span></span>
         </div>
         @foreach (var s in SprintStats)
         {
-            var rows = PriorityBreakdownForWindow(s.Start, s.End).ToList();
-            var sprintTotal = rows.Sum(r => r.Total);
-            <div class="v2-card" style="margin-top:12px">
-                <div class="st-card-title">
-                    <i class="bi bi-calendar3"></i> @s.Name
+            var prio = PriorityBreakdownForWindow(s.Start, s.End).ToList();
+            var sprintTotal = prio.Sum(r => r.Total);
+            var expanded = _expandedSprints.Contains(s.Name);
+            <div class="v2-card st-sprint-card">
+                <button class="st-sprint-head @(expanded ? "open" : "")" @onclick="() => ToggleSprint(s.Name)">
+                    <i class="bi bi-chevron-@(expanded ? "down" : "right") st-sprint-chev"></i>
+                    <span class="st-sprint-name"><i class="bi bi-calendar3"></i> @s.Name</span>
                     <span class="st-scope">@s.Start.ToString("dd MMM") – @s.End.ToString("dd MMM yy") · @sprintTotal bug@(sprintTotal == 1 ? "" : "s")</span>
-                </div>
-                @if (sprintTotal == 0)
+                </button>
+                @if (expanded)
                 {
-                    <div class="st-muted-cell" style="padding:6px 2px">No bugs created in this sprint window.</div>
-                }
-                else
-                {
-                    <div class="v2-table-wrap" style="margin:0">
-                        <table class="v2-table" style="font-size:12px">
-                            <thead><tr>
-                                <th>Priority</th><th class="v2-table-num">Bugs</th><th class="v2-table-num">Open</th>
-                                <th class="v2-table-num">Done</th><th class="v2-table-num" title="Avg logged effort from first Dev Ready → Done">Avg Fix</th><th class="v2-table-num">Share</th>
-                            </tr></thead>
-                            <tbody>
-                                @foreach (var p in rows)
-                                {
-                                    <tr>
-                                        <td><span class="v2-pill @PriorityPill(p.Name)">@p.Name</span></td>
-                                        <td class="v2-table-num">@p.Total</td>
-                                        <td class="v2-table-num">@p.Open</td>
-                                        <td class="v2-table-num v2-text-success">@p.Closed</td>
-                                        <td class="v2-table-num">@(p.AvgFixHours.HasValue ? $"{p.AvgFixHours:0.0}h" : "—")</td>
-                                        <td class="v2-table-num">@ShareCell(p.Total, sprintTotal)</td>
-                                    </tr>
-                                }
-                            </tbody>
-                        </table>
+                    var custRows    = SprintByCustomer(s.Start, s.End);
+                    var labelRows   = SprintByLabel(s.Start, s.End);
+                    var workedRows  = SprintWorkedBy(s.Start, s.End);
+                    var workedTotal = workedRows.Sum(w => w.LoggedSeconds);
+                    <div class="st-sprint-body">
+                        <!-- By priority -->
+                        <div class="st-sprint-sub">
+                            <div class="st-card-title"><i class="bi bi-flag-fill"></i> By priority</div>
+                            @if (sprintTotal == 0)
+                            {
+                                <div class="st-muted-cell" style="padding:6px 2px">No bugs created in this sprint window.</div>
+                            }
+                            else
+                            {
+                                <div class="v2-table-wrap" style="margin:0">
+                                    <table class="v2-table" style="font-size:12px">
+                                        <thead><tr>
+                                            <th>Priority</th><th class="v2-table-num">Bugs</th><th class="v2-table-num">Open</th>
+                                            <th class="v2-table-num">Done</th><th class="v2-table-num" title="Avg logged effort from first Dev Ready → Done">Avg Fix</th><th class="v2-table-num">Share</th>
+                                        </tr></thead>
+                                        <tbody>
+                                            @foreach (var p in prio)
+                                            {
+                                                <tr>
+                                                    <td><span class="v2-pill @PriorityPill(p.Name)">@p.Name</span></td>
+                                                    <td class="v2-table-num">@p.Total</td>
+                                                    <td class="v2-table-num">@p.Open</td>
+                                                    <td class="v2-table-num v2-text-success">@p.Closed</td>
+                                                    <td class="v2-table-num">@(p.AvgFixHours.HasValue ? $"{p.AvgFixHours:0.0}h" : "—")</td>
+                                                    <td class="v2-table-num">@ShareCell(p.Total, sprintTotal)</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="v2-grid-2">
+                            <div class="st-sprint-sub">
+                                <div class="st-card-title"><i class="bi bi-building"></i> By customer</div>
+                                @SprintGroupTable("Customer", custRows, sprintTotal, false)
+                            </div>
+                            <div class="st-sprint-sub">
+                                <div class="st-card-title"><i class="bi bi-tags"></i> By label</div>
+                                @SprintGroupTable("Label", labelRows, sprintTotal, false)
+                            </div>
+                        </div>
+
+                        <div class="st-sprint-sub">
+                            <div class="st-card-title"><i class="bi bi-person-workspace"></i> Worked by <span class="st-scope">worklog author · in sprint window</span></div>
+                            @SprintGroupTable("Member", workedRows, workedTotal, true)
+                        </div>
                     </div>
                 }
             </div>
@@ -829,6 +828,40 @@
     private int WindowWeeks => Math.Max(1, (_rangeEnd.DayNumber - _rangeStart.DayNumber + 1 + 6) / 7);
     private double WeeklyBurnHours => WindowLoggedSeconds / 3600.0 / WindowWeeks;
 
+    // ── Effort & Time, computed for an arbitrary issue subset ─────────────────
+    // Overview splits Effort & Time into Bug-type and Redesign-type sections, so
+    // the same metric set is derived once per subset instead of only over _bugs.
+    private record EffortStats(int Count, int WindowLoggedSeconds, int WindowWorklogCount,
+        int TotalLoggedSeconds, int RemainingSeconds, double WeeklyBurnHours, int WindowWeeks,
+        int AvgLoggedSeconds, int NoTimeOpen, int Overdue, int SlaBreached, double AvgOpenAgeDays);
+
+    private IEnumerable<SprintIssue> BugTypeIssues =>
+        _bugs.Where(b => string.Equals(b.IssueType, "Bug", StringComparison.OrdinalIgnoreCase));
+    private IEnumerable<SprintIssue> RedesignTypeIssues =>
+        _bugs.Where(b => string.Equals(b.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase));
+
+    private EffortStats EffortStatsFor(IEnumerable<SprintIssue> src)
+    {
+        var list          = src.ToList();
+        var windowLogged  = list.Sum(b => b.Worklogs.Where(w => InRange(w.Started)).Sum(w => w.TimeSpentSeconds));
+        var windowLogs    = list.Sum(b => b.Worklogs.Count(w => InRange(w.Started)));
+        var withTime      = list.Where(b => b.TimeSpentSeconds > 0).ToList();
+        var open          = list.Where(b => !IsDone(b)).ToList();
+        return new EffortStats(
+            Count:              list.Count,
+            WindowLoggedSeconds: windowLogged,
+            WindowWorklogCount:  windowLogs,
+            TotalLoggedSeconds:  list.Sum(b => b.TimeSpentSeconds),
+            RemainingSeconds:    open.Sum(b => b.ComputedRemainingSeconds),
+            WeeklyBurnHours:     windowLogged / 3600.0 / WindowWeeks,
+            WindowWeeks:         WindowWeeks,
+            AvgLoggedSeconds:    withTime.Count == 0 ? 0 : (int)withTime.Average(b => b.TimeSpentSeconds),
+            NoTimeOpen:          list.Count(b => !IsDone(b) && b.TimeSpentSeconds == 0),
+            Overdue:             list.Count(b => GetHealth(b) == "overdue"),
+            SlaBreached:         list.Count(b => GetSlaBucket(b) == "breached"),
+            AvgOpenAgeDays:      open.Count == 0 ? 0 : open.Average(GetDaysOpen));
+    }
+
     // ── Health / SLA / aging ────────────────────────────────────────────────
     private int OverdueCount     => _bugs.Count(b => GetHealth(b) == "overdue");
     private int SlaBreachedCount => _bugs.Count(b => GetSlaBucket(b) == "breached");
@@ -1096,6 +1129,54 @@
                 string.IsNullOrWhiteSpace(c.Name) ? c.EpicKey : c.Name,
                 s, e, created, closedBugs.Count, closedBugs.Count - created, logged, AvgResolveOf(closedBugs), qa);
         });
+
+    // ── Per-sprint breakdowns (Sprints tab, collapsible) ─────────────────────
+    // Same customer / label / worked-by breakdowns as the Breakdowns tab, but scoped
+    // to the bugs CREATED inside a given sprint window, with logged hours counted
+    // only from worklogs that also fall inside that window.
+    private HashSet<string> _expandedSprints = new();
+    private void ToggleSprint(string name)
+    {
+        if (!_expandedSprints.Remove(name)) _expandedSprints.Add(name);
+    }
+
+    private List<GroupStat> SprintByCustomer(DateOnly s, DateOnly e) =>
+        _bugs.Where(b => InWin(b.Created, s, e) && !string.IsNullOrWhiteSpace(b.Customer))
+             .GroupBy(b => b.Customer)
+             .Select(g => new GroupStat(g.Key, g.Count(), g.Count(IsDone), g.Count(b => !IsDone(b)),
+                 g.Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds)),
+                 g.Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds)),
+                 AvgResolveOf(g)))
+             .OrderByDescending(g => g.Total).ThenByDescending(g => g.LoggedSeconds)
+             .ToList();
+
+    private List<GroupStat> SprintByLabel(DateOnly s, DateOnly e) =>
+        _bugs.Where(b => InWin(b.Created, s, e))
+             .SelectMany(b => (b.Labels ?? new()).Select(l => (Label: l, Bug: b)))
+             .Where(x => !string.IsNullOrWhiteSpace(x.Label))
+             .GroupBy(x => x.Label)
+             .Select(g => new GroupStat(g.Key, g.Count(), g.Count(x => IsDone(x.Bug)), g.Count(x => !IsDone(x.Bug)),
+                 g.Sum(x => x.Bug.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds)),
+                 g.Sum(x => x.Bug.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds)),
+                 AvgResolveOf(g.Select(x => x.Bug))))
+             .OrderByDescending(g => g.Total).ThenByDescending(g => g.LoggedSeconds)
+             .ToList();
+
+    private List<GroupStat> SprintWorkedBy(DateOnly s, DateOnly e) =>
+        _bugs.Where(b => InWin(b.Created, s, e))
+             .SelectMany(b => b.Worklogs
+                 .Where(w => !string.IsNullOrWhiteSpace(w.Author) && InWin(w.Started, s, e))
+                 .Select(w => (Author: w.Author, Bug: b, Sec: w.TimeSpentSeconds)))
+             .GroupBy(x => x.Author)
+             .Select(g =>
+             {
+                 var bugs = g.Select(x => x.Bug).DistinctBy(b => b.Key).ToList();
+                 var sec  = g.Sum(x => x.Sec);
+                 return new GroupStat(g.Key, bugs.Count, bugs.Count(IsDone), bugs.Count(b => !IsDone(b)),
+                     sec, sec, AvgResolveOf(bugs));
+             })
+             .OrderByDescending(g => g.LoggedSeconds)
+             .ToList();
 
     // ── Charts ──────────────────────────────────────────────────────────────
     private async Task RenderChartsAsync()
@@ -1408,6 +1489,84 @@
         if (parts.Length == 0) return "?";
         return parts.Length == 1 ? parts[0][..1].ToUpper() : (parts[0][..1] + parts[^1][..1]).ToUpper();
     }
+
+    // ── Reusable render fragments ─────────────────────────────────────────────
+    // Effort & Time KPI grid for one issue subset (Bugs / Redesign on the Overview tab).
+    private RenderFragment EffortGrid(EffortStats s, string unit) => @<div class="v2-kpi-grid">
+        <div class="v2-kpi v2-kpi-neutral">
+            <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Logged in Window</div>
+            <div class="v2-kpi-value">@FmtHM(s.WindowLoggedSeconds)</div>
+            <div class="v2-kpi-sub">across @s.WindowWorklogCount worklog@(s.WindowWorklogCount == 1 ? "" : "s")</div>
+        </div>
+        <div class="v2-kpi v2-kpi-neutral">
+            <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Total Logged</div>
+            <div class="v2-kpi-value">@FmtHM(s.TotalLoggedSeconds)</div>
+            <div class="v2-kpi-sub">+ @FmtHM(s.RemainingSeconds) remaining (all time)</div>
+        </div>
+        <div class="v2-kpi v2-kpi-neutral">
+            <div class="v2-kpi-head"><i class="bi bi-speedometer"></i>Weekly Burn</div>
+            <div class="v2-kpi-value">@($"{s.WeeklyBurnHours:0.0}")<span class="v2-kpi-of">h / wk</span></div>
+            <div class="v2-kpi-sub">@s.WindowWeeks week@(s.WindowWeeks == 1 ? "" : "s") in window</div>
+        </div>
+        <div class="v2-kpi v2-kpi-neutral">
+            <div class="v2-kpi-head"><i class="bi bi-clock"></i>Avg Logged / @unit</div>
+            <div class="v2-kpi-value">@FmtHM(s.AvgLoggedSeconds)</div>
+            <div class="v2-kpi-sub">@(unit.ToLowerInvariant())s with time logged</div>
+        </div>
+        <div class="v2-kpi @(s.NoTimeOpen == 0 ? "v2-kpi-success" : "v2-kpi-warn")">
+            <div class="v2-kpi-head"><i class="bi bi-slash-circle"></i>Open · No Time</div>
+            <div class="v2-kpi-value">@s.NoTimeOpen</div>
+            <div class="v2-kpi-sub">open with zero logged</div>
+        </div>
+        <div class="v2-kpi @(s.Overdue == 0 ? "v2-kpi-success" : "v2-kpi-danger")">
+            <div class="v2-kpi-head"><i class="bi bi-exclamation-triangle"></i>Overdue</div>
+            <div class="v2-kpi-value">@s.Overdue</div>
+            <div class="v2-kpi-sub">@s.SlaBreached past SLA · avg age @($"{s.AvgOpenAgeDays:0}")d</div>
+        </div>
+    </div>;
+
+    // Compact per-sprint breakdown table (customer / label / worked-by on the Sprints tab).
+    // shareByLogged → the Share column is % of logged hours (worked-by) instead of % of bugs.
+    private RenderFragment SprintGroupTable(string nameCol, IReadOnlyList<GroupStat> rows, int shareWhole, bool shareByLogged) => @<text>
+        @if (rows.Count == 0)
+        {
+            <div class="st-muted-cell" style="padding:6px 2px">No data in this window.</div>
+        }
+        else
+        {
+            <div class="v2-table-wrap" style="margin:0">
+                <table class="v2-table" style="font-size:12px">
+                    <thead><tr>
+                        <th>@nameCol</th>
+                        <th class="v2-table-num">Bugs</th>
+                        <th class="v2-table-num">Closed</th>
+                        <th class="v2-table-num">Open</th>
+                        <th class="v2-table-num">Logged</th>
+                        <th class="v2-table-num">Avg Resolve</th>
+                        <th class="v2-table-num">Share</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var g in rows.Take(15))
+                        {
+                            <tr>
+                                <td class="st-trunc" title="@g.Name">@g.Name</td>
+                                <td class="v2-table-num">@g.Total</td>
+                                <td class="v2-table-num v2-text-success">@g.Closed</td>
+                                <td class="v2-table-num">@g.Open</td>
+                                <td class="v2-table-num">@FmtHM(g.LoggedSeconds)</td>
+                                <td class="v2-table-num">@(g.AvgResolve.HasValue ? $"{g.AvgResolve:0.0}d" : "—")</td>
+                                <td class="v2-table-num">@(shareByLogged ? ShareCell(g.LoggedSeconds, shareWhole) : ShareCell(g.Total, shareWhole))</td>
+                            </tr>
+                        }
+                        @if (rows.Count > 15)
+                        {
+                            <tr><td colspan="7" class="st-muted-cell">+@(rows.Count - 15) more…</td></tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </text>;
 }
 
 <style>
@@ -1439,6 +1598,20 @@
         color: var(--v2-ink-3); margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
     }
     .st-chart-box { position: relative; height: 260px; }
+
+    /* Per-sprint collapsible breakdown cards (Sprints tab) */
+    .v2-card.st-sprint-card { padding: 0; overflow: hidden; margin-top: 12px; }
+    .st-sprint-head {
+        display: flex; align-items: center; gap: 10px; width: 100%;
+        background: none; border: none; cursor: pointer; font: inherit;
+        text-align: left; color: var(--v2-ink-1); padding: 14px 16px;
+    }
+    .st-sprint-head:hover { background: var(--v2-surface-2); }
+    .st-sprint-head.open { border-bottom: 1px solid var(--v2-border); }
+    .st-sprint-chev { font-size: 12px; color: var(--v2-ink-3); width: 12px; flex-shrink: 0; }
+    .st-sprint-name { font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
+    .st-sprint-body { padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+    .st-sprint-sub .st-card-title { margin-bottom: 8px; }
 
     /* Breakdowns: filter input + sortable, scrollable tables */
     .st-bk-head { justify-content: space-between; }

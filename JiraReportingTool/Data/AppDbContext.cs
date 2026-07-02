@@ -12,6 +12,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<JiraFilter> JiraFilters => Set<JiraFilter>();
     public DbSet<EpicSummary> EpicSummaries => Set<EpicSummary>();
 
+    // ── Support Bugs · SLAs daily history snapshots ──────────────────────────
+    public DbSet<SlaSnapshot> SlaSnapshots => Set<SlaSnapshot>();
+
     // ── Sprint / Epic configuration (drives default inputs on dashboards) ────
     public DbSet<SprintConfig> SprintConfigs => Set<SprintConfig>();
 
@@ -136,5 +139,13 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
         modelBuilder.Entity<SharedHoliday>()
             .HasIndex(h => h.Date)
             .IsUnique();
+
+        // ── SLA history snapshot: one row per day, JSON payload ──────────────
+        modelBuilder.Entity<SlaSnapshot>()
+            .HasIndex(s => s.SnapshotDate)
+            .IsUnique();
+        modelBuilder.Entity<SlaSnapshot>()
+            .Property(s => s.DataJson)
+            .HasColumnType("nvarchar(max)");
     }
 }

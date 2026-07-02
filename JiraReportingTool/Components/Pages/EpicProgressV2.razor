@@ -552,8 +552,8 @@
                 </div>
                 <div class="v2-kpi @(QQaRejectedTickets > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
                     <div class="v2-kpi-head"><i class="bi bi-x-octagon"></i>QA rejections</div>
-                    <div class="v2-kpi-value">@QQaRejectionsTotal<span class="v2-kpi-of">/ @QQaRejectedTickets tickets</span></div>
-                    <div class="v2-kpi-sub">@($"{QQaRejectionRate:F1}%") of tickets rejected</div>
+                    <div class="v2-kpi-value">@QQaRejectedTickets<span class="v2-kpi-of">tickets rejected</span></div>
+                    <div class="v2-kpi-sub">@QQaRejectionsTotal rejection event@(QQaRejectionsTotal == 1 ? "" : "s") · @($"{QQaRejectionRate:F1}%") of all tickets</div>
                 </div>
                 <div class="v2-kpi @(QStaleOpenBugs > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
                     <div class="v2-kpi-head"><i class="bi bi-hourglass"></i>Stale bugs</div>

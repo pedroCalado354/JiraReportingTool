@@ -244,8 +244,8 @@
 
             <div class="v2-kpi @(QaRejectedBugs > 0 ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-x-octagon"></i>QA rejections</div>
-                <div class="v2-kpi-value">@QaRejectionsTotal<span class="v2-kpi-of">/ @QaRejectedBugs bugs</span></div>
-                <div class="v2-kpi-sub">@($"{QaRejectionRate:F1}%") of bugs rejected</div>
+                <div class="v2-kpi-value">@QaRejectedBugs<span class="v2-kpi-of">bugs rejected</span></div>
+                <div class="v2-kpi-sub">@QaRejectionsTotal rejection event@(QaRejectionsTotal == 1 ? "" : "s") · @($"{QaRejectionRate:F1}%") of all bugs</div>
             </div>
 
             <div class="v2-kpi @(StaleOpenBugs > 0 ? "v2-kpi-warn" : "v2-kpi-success")">

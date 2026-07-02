@@ -3,6 +3,7 @@
 @inject IJiraService JiraService
 @inject IConfiguration Config
 @inject SprintConfigService SprintConfigService
+@inject TeamRosterService RosterService
 @inject IJSRuntime JS
 @using JiraReportingTool.Models
 @using ClosedXML.Excel
@@ -223,7 +224,7 @@
 
         <!-- ═══ KPI GRID — DELIVERY WORK (all non-bug issue types) ══════════ -->
         <div class="v2-kpi-section-head">
-            <div class="v2-section-title" style="margin-bottom:0"><i class="bi bi-check2-square"></i>Delivery Work <span class="v2-section-note">All issue types except bugs</span></div>
+            <div class="v2-section-title" style="margin-bottom:0"><i class="bi bi-check2-square"></i>Delivery Work <span class="v2-section-note">Task issue type only</span></div>
             <div class="v2-type-chips">
                 @foreach (var t in DeliveryTypeBreakdown)
                 {
@@ -255,7 +256,7 @@
             </div>
 
             <!-- Capacity (tasks) -->
-            <div class="v2-kpi @(TaskOverCapacity ? "v2-kpi-danger" : "")">
+            <div class="v2-kpi v2-kpi-clickable @(TaskOverCapacity ? "v2-kpi-danger" : "")" @onclick='() => OpenTeamTime("Capacity", true)' title="Click for per-team time &amp; capacity">
                 <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Capacity</div>
                 <div class="v2-kpi-value @(TaskOverCapacity ? "v2-text-danger" : "")">@($"{TaskCapacityHours:F0}h")<span class="v2-kpi-of">vs @($"{TaskRemainingHours:F0}h")</span></div>
                 <div class="v2-bar" style="margin-top:8px">
@@ -266,7 +267,7 @@
             </div>
 
             <!-- Burn Rate (tasks) -->
-            <div class="v2-kpi v2-kpi-neutral">
+            <div class="v2-kpi v2-kpi-neutral v2-kpi-clickable" @onclick='() => OpenTeamTime("Burn Rate", true)' title="Click for per-team time &amp; capacity">
                 <div class="v2-kpi-head"><i class="bi bi-graph-up-arrow"></i>Burn Rate</div>
                 <div class="v2-kpi-value">@($"{TaskHoursLoggedPerWorkday:F1}h")<span class="v2-kpi-of">/ workday</span></div>
                 @if (TaskDailyBurndownHours.Count > 1)
@@ -274,6 +275,17 @@
                     @SparklineSvg(TaskDailyBurndownHours, "#6366f1")
                 }
                 <div class="v2-kpi-sub">@($"{TaskTotalLoggedHours:F0}h logged") · projected @TaskProjectedFinishHours.ToString("F0")h by end</div>
+            </div>
+
+            <!-- Time Spent (tasks) -->
+            <div class="v2-kpi v2-kpi-neutral v2-kpi-clickable" @onclick='() => OpenTeamTime("Time Spent", true)' title="Click for per-team time &amp; capacity">
+                <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Time Spent</div>
+                <div class="v2-kpi-value">@($"{TaskSprintLoggedHours:F0}h")<span class="v2-kpi-of">logged this sprint</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill v2-bar-fill-success"
+                         style="width:@(TaskSprintLoggedHours > 0 ? Math.Min(TaskSprintDoneLoggedHours / TaskSprintLoggedHours * 100, 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@($"{TaskSprintDoneLoggedHours:F0}h") on done · @($"{TaskSprintDoneReviewLoggedHours:F0}h") incl. in review</div>
             </div>
 
             <!-- Idle Tasks (tasks) -->
@@ -369,7 +381,7 @@
             }
 
             <!-- Capacity (all) -->
-            <div class="v2-kpi @(IsOverCapacity ? "v2-kpi-danger" : "")">
+            <div class="v2-kpi v2-kpi-clickable @(IsOverCapacity ? "v2-kpi-danger" : "")" @onclick='() => OpenTeamTime("Capacity", false)' title="Click for per-team time &amp; capacity">
                 <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Capacity</div>
                 <div class="v2-kpi-value @(IsOverCapacity ? "v2-text-danger" : "")">@($"{CapacityHours:F0}h")<span class="v2-kpi-of">vs @($"{TotalRemainingHours:F0}h")</span></div>
                 <div class="v2-bar" style="margin-top:8px">
@@ -380,7 +392,7 @@
             </div>
 
             <!-- Burn Rate (all) -->
-            <div class="v2-kpi v2-kpi-neutral">
+            <div class="v2-kpi v2-kpi-neutral v2-kpi-clickable" @onclick='() => OpenTeamTime("Burn Rate", false)' title="Click for per-team time &amp; capacity">
                 <div class="v2-kpi-head"><i class="bi bi-graph-up-arrow"></i>Burn Rate</div>
                 <div class="v2-kpi-value">@($"{HoursLoggedPerWorkday:F1}h")<span class="v2-kpi-of">/ workday</span></div>
                 @if (DailyBurndownHours.Count > 1)
@@ -388,6 +400,17 @@
                     @SparklineSvg(DailyBurndownHours, "#6366f1")
                 }
                 <div class="v2-kpi-sub">@($"{TotalLoggedHours:F0}h logged") · projected @ProjectedFinishHours.ToString("F0")h by end</div>
+            </div>
+
+            <!-- Time Spent (all) -->
+            <div class="v2-kpi v2-kpi-neutral v2-kpi-clickable" @onclick='() => OpenTeamTime("Time Spent", false)' title="Click for per-team time &amp; capacity">
+                <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Time Spent</div>
+                <div class="v2-kpi-value">@($"{SprintLoggedHours:F0}h")<span class="v2-kpi-of">logged this sprint</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill v2-bar-fill-success"
+                         style="width:@(SprintLoggedHours > 0 ? Math.Min(SprintDoneLoggedHours / SprintLoggedHours * 100, 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@($"{SprintDoneLoggedHours:F0}h") on done · @($"{SprintDoneReviewLoggedHours:F0}h") incl. in review</div>
             </div>
 
             <!-- Idle Tasks (all) -->
@@ -736,6 +759,8 @@
                                 <th class="v2-table-num @SI("ToDo", _sortTM, _ascTM)" @onclick='() => SortTM("ToDo")'>To Do</th>
                                 <th class="v2-table-num @SI("Compl", _sortTM, _ascTM)" @onclick='() => SortTM("Compl")'>Completion</th>
                                 <th class="v2-table-num @SI("Logged", _sortTM, _ascTM)" @onclick='() => SortTM("Logged")'>Logged (sprint)</th>
+                                <th class="v2-table-num @SI("Avg", _sortTM, _ascTM)" @onclick='() => SortTM("Avg")' title="Avg hours logged per elapsed day">Avg / day</th>
+                                <th class="v2-table-num @SI("Util", _sortTM, _ascTM)" @onclick='() => SortTM("Util")' title="Logged ÷ capacity">Utilization</th>
                                 <th class="v2-table-num @SI("Rem", _sortTM, _ascTM)" @onclick='() => SortTM("Rem")'>Remaining</th>
                                 <th>Capacity</th>
                             </tr>
@@ -746,6 +771,8 @@
                                 var capPct = CapacityPerMemberHours > 0 ? Math.Min(r.RemainingHours / CapacityPerMemberHours * 100, 100) : 0;
                                 var capOver = CapacityPerMemberHours > 0 && r.RemainingHours > CapacityPerMemberHours;
                                 var status = capOver ? "danger" : (r.RemainingHours > CapacityPerMemberHours * 0.8 ? "warn" : "success");
+                                var elapsedTM = Math.Max(1, Report?.ElapsedDays ?? 1);
+                                var utilTM = CapacityPerMemberHours > 0 ? r.HoursLoggedSprint / CapacityPerMemberHours * 100 : 0;
                                 <tr>
                                     <td>
                                         <div style="display:flex;align-items:center;gap:8px">
@@ -760,6 +787,8 @@
                                     <td class="v2-table-num">@r.ToDo</td>
                                     <td class="v2-table-num">@($"{r.CompletionPct:F0}%")</td>
                                     <td class="v2-table-num" style="font-weight:700">@($"{r.HoursLoggedSprint:F1}h")</td>
+                                    <td class="v2-table-num">@($"{(r.HoursLoggedSprint / elapsedTM):F1}h")</td>
+                                    <td class="v2-table-num" style="@(utilTM > 100 ? "color:var(--v2-danger)" : utilTM > 80 ? "color:#b45309" : "")">@($"{utilTM:F0}%")</td>
                                     <td class="v2-table-num">@($"{r.RemainingHours:F0}h")</td>
                                     <td>
                                         <div style="display:flex;align-items:center;gap:8px;min-width:170px">
@@ -1212,14 +1241,18 @@
                                     var rowBorder  = r.RiskLevel == 2 ? "#ef4444" : r.RiskLevel == 1 ? "#f59e0b" : "#e5e7eb";
                                     var burnPct    = r.EstH > 0 ? Math.Min(100, (int)Math.Round(r.LoggedH / r.EstH * 100)) : 0;
                                     var hasFull    = ep.Key != "—" && !string.IsNullOrEmpty(ep.Key);
-                                    <tr style="background:@rowTint;border-left:3px solid @rowBorder">
+                                    var isExpanded = _epForecastExpanded.Contains(ep.Key);
+                                    <tr style="background:@rowTint;border-left:3px solid @rowBorder;cursor:pointer" @onclick="() => ToggleEpForecast(ep.Key)" title="Click for the forecast breakdown">
                                         <td><span class="v2-rdot v2-rdot-@r.RiskLevel" title="@string.Join(" · ", r.Reasons.DefaultIfEmpty("On track"))"></span></td>
                                         <td>
-                                            <div class="v2-truncate" style="font-weight:700;font-size:12.5px;max-width:240px" title="@ep.Name">@ep.Name</div>
+                                            <div style="display:flex;align-items:center;gap:6px">
+                                                <i class="bi bi-chevron-@(isExpanded ? "down" : "right")" style="font-size:10px;color:var(--v2-ink-3);flex-shrink:0"></i>
+                                                <div class="v2-truncate" style="font-weight:700;font-size:12.5px;max-width:220px" title="@ep.Name">@ep.Name</div>
+                                            </div>
                                             <div class="v2-hint" style="font-size:10.5px">
                                                 @if (hasFull)
                                                 {
-                                                    <a href="@JiraBase/browse/@ep.Key" target="_blank" class="v2-key-link">@ep.Key</a>
+                                                    <a href="@JiraBase/browse/@ep.Key" target="_blank" class="v2-key-link" @onclick:stopPropagation="true">@ep.Key</a>
                                                 }
                                                 else { <span>@ep.Key</span> }
                                                 · @ep.Total task@(ep.Total == 1 ? "" : "s")
@@ -1268,6 +1301,94 @@
                                         <td><span class="v2-pill @r.ForecastPill" style="font-size:10px;padding:1px 7px;white-space:nowrap">@r.ForecastLabel</span></td>
                                         <td><span class="v2-pill @r.StatusPill" style="font-size:10px;padding:1px 7px;white-space:nowrap">@r.StatusLabel</span></td>
                                     </tr>
+                                    @if (isExpanded)
+                                    {
+                                        var fc = r.Forecast;
+                                        <tr class="v2-ep-detail-row">
+                                            <td colspan="10" style="padding:0;background:#fafbff;border-left:3px solid @rowBorder">
+                                                <div style="padding:14px 18px;display:flex;gap:24px;flex-wrap:wrap">
+                                                    <!-- Capacity vs. remaining work -->
+                                                    <div style="flex:1;min-width:300px">
+                                                        <div class="v2-ep-detail-h"><i class="bi bi-people" style="margin-right:4px"></i>Capacity vs. remaining work</div>
+                                                        <div class="v2-hint" style="margin-bottom:8px">@fc.Rationale</div>
+                                                        @if (fc.Members.Count == 0 && fc.UnassignedRemainingH <= 0)
+                                                        {
+                                                            <div class="v2-hint">No remaining assigned work on this epic.</div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <table class="v2-table" style="font-size:11.5px">
+                                                                <thead><tr>
+                                                                    <th>Member</th>
+                                                                    <th class="v2-table-num" title="Remaining hours on this epic">Assigned</th>
+                                                                    <th class="v2-table-num" title="Roster hours/day × days left">Capacity left</th>
+                                                                    <th class="v2-table-num" title="Hours the available capacity can cover">Covered</th>
+                                                                    <th class="v2-table-num">Short</th>
+                                                                </tr></thead>
+                                                                <tbody>
+                                                                    @foreach (var mf in fc.Members)
+                                                                    {
+                                                                        <tr>
+                                                                            <td>
+                                                                                <span class="@(mf.Overloaded ? "v2-text-danger" : "")" style="font-weight:600">@mf.Name</span>
+                                                                                @if (mf.Overloaded) { <span class="v2-hint" title="Remaining work across the whole sprint exceeds this member's capacity"> · @($"{mf.TotalRemainingH:F0}h")/sprint</span> }
+                                                                            </td>
+                                                                            <td class="v2-table-num">@($"{mf.AssignedRemainingH:F0}h")</td>
+                                                                            <td class="v2-table-num">@($"{mf.CapacityLeftH:F0}h")</td>
+                                                                            <td class="v2-table-num" style="color:var(--v2-success)">@($"{mf.CoveredH:F0}h")</td>
+                                                                            <td class="v2-table-num @(mf.ShortfallH > 0.5 ? "v2-text-danger" : "")" style="font-weight:600">@(mf.ShortfallH > 0.5 ? $"−{mf.ShortfallH:F0}h" : "—")</td>
+                                                                        </tr>
+                                                                    }
+                                                                    @if (fc.UnassignedRemainingH > 0)
+                                                                    {
+                                                                        <tr>
+                                                                            <td><span class="v2-text-danger" style="font-weight:600">Unassigned</span> <span class="v2-hint">· no owner</span></td>
+                                                                            <td class="v2-table-num">@($"{fc.UnassignedRemainingH:F0}h")</td>
+                                                                            <td class="v2-table-num">0h</td>
+                                                                            <td class="v2-table-num">0h</td>
+                                                                            <td class="v2-table-num v2-text-danger" style="font-weight:600">@($"−{fc.UnassignedRemainingH:F0}h")</td>
+                                                                        </tr>
+                                                                    }
+                                                                </tbody>
+                                                            </table>
+                                                        }
+                                                    </div>
+                                                    <!-- Findings -->
+                                                    <div style="flex:1;min-width:300px">
+                                                        <div class="v2-ep-detail-h"><i class="bi bi-clipboard-check" style="margin-right:4px"></i>Findings to conclude the forecast</div>
+                                                        @if (fc.Findings.Count == 0)
+                                                        {
+                                                            <div class="v2-hint"><i class="bi bi-check-circle" style="color:var(--v2-success);margin-right:4px"></i>Nothing blocking — remaining work just needs to be logged at pace.</div>
+                                                        }
+                                                        else
+                                                        {
+                                                            <div style="display:flex;flex-direction:column;gap:6px">
+                                                                @foreach (var f in fc.Findings)
+                                                                {
+                                                                    var fColor = f.Severity == "danger" ? "var(--v2-danger)" : f.Severity == "warn" ? "var(--v2-warn)" : "var(--v2-ink-3)";
+                                                                    <div style="display:flex;align-items:flex-start;gap:7px;font-size:11.5px">
+                                                                        <i class="bi @f.Icon" style="flex-shrink:0;margin-top:2px;color:@fColor"></i>
+                                                                        <div style="min-width:0">
+                                                                            @if (f.Key != null)
+                                                                            {
+                                                                                <a href="@JiraBase/browse/@f.Key" target="_blank" class="v2-key-link" @onclick:stopPropagation="true">@f.Key</a>
+                                                                                <span> — @f.Message</span>
+                                                                                @if (!string.IsNullOrWhiteSpace(f.Summary)) { <div class="v2-hint v2-truncate" style="max-width:340px">@f.Summary</div> }
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                <span>@f.Message</span>
+                                                                            }
+                                                                        </div>
+                                                                    </div>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    }
                                 }
                             </tbody>
                         </table>
@@ -2892,6 +3013,102 @@
             </div>
         }
     }
+
+    <!-- ═══ TEAM TIME-SPENT MODAL ═══════════════════════════════════════════ -->
+    @if (_showTeamTime)
+    {
+        var rows      = TeamTimeRows;
+        var groups    = TeamTimeTeams
+            .Select(t => (Team: t, Rows: rows.Where(r => CanonTeam(r.Team) == t).ToList()))
+            .Where(g => g.Rows.Count > 0)
+            .ToList();
+        var shown     = groups.SelectMany(g => g.Rows).ToList();
+        var totLogged = shown.Sum(r => r.LoggedSprint);
+        var totCap    = shown.Sum(r => r.Capacity);
+        var totRem    = shown.Sum(r => r.RemainingHours);
+        <div class="v2-modal-overlay" @onclick="CloseTeamTime">
+            <div class="v2-modal" @onclick:stopPropagation="true">
+                <div class="v2-modal-head">
+                    <div>
+                        <div class="v2-modal-title"><i class="bi bi-people"></i> Time spent by team</div>
+                        <div class="v2-modal-sub">
+                            opened from <strong>@_teamTimeCard</strong> · <strong>@(_teamTimeTaskOnly ? "Delivery work (Tasks only)" : "All issue types")</strong> · totals grouped by team (@string.Join(" · ", TeamTimeTeams)) · hours logged inside the sprint window · capacity = roster hours/day × @EffectiveDaysRemaining day@(EffectiveDaysRemaining == 1 ? "" : "s") left
+                        </div>
+                    </div>
+                    <button class="v2-modal-close" @onclick="CloseTeamTime" title="Close">&times;</button>
+                </div>
+                <div class="v2-modal-body">
+                    @if (shown.Count == 0)
+                    {
+                        <div class="v2-empty" style="padding:24px">No roster members in @string.Join(" / ", TeamTimeTeams). Set each member's <strong>Team</strong> on the <a href="team-roster">team-roster</a> page.</div>
+                    }
+                    else
+                    {
+                        <div class="v2-table-wrap" style="margin:0">
+                            <table class="v2-table">
+                                <thead><tr>
+                                    <th>Team</th>
+                                    <th class="v2-table-num @Emph("Time Spent")">Logged (sprint)</th>
+                                    <th class="v2-table-num @Emph("Burn Rate")">Avg / day</th>
+                                    <th class="v2-table-num @Emph("Capacity")">Capacity</th>
+                                    <th class="@Emph("Capacity")">Utilization</th>
+                                    <th class="v2-table-num">Tasks</th>
+                                    <th class="v2-table-num">Done</th>
+                                    <th class="v2-table-num">Remaining</th>
+                                </tr></thead>
+                                <tbody>
+                                    @foreach (var g in groups)
+                                    {
+                                        var gLogged = g.Rows.Sum(x => x.LoggedSprint);
+                                        var gAvg    = g.Rows.Sum(x => x.AvgPerDay);
+                                        var gCap    = g.Rows.Sum(x => x.Capacity);
+                                        var gRem    = g.Rows.Sum(x => x.RemainingHours);
+                                        var gTasks  = g.Rows.Sum(x => x.Tasks);
+                                        var gDone   = g.Rows.Sum(x => x.Done);
+                                        var util    = gCap > 0 ? gLogged / gCap * 100 : 0;
+                                        var over    = gCap > 0 && gLogged > gCap;
+                                        var status  = over ? "danger" : (util > 80 ? "warn" : "success");
+                                        <tr>
+                                            <td>
+                                                <span style="font-weight:700">@g.Team</span>
+                                                <span class="v2-hint" style="font-weight:400">· @g.Rows.Count member@(g.Rows.Count == 1 ? "" : "s")</span>
+                                            </td>
+                                            <td class="v2-table-num" style="font-weight:700">@($"{gLogged:F1}h")</td>
+                                            <td class="v2-table-num">@($"{gAvg:F1}h")</td>
+                                            <td class="v2-table-num">@($"{gCap:F0}h")</td>
+                                            <td>
+                                                <div style="display:flex;align-items:center;gap:8px;min-width:150px">
+                                                    <div class="v2-bar" style="flex:1;height:6px">
+                                                        <div class="v2-bar-fill v2-bar-fill-@status" style="width:@($"{Math.Min(util, 100):F0}")%"></div>
+                                                    </div>
+                                                    <span class="v2-hint" style="white-space:nowrap;@(over ? "color:var(--v2-danger)" : "")">@($"{util:F0}%")</span>
+                                                </div>
+                                            </td>
+                                            <td class="v2-table-num">@gTasks</td>
+                                            <td class="v2-table-num" style="color:var(--v2-success)">@gDone</td>
+                                            <td class="v2-table-num">@($"{gRem:F0}h")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                                <tfoot>
+                                    <tr class="v2-table-foot">
+                                        <td style="font-weight:700">All teams</td>
+                                        <td class="v2-table-num" style="font-weight:700">@($"{totLogged:F1}h")</td>
+                                        <td class="v2-table-num" style="font-weight:700">@($"{shown.Sum(r => r.AvgPerDay):F1}h")</td>
+                                        <td class="v2-table-num" style="font-weight:700">@($"{totCap:F0}h")</td>
+                                        <td class="v2-table-num" style="font-weight:700">@($"{(totCap > 0 ? totLogged / totCap * 100 : 0):F0}%")</td>
+                                        <td class="v2-table-num" style="font-weight:700">@shown.Sum(r => r.Tasks)</td>
+                                        <td class="v2-table-num" style="font-weight:700;color:var(--v2-success)">@shown.Sum(r => r.Done)</td>
+                                        <td class="v2-table-num" style="font-weight:700">@($"{totRem:F0}h")</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -2939,13 +3156,16 @@
         : DoneCount * 100.0 / ActiveIssues.Count;
     private bool   CompletionBehind => Report != null && Report.SprintProgressPct - CompletionPct > 12;
 
-    // ── Delivery work (all issue types except bugs) ──────────────────────────
-    // "Delivery Work" KPIs cover every issue type the team executes — Task,
-    // Sub-task, Redesign, etc. — and exclude only bugs, which are tracked separately.
+    // ── Delivery work (Task issue type only) ─────────────────────────────────
+    // "Delivery Work" KPIs cover the Task issue type only — Redesign, Sub-task,
+    // Bug and every other type are excluded (mirrors Jira's `type In (task)`).
+    // Issues with a blank type are treated as Tasks (matches the type chips below).
     private static bool IsBugType(SprintIssue i) =>
         string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsDeliveryType(SprintIssue i) => !IsBugType(i);
+    private static bool IsDeliveryType(SprintIssue i) =>
+        string.IsNullOrWhiteSpace(i.IssueType) ||
+        string.Equals(i.IssueType, "Task", StringComparison.OrdinalIgnoreCase);
 
     private List<SprintIssue> TaskOnlyIssues => ActiveIssues.Where(IsDeliveryType).ToList();
 
@@ -3225,6 +3445,30 @@
         >= 40 => "Task delivery at risk — re-balance or de-scope.",
         _     => "Critical — tasks are well behind the sprint pace."
     };
+
+    // ── Hours logged INSIDE the sprint window ────────────────────────────────
+    // Sums only worklogs whose date falls within the sprint [StartDate..EndDate].
+    // This matches the Team tab's "LOGGED (SPRINT)" column and Jira's worklogDate
+    // filter — unlike TimeSpentSeconds, which is the issue's all-time logged effort.
+    private double SprintWindowLoggedHours(IEnumerable<SprintIssue> issues) =>
+        issues.SelectMany(i => i.Worklogs)
+              .Where(w => Report?.StartDate == null || w.Started.Date >= Report.StartDate.Value.Date)
+              .Where(w => Report?.EndDate   == null || w.Started.Date <= Report.EndDate.Value.Date)
+              .Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
+
+    private static bool IsDoneOrInReview(SprintIssue i) =>
+        i.StatusCategoryKey == "done" ||
+        string.Equals(i.Status, "In Review", StringComparison.OrdinalIgnoreCase);
+
+    // Time Spent card — Delivery Work (Task only, sprint window)
+    private double TaskSprintLoggedHours           => SprintWindowLoggedHours(TaskOnlyIssues);
+    private double TaskSprintDoneLoggedHours        => SprintWindowLoggedHours(TaskOnlyIssues.Where(i => i.StatusCategoryKey == "done"));
+    private double TaskSprintDoneReviewLoggedHours  => SprintWindowLoggedHours(TaskOnlyIssues.Where(IsDoneOrInReview));
+
+    // Time Spent card — All Issue Types (every issue, sprint window)
+    private double SprintLoggedHours           => SprintWindowLoggedHours(ActiveIssues);
+    private double SprintDoneLoggedHours        => SprintWindowLoggedHours(ActiveIssues.Where(i => i.StatusCategoryKey == "done"));
+    private double SprintDoneReviewLoggedHours  => SprintWindowLoggedHours(ActiveIssues.Where(IsDoneOrInReview));
 
     // ── Task-only hours / burn / workload / estimation (mirror all-issue KPIs) ─
     private double TaskTotalLoggedHours => TaskOnlyIssues.Sum(i => i.TimeSpentSeconds) / 3600.0;
@@ -3615,7 +3859,7 @@
         int RiskLevel,
         string ForecastLabel, string ForecastPill,
         string StatusLabel, string StatusPill,
-        List<string> Reasons);
+        List<string> Reasons, EpicForecast Forecast);
 
     private List<EpicProgRow> EpicProgressRows => FilteredEpicRows
         .Select(ep =>
@@ -3634,18 +3878,19 @@
             var unest   = ep.Issues.Count(i => i.OriginalEstimateSeconds == 0 && i.StatusCategoryKey != "done");
 
             var overBudget = ep.EstimateHours > 0 && ep.LoggedHours > ep.EstimateHours;
-            var proj       = EpicProjection(ep);
+            var fc         = BuildForecast(ep);
 
             var overdue = ep.Key != "—" && _epicMeta.TryGetValue(ep.Key, out var m)
                        && m.CommittedDate.HasValue && m.CommittedDate.Value.Date < DateTime.Today
                        && ep.Done < ep.Total;
             DateTime? committed = ep.Key != "—" && _epicMeta.TryGetValue(ep.Key, out var m2) ? m2.CommittedDate : null;
 
-            // Forecast verdict (sprint scope)
+            // Forecast verdict (sprint scope) — capacity-driven headline. Blockers /
+            // unestimated / unassigned only downgrade to "Tight", never force "Won't finish".
             string fLabel, fPill;
             if (ep.RemainingHours <= 0 && ep.Done >= ep.Total) { fLabel = "Complete";     fPill = "v2-pill-success"; }
-            else if (!proj.willFinish && ep.RemainingHours > 0) { fLabel = $"Won't finish · −{proj.shortfallH:F0}h"; fPill = "v2-pill-danger"; }
-            else if (proj.projectedDonePct < 95 && ep.RemainingHours > 0) { fLabel = "Tight"; fPill = "v2-pill-warn"; }
+            else if (!fc.WillFinish && ep.RemainingHours > 0) { fLabel = $"Won't finish · −{fc.ShortfallH:F0}h"; fPill = "v2-pill-danger"; }
+            else if ((fc.ProjectedDonePct < 95 || fc.Findings.Count > 0) && ep.RemainingHours > 0) { fLabel = "Tight"; fPill = "v2-pill-warn"; }
             else { fLabel = "On track"; fPill = "v2-pill-success"; }
 
             // Overall status (health)
@@ -3658,7 +3903,7 @@
             // Reasons + composite risk level
             var reasons = new List<string>();
             if (overBudget)                          reasons.Add($"Over budget +{(ep.LoggedHours - ep.EstimateHours):F0}h");
-            if (!proj.willFinish && ep.RemainingHours > 0) reasons.Add($"Short {proj.shortfallH:F0}h to finish");
+            if (!fc.WillFinish && ep.RemainingHours > 0) reasons.Add($"Short {fc.ShortfallH:F0}h to finish");
             if (overdue)                             reasons.Add("Committed date overdue");
             if (blocked > 0)                         reasons.Add($"{blocked} blocked");
             if (stale > 0)                           reasons.Add($"{stale} stale 2d+");
@@ -3666,19 +3911,23 @@
             if (unest > 0)                           reasons.Add($"{unest} unestimated");
 
             var riskLevel =
-                (overBudget || (!proj.willFinish && ep.RemainingHours > 0) || overdue) ? 2
-                : (stale > 0 || blocked > 0 || bugOpen > 0 || (proj.projectedDonePct < 95 && ep.RemainingHours > 0)) ? 1
+                (overBudget || (!fc.WillFinish && ep.RemainingHours > 0) || overdue) ? 2
+                : (stale > 0 || blocked > 0 || bugOpen > 0 || (fc.ProjectedDonePct < 95 && ep.RemainingHours > 0)) ? 1
                 : 0;
 
             return new EpicProgRow(ep, donePct, taskDone, taskActive, taskToDo, bugOpen, bugList.Count,
                 stale, blocked, unest, ep.EstimateHours, ep.LoggedHours, ep.RemainingHours,
-                overBudget, proj.willFinish, proj.shortfallH, proj.projectedDonePct,
-                committed, overdue, riskLevel, fLabel, fPill, sLabel, sPill, reasons);
+                overBudget, fc.WillFinish, fc.ShortfallH, fc.ProjectedDonePct,
+                committed, overdue, riskLevel, fLabel, fPill, sLabel, sPill, reasons, fc);
         })
         .ToList();
 
     private string _sortEP = "Risk"; private bool _ascEP = false;
     private void SortEP(string c) { if (_sortEP == c) _ascEP = !_ascEP; else { _sortEP = c; _ascEP = c == "Epic"; } }
+
+    // Which epic-progress rows have their forecast-detail section expanded.
+    private HashSet<string> _epForecastExpanded = new();
+    private void ToggleEpForecast(string key) { if (!_epForecastExpanded.Remove(key)) _epForecastExpanded.Add(key); }
 
     private IEnumerable<EpicProgRow> ApplySortEP(IEnumerable<EpicProgRow> src) => _sortEP switch
     {
@@ -3795,63 +4044,35 @@
             $"SprintEpics_{DateTime.Today:yyyyMMdd}.xlsx", mime);
     }
 
-    // Epic projection — based on the epic's burn rate so far + bug arrival rate
-    private const double AvgBugHours = 3.5;
+    // ── Capacity-aware epic forecast ─────────────────────────────────────────
+    // Instead of extrapolating the epic's own burn rate (which makes barely-started
+    // epics look doomed), this asks: does the remaining work fit the assignees'
+    // realistic available capacity for the rest of the sprint? Capacity comes from
+    // each member's roster Hours/day × days left, and is shared proportionally
+    // across ALL their remaining sprint work so a person spread over several epics
+    // isn't assumed fully available to this one.
+    private const double ForecastDailyCapH = 6.0;   // fallback when a member isn't on the roster
 
-    private (double projectedDonePct, double expectedLogged, double shortfallH, bool willFinish, int projectedNewBugs, double projectedBugLoadH) EpicProjection(EpicRow ep)
+    private double HoursPerDayFor(string name) =>
+        (double)(_roster.FirstOrDefault(m => string.Equals(m.Name, name, StringComparison.OrdinalIgnoreCase))?.HoursPerDay
+                 ?? (decimal)ForecastDailyCapH);
+
+    private record MemberForecast(string Name, double AssignedRemainingH, double CapacityLeftH,
+                                  double TotalRemainingH, double CoveredH, double ShortfallH, bool Overloaded);
+
+    // Severity: "danger" | "warn" | "info". Key is the Jira issue key (nullable for aggregate findings).
+    private record ForecastFinding(string Icon, string Severity, string Message, string? Key, string? Summary);
+
+    private record EpicForecast(bool WillFinish, double ShortfallH, double ProjectedDonePct,
+                                List<MemberForecast> Members, double UnassignedRemainingH,
+                                List<ForecastFinding> Findings, string Rationale);
+
+    private EpicForecast BuildForecast(EpicRow ep)
     {
-        var elapsed = Math.Max(1, Report?.ElapsedDays ?? 1);
         var daysLeft = (double)EffectiveDaysRemaining;
-        var alreadyDonePct = ep.Total > 0 ? ep.Done * 100.0 / ep.Total : 0;
 
-        // Hours logged on this epic per elapsed workday → projected hours we can still spend on it
-        var epicBurnPerDay = ep.LoggedHours / elapsed;
-        var expectedLogged = epicBurnPerDay * daysLeft;
-
-        // Projected % done = current done% + share that the available burn covers of the remaining
-        var projectedDonePct = alreadyDonePct;
-        if (ep.RemainingHours > 0)
-        {
-            var coverage = Math.Min(1.0, expectedLogged / ep.RemainingHours);
-            // Each remaining task contributes equally — coverage of remaining hours roughly equals coverage of remaining tasks
-            var remainingTaskShare = ep.Total > 0 ? (ep.Total - ep.Done) * 100.0 / ep.Total : 0;
-            projectedDonePct += coverage * remainingTaskShare;
-        }
-        projectedDonePct = Math.Clamp(projectedDonePct, 0, 100);
-
-        var shortfallH = Math.Max(0, ep.RemainingHours - expectedLogged);
-        var willFinish = ep.RemainingHours == 0 || expectedLogged >= ep.RemainingHours;
-
-        // Bug arrival projection: bugs in this epic so far / elapsed × daysLeft
-        var bugsSoFar = ep.Issues.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase));
-        var bugRatePerDay = bugsSoFar / (double)elapsed;
-        var projectedNewBugs = (int)Math.Round(bugRatePerDay * daysLeft);
-        var projectedBugLoadH = projectedNewBugs * AvgBugHours;
-
-        return (projectedDonePct, expectedLogged, shortfallH, willFinish, projectedNewBugs, projectedBugLoadH);
-    }
-
-    /// <summary>
-    /// Per-assignee projection of hours they will likely log on this epic during the rest of the sprint.
-    /// Based on each member's historical burn on this epic (logged / elapsed) × days remaining,
-    /// capped at the 6h/day capacity (their epic share can't exceed their total available hours).
-    /// `assigned` = remaining hours still on their plate within the epic.
-    /// </summary>
-    private List<(string name, double assigned, double expected)> EpicFinishableByMember(EpicRow ep)
-    {
-        var elapsed  = Math.Max(1, Report?.ElapsedDays ?? 1);
-        var daysLeft = (double)EffectiveDaysRemaining;
-        const double DailyCapH = 6.0;
-
-        // Logged hours on this epic per member (across all worklog authors on the epic's issues)
-        var loggedByMember = ep.Issues
-            .SelectMany(i => i.Worklogs)
-            .GroupBy(w => w.Author, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Sum(w => w.TimeSpentSeconds) / 3600.0,
-                          StringComparer.OrdinalIgnoreCase);
-
-        // Remaining hours on this epic per assignee (still on their plate)
-        var remainingByAssignee = ep.Issues
+        // Remaining hours on THIS epic, per assignee (their own plate).
+        var epicRemByAssignee = ep.Issues
             .Where(i => i.StatusCategoryKey != "done"
                      && !string.IsNullOrWhiteSpace(i.Assignee)
                      && i.Assignee != "Unassigned")
@@ -3859,30 +4080,100 @@
             .ToDictionary(g => g.Key, g => g.Sum(x => x.ComputedRemainingSeconds) / 3600.0,
                           StringComparer.OrdinalIgnoreCase);
 
-        // Union of both sets
-        var names = new HashSet<string>(loggedByMember.Keys, StringComparer.OrdinalIgnoreCase);
-        foreach (var k in remainingByAssignee.Keys) names.Add(k);
+        // Remaining hours across the WHOLE sprint, per assignee (cross-epic contention).
+        var sprintRemByAssignee = ActiveIssues
+            .Where(i => i.StatusCategoryKey != "done"
+                     && !string.IsNullOrWhiteSpace(i.Assignee)
+                     && i.Assignee != "Unassigned")
+            .GroupBy(i => i.Assignee, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.ComputedRemainingSeconds) / 3600.0,
+                          StringComparer.OrdinalIgnoreCase);
 
-        return names
-            .Select(name =>
+        var members = epicRemByAssignee
+            .Select(kv =>
             {
-                var logged   = loggedByMember.TryGetValue(name, out var l) ? l : 0;
-                var assigned = remainingByAssignee.TryGetValue(name, out var r) ? r : 0;
+                var name       = kv.Key;
+                var epicRem    = kv.Value;
+                var totalRem   = sprintRemByAssignee.TryGetValue(name, out var t) ? t : epicRem;
+                var capLeft    = HoursPerDayFor(name) * daysLeft;
 
-                // Burn rate on this epic for this person → projected additional hours
-                var rate     = logged / elapsed;
-                var expected = rate * daysLeft;
+                // If everything on their plate fits their capacity, this epic is fully covered.
+                // Otherwise share the capacity they DO have proportionally to this epic's slice.
+                double covered = totalRem <= capLeft || totalRem <= 0
+                    ? epicRem
+                    : capLeft * (epicRem / totalRem);
+                covered = Math.Min(covered, epicRem);
 
-                // Sanity cap: a person can't exceed their full daily capacity (6h × days)
-                expected = Math.Min(expected, daysLeft * DailyCapH);
-                // And no point projecting more than what's actually still on their plate
-                expected = Math.Min(expected, assigned);
-
-                return (name, assigned, expected);
+                var shortfall = Math.Max(0, epicRem - covered);
+                return new MemberForecast(name, epicRem, capLeft, totalRem, covered, shortfall,
+                                          Overloaded: totalRem > capLeft);
             })
-            .Where(x => x.assigned > 0 || x.expected > 0)
-            .OrderByDescending(x => x.assigned)
+            .OrderByDescending(x => x.ShortfallH)
+            .ThenByDescending(x => x.AssignedRemainingH)
             .ToList();
+
+        // Remaining work nobody is assigned to → no capacity to cover it.
+        var unassignedRem = ep.Issues
+            .Where(i => i.StatusCategoryKey != "done"
+                     && (string.IsNullOrWhiteSpace(i.Assignee) || i.Assignee == "Unassigned"))
+            .Sum(i => i.ComputedRemainingSeconds) / 3600.0;
+
+        var shortfallH = members.Sum(m => m.ShortfallH) + unassignedRem;
+        var willFinish = ep.RemainingHours <= 0 || shortfallH <= 1.0;   // sub-hour rounding tolerance
+
+        // Projected % done = current + share of remaining hours the capacity can cover.
+        var alreadyDonePct = ep.Total > 0 ? ep.Done * 100.0 / ep.Total : 0;
+        var projectedDonePct = alreadyDonePct;
+        if (ep.RemainingHours > 0)
+        {
+            var coverage = Math.Clamp((ep.RemainingHours - shortfallH) / ep.RemainingHours, 0, 1);
+            var remainingTaskShare = ep.Total > 0 ? (ep.Total - ep.Done) * 100.0 / ep.Total : 0;
+            projectedDonePct += coverage * remainingTaskShare;
+        }
+        projectedDonePct = Math.Clamp(projectedDonePct, 0, 100);
+
+        // ── Findings: the specific tickets that gate the forecast ──
+        var findings = new List<ForecastFinding>();
+        foreach (var i in ep.Issues.Where(IsBlocked))
+            findings.Add(new("bi-slash-circle", "danger", "Blocked — unblock to progress", i.Key, i.Summary));
+        foreach (var i in ep.Issues.Where(i => i.StatusCategoryKey != "done"
+                                            && (string.IsNullOrWhiteSpace(i.Assignee) || i.Assignee == "Unassigned")))
+            findings.Add(new("bi-person-dash", "warn", "Unassigned — needs an owner", i.Key, i.Summary));
+        foreach (var i in ep.Issues.Where(i => i.StatusCategoryKey != "done" && i.OriginalEstimateSeconds == 0))
+            findings.Add(new("bi-question-circle", "warn", "Unestimated — hidden work not in the forecast", i.Key, i.Summary));
+        foreach (var i in ep.Issues.Where(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2))
+            findings.Add(new("bi-hourglass-split", "info", $"Idle {i.DaysSinceLastWorklog}d — in progress but no recent log", i.Key, i.Summary));
+        foreach (var m in members.Where(m => m.Overloaded))
+            findings.Add(new("bi-exclamation-triangle", "warn",
+                $"{m.Name} is overloaded — {m.TotalRemainingH:F0}h across the sprint vs {m.CapacityLeftH:F0}h capacity", null, null));
+
+        // ── Human-readable rationale ──
+        string rationale;
+        if (ep.RemainingHours <= 0 && ep.Done >= ep.Total)
+            rationale = "All work complete.";
+        else if (shortfallH > 1.0)
+        {
+            var worst = members.FirstOrDefault(m => m.ShortfallH > 0);
+            rationale = worst != null
+                ? $"{worst.Name} holds {worst.AssignedRemainingH:F0}h but has ~{worst.CapacityLeftH:F0}h capacity left"
+                  + (members.Count(m => m.ShortfallH > 0) > 1 ? $" (+{members.Count(m => m.ShortfallH > 0) - 1} more)" : "")
+                  + $" → {shortfallH:F0}h short over {daysLeft:F0} day{(daysLeft == 1 ? "" : "s")} left."
+                : $"{unassignedRem:F0}h of unassigned work with no owner → {shortfallH:F0}h short.";
+        }
+        else if (projectedDonePct < 95 || findings.Count > 0)
+            rationale = $"Work fits the {daysLeft:F0} day{(daysLeft == 1 ? "" : "s")} left, but "
+                      + string.Join(", ", new[]
+                        {
+                            findings.Any(f => f.Icon == "bi-slash-circle") ? "blockers" : null,
+                            findings.Any(f => f.Icon == "bi-person-dash")  ? "unassigned work" : null,
+                            findings.Any(f => f.Icon == "bi-question-circle") ? "unestimated tickets" : null,
+                            findings.Any(f => f.Icon == "bi-hourglass-split") ? "idle tickets" : null,
+                        }.Where(s => s != null).DefaultIfEmpty("tight coverage"))
+                      + " need attention.";
+        else
+            rationale = $"Remaining {ep.RemainingHours:F0}h fits the team's ~{members.Sum(m => m.CapacityLeftH):F0}h capacity over {daysLeft:F0} day{(daysLeft == 1 ? "" : "s")} left.";
+
+        return new EpicForecast(willFinish, shortfallH, projectedDonePct, members, unassignedRem, findings, rationale);
     }
 
     // ── Member tracking ──────────────────────────────────────────────────────
@@ -4213,9 +4504,86 @@
     {
         try { MyFilters = await JiraService.GetMyFiltersAsync(); } finally { FiltersLoading = false; }
 
+        try { _roster = await RosterService.GetActiveAsync(); } catch { _roster = new(); }
+
         var current = await SprintConfigService.GetCurrentAsync();
         if (current is not null && string.IsNullOrEmpty(SprintId))
             SprintId = current.SprintId.ToString();
+    }
+
+    // ── Team time-spent modal (opened from the Time Spent / Capacity / Burn Rate cards) ──
+    // Roster-based: lists every active roster member, matches their logged worklogs
+    // (accountId → email → name), and derives capacity from each member's Hours/day.
+    private List<RosterMember> _roster = new();
+    private bool   _showTeamTime;
+    private string _teamTimeCard = "";
+    // Which issue set the modal reports on: true = Delivery Work (Tasks only), false = All Issue Types.
+    private bool   _teamTimeTaskOnly;
+
+    private void OpenTeamTime(string card, bool taskOnly) { _teamTimeCard = card; _teamTimeTaskOnly = taskOnly; _showTeamTime = true; }
+    private void CloseTeamTime() => _showTeamTime = false;
+    private string Emph(string card) => _teamTimeCard == card ? "v2-th-emph" : "";
+
+    // Issues the modal reports on, scoped to the section it was opened from.
+    private List<SprintIssue> TeamTimeScopedIssues => _teamTimeTaskOnly ? TaskOnlyIssues : ActiveIssues;
+
+    // The modal only breaks these teams out (roster "Team" field, case-insensitive).
+    // Members in any other team — or with no team — are excluded.
+    private static readonly string[] TeamTimeTeams = { "Backend", "Frontend", "QA" };
+    private static string? CanonTeam(string? team)
+    {
+        if (string.IsNullOrWhiteSpace(team)) return null;
+        var t = team.Trim();
+        return TeamTimeTeams.FirstOrDefault(x => string.Equals(x, t, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool WorklogByMember(WorklogEntry w, RosterMember m)
+    {
+        if (!string.IsNullOrWhiteSpace(m.JiraAccountId) && !string.IsNullOrWhiteSpace(w.AuthorAccountId))
+            return string.Equals(w.AuthorAccountId, m.JiraAccountId, StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(m.JiraEmail) && !string.IsNullOrWhiteSpace(w.AuthorEmail))
+            return string.Equals(w.AuthorEmail, m.JiraEmail, StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrWhiteSpace(m.Name) && string.Equals(w.Author, m.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private record TeamTimeRow(string Name, string Team, double LoggedSprint, double Capacity,
+                               double AvgPerDay, int Tasks, int Done, double RemainingHours);
+
+    private List<TeamTimeRow> TeamTimeRows
+    {
+        get
+        {
+            var days        = EffectiveDaysRemaining;
+            var elapsed     = Math.Max(1, Report?.ElapsedDays ?? 1);
+            var start       = Report?.StartDate?.Date;
+            var end         = Report?.EndDate?.Date;
+            var scopedIssues = TeamTimeScopedIssues;
+            var allWorklogs = scopedIssues.SelectMany(i => i.Worklogs).ToList();
+
+            bool InWindow(DateTime d) =>
+                (start == null || d.Date >= start) && (end == null || d.Date <= end);
+
+            return _roster.Select(m =>
+            {
+                var logged = allWorklogs
+                    .Where(w => WorklogByMember(w, m) && InWindow(w.Started))
+                    .Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
+                var assigned = scopedIssues
+                    .Where(i => string.Equals(i.Assignee, m.Name, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                return new TeamTimeRow(
+                    Name:           m.Name,
+                    Team:           m.Team ?? "",
+                    LoggedSprint:   logged,
+                    Capacity:       (double)m.HoursPerDay * days,
+                    AvgPerDay:      logged / elapsed,
+                    Tasks:          assigned.Count,
+                    Done:           assigned.Count(i => i.StatusCategoryKey == "done"),
+                    RemainingHours: assigned.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0);
+            })
+            .OrderByDescending(r => r.LoggedSprint)
+            .ToList();
+        }
     }
 
     // Account IDs of the engineering team — used when "Engineering team only" is enabled.
@@ -4351,6 +4719,8 @@
         "ToDo"   => _ascTM ? src.OrderBy(c => c.ToDo)              : src.OrderByDescending(c => c.ToDo),
         "Compl"  => _ascTM ? src.OrderBy(c => c.CompletionPct)     : src.OrderByDescending(c => c.CompletionPct),
         "Logged" => _ascTM ? src.OrderBy(c => c.HoursLoggedSprint) : src.OrderByDescending(c => c.HoursLoggedSprint),
+        "Avg"    => _ascTM ? src.OrderBy(c => c.HoursLoggedSprint) : src.OrderByDescending(c => c.HoursLoggedSprint),
+        "Util"   => _ascTM ? src.OrderBy(c => c.HoursLoggedSprint) : src.OrderByDescending(c => c.HoursLoggedSprint),
         "Rem"    => _ascTM ? src.OrderBy(c => c.RemainingHours)    : src.OrderByDescending(c => c.RemainingHours),
         _        => src.OrderByDescending(c => c.HoursLoggedSprint),
     };

@@ -133,4 +133,28 @@ public class JiraDbRepository(AppDbContext db)
         db.EpicSummaries.AddRange(summaries.Select(s => new EpicSummary { Key = s.Key, Name = s.Name }));
         await db.SaveChangesAsync();
     }
+
+    // ── SLA history snapshots ──────────────────────────────────────────────────
+
+    public async Task<bool> SlaSnapshotExistsAsync(DateTime date)
+        => await db.SlaSnapshots.AnyAsync(s => s.SnapshotDate == date.Date);
+
+    public async Task AddSlaSnapshotAsync(SlaSnapshot snapshot)
+    {
+        db.SlaSnapshots.Add(snapshot);
+        await db.SaveChangesAsync();
+    }
+
+    /// <summary>All saved snapshot dates, newest first.</summary>
+    public async Task<List<DateTime>> GetSlaSnapshotDatesAsync()
+        => await db.SlaSnapshots
+            .AsNoTracking()
+            .OrderByDescending(s => s.SnapshotDate)
+            .Select(s => s.SnapshotDate)
+            .ToListAsync();
+
+    public async Task<SlaSnapshot?> GetSlaSnapshotAsync(DateTime date)
+        => await db.SlaSnapshots
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SnapshotDate == date.Date);
 }

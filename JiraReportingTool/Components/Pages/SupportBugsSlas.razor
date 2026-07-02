@@ -1,12 +1,15 @@
 @page "/support-bugs-slas"
 @rendermode InteractiveServer
 @using JiraReportingTool.Models
+@using JiraReportingTool.Data
 @using Microsoft.JSInterop
 @using ClosedXML.Excel
 @using System.IO
+@using System.Text.Json
 @inject IJiraService JiraService
 @inject IConfiguration Config
 @inject IJSRuntime JS
+@inject JiraDbRepository Repo
 @implements IDisposable
 
 <!-- ═══════════════════ HEADER ═══════════════════ -->
@@ -290,9 +293,47 @@
         {
             <div class="sb-sla-toolbar">
                 <span class="sb-section-sub">SLA thresholds — P2: 24h · P3: 72h · P4: 2 weeks · P5: 4 weeks · all customers &amp; products · last 3 weeks · click a bar to list tickets</span>
-                <button class="btn small" style="margin-left:auto" @onclick="ExportSlaAsync">⬇ Export .xlsx</button>
+
+                <div class="sb-dd" style="margin-left:auto">
+                    <button class="sb-dd-btn @(SlaIsHistorical ? "active" : "")" @onclick="() => _slaDateDdOpen = !_slaDateDdOpen" title="View a saved daily snapshot">
+                        📅 @(SlaIsHistorical ? _slaAsOf!.Value.ToString("dd MMM yyyy") : "Live (today)")
+                        <span class="sb-dd-caret">▾</span>
+                    </button>
+                    @if (_slaDateDdOpen)
+                    {
+                        <div class="sb-dd-backdrop" @onclick="() => _slaDateDdOpen = false"></div>
+                        <div class="sb-dd-panel sb-date-panel">
+                            <div class="sb-dd-list">
+                                <button class="sb-date-opt @(SlaIsHistorical ? "" : "sel")" @onclick="ReturnToLive">
+                                    <span class="sb-date-live-dot"></span>Live (today)
+                                </button>
+                                @foreach (var d in _slaSnapshotDates)
+                                {
+                                    <button class="sb-date-opt @(SlaIsHistorical && _slaAsOf!.Value.Date == d.Date ? "sel" : "")" @onclick="() => ViewSnapshotAsync(d)">
+                                        @d.ToString("ddd, dd MMM yyyy")
+                                        @if (d.Date == DateTime.Today) { <span class="sb-date-today">today</span> }
+                                    </button>
+                                }
+                                @if (_slaSnapshotDates.Count == 0)
+                                {
+                                    <div class="sb-empty" style="padding:12px 14px">No saved snapshots yet.</div>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <button class="btn small" @onclick="ExportSlaAsync">⬇ Export .xlsx</button>
                 <button class="btn small" @onclick="LoadSlaDashboardAsync">↻ Refresh</button>
             </div>
+
+            @if (SlaIsHistorical)
+            {
+                <div class="sb-hist-banner">
+                    <span>📅 Viewing historical snapshot — <strong>@_slaAsOf!.Value.ToString("dddd, dd MMM yyyy")</strong> · captured @_slaAsOf.Value.ToString("HH:mm") · read-only</span>
+                    <button class="btn small" style="margin-left:auto" @onclick="ReturnToLive">← Back to live</button>
+                </div>
+            }
 
             <div class="sb-section sb-sla-filterbar">
                 <div class="sb-section-header" style="cursor:default">
@@ -407,7 +448,7 @@
                             <span class="sb-sla-wk" style="opacity:.32"></span>
                             <span class="sb-sla-wk" style="opacity:.58"></span>
                             <span class="sb-sla-wk" style="opacity:1"></span>
-                            <span class="sb-sla-legend-txt">@(DateTime.Today.AddDays(-14).ToString("dd MMM")) → now</span>
+                            <span class="sb-sla-legend-txt">@(SlaToday.AddDays(-14).ToString("dd MMM")) → @(SlaIsHistorical ? SlaToday.ToString("dd MMM") : "now")</span>
                         </span>
                         <span class="sb-sla-legend-grp">
                             <span class="sb-sla-legend-cap">SLA age</span>
@@ -476,7 +517,7 @@
                                                 <td class="sb-td sb-td-assignee">@(bug.Assignee ?? "—")</td>
                                                 <td class="sb-td">@(string.IsNullOrEmpty(bug.Customer) ? "—" : bug.Customer)</td>
                                                 <td class="sb-td">@(string.IsNullOrEmpty(bug.Product) ? "—" : bug.Product)</td>
-                                                <td class="sb-td sb-td-est">@GetDaysOpen(bug)</td>
+                                                <td class="sb-td sb-td-est">@SlaAgeDays(bug)</td>
                                             </tr>
                                         }
                                         @if (drill.Count == 0) { <tr><td colspan="7" class="sb-empty">No tickets in this bucket.</td></tr> }
@@ -603,6 +644,23 @@
     private List<SprintIssue> _slaP5 = new();
     private DotNetObjectReference<SupportBugsSlas>? _slaDotNetRef;
 
+    // ── SLA history (daily snapshots) ───────────────────────────────────────────
+    // Live-loaded lists are cached so switching back from a historical view needs no re-fetch.
+    private List<SprintIssue> _liveP2 = new(), _liveP3 = new(), _liveP4 = new(), _liveP5 = new();
+    private List<DateTime> _slaSnapshotDates = new();
+    private DateTime? _slaAsOf     = null;   // null = live view; otherwise the CapturedAt of the snapshot being viewed
+    private bool     _slaDateDdOpen = false;
+
+    // "Now" is the live clock in the live view, or the snapshot's capture instant when viewing history.
+    // Every SLA bucket / compliance / recency computation flows through these so history re-renders faithfully.
+    private bool     SlaIsHistorical => _slaAsOf.HasValue;
+    private DateTime SlaNow          => _slaAsOf ?? DateTime.Now;
+    private DateTime SlaToday        => (_slaAsOf ?? DateTime.Now).Date;
+
+    // Ticket age relative to the active "now" (snapshot day when viewing history).
+    private int SlaAgeDays(SprintIssue b) =>
+        b.Created.HasValue ? (int)(SlaToday - b.Created.Value.Date).TotalDays : 0;
+
     // Drill-down selection (set from a bar click)
     private string _slaDrillTier   = "";
     private int    _slaDrillWeek   = -1;   // index into SlaWeekOffsets
@@ -728,18 +786,18 @@
         _ => ""
     };
 
-    private static string SlaWeekLabel(int week)
+    private string SlaWeekLabel(int week)
     {
         if (week < 0 || week >= SlaWeekOffsets.Length) return "";
         var off  = SlaWeekOffsets[week];
-        var date = DateTime.Today.AddDays(-off);
+        var date = SlaToday.AddDays(-off);
         return off == 0 ? $"week of {date:dd MMM} (now)" : $"week of {date:dd MMM}";
     }
 
     // Current-snapshot SLA compliance for a tier: inside vs breached, and compliance %.
     private (int inside, int breached, int pct) SlaNowStats(SlaTier tier)
     {
-        var now = DateTime.Now;
+        var now = SlaNow;
         int inside = 0, breached = 0;
         foreach (var b in SlaBugsFor(tier.Id))
         {
@@ -757,7 +815,7 @@
     private List<SprintIssue> SlaDrillBugs(SlaTier tier, int week, int bucket)
     {
         if (week < 0 || week >= SlaWeekOffsets.Length || bucket < 0) return new();
-        var snap = DateTime.Now.AddDays(-SlaWeekOffsets[week]);
+        var snap = SlaNow.AddDays(-SlaWeekOffsets[week]);
         var q = SlaBugsFor(tier.Id).Where(b => SlaBucketAt(b, tier.SlaHours, snap) == bucket);
         var asc = _slaDrillSortAsc;
         return (_slaDrillSortCol switch
@@ -768,7 +826,7 @@
             "assignee" => asc ? q.OrderBy(b => b.Assignee)          : q.OrderByDescending(b => b.Assignee),
             "customer" => asc ? q.OrderBy(SlaCustomerOf)            : q.OrderByDescending(SlaCustomerOf),
             "product"  => asc ? q.OrderBy(SlaProductOf)             : q.OrderByDescending(SlaProductOf),
-            _          => asc ? q.OrderBy(b => GetDaysOpen(b))      : q.OrderByDescending(b => GetDaysOpen(b)),
+            _          => asc ? q.OrderBy(b => SlaAgeDays(b))       : q.OrderByDescending(b => SlaAgeDays(b)),
         }).ToList();
     }
 
@@ -799,18 +857,22 @@
     {
         _slaLoading = true;
         _slaError   = "";
+        _slaAsOf    = null;   // (re)loading live data always returns to the live view
         ClearSlaDrill();
         StateHasChanged();
         try
         {
             var tasks = SlaTiers.Select(t => JiraService.GetSlaBugsByJqlAsync(t.Jql)).ToArray();
             await Task.WhenAll(tasks);
-            _slaP2 = tasks[0].Result.Issues ?? new();
-            _slaP3 = tasks[1].Result.Issues ?? new();
-            _slaP4 = tasks[2].Result.Issues ?? new();
-            _slaP5 = tasks[3].Result.Issues ?? new();
+            _slaP2 = _liveP2 = tasks[0].Result.Issues ?? new();
+            _slaP3 = _liveP3 = tasks[1].Result.Issues ?? new();
+            _slaP4 = _liveP4 = tasks[2].Result.Issues ?? new();
+            _slaP5 = _liveP5 = tasks[3].Result.Issues ?? new();
             _slaLoaded           = true;
             _slaChartsNeedRender = true;
+
+            await AutoSaveSnapshotAsync();      // freeze today's data on first load of the day
+            await LoadSnapshotDatesAsync();
         }
         catch (Exception ex)
         {
@@ -820,6 +882,89 @@
         {
             _slaLoading = false;
         }
+    }
+
+    // ── SLA history: capture / list / view ──────────────────────────────────────
+
+    private static SlaSnapshotBug ToSnapshotBug(SprintIssue b) => new()
+    {
+        Key = b.Key, Summary = b.Summary, Status = b.Status, Priority = b.Priority,
+        Assignee = b.Assignee, Customer = b.Customer, Product = b.Product, Created = b.Created
+    };
+
+    private static SprintIssue FromSnapshotBug(SlaSnapshotBug b) => new()
+    {
+        Key = b.Key, Summary = b.Summary, Status = b.Status, Priority = b.Priority,
+        Assignee = b.Assignee, Customer = b.Customer, Product = b.Product, Created = b.Created
+    };
+
+    // Persist today's SLA data once per day. Best-effort — history must never break the live dashboard.
+    private async Task AutoSaveSnapshotAsync()
+    {
+        try
+        {
+            var today = DateTime.Today;
+            if (await Repo.SlaSnapshotExistsAsync(today)) return;
+
+            var data = new SlaSnapshotData
+            {
+                Tiers = SlaTiers.Select(t => new SlaSnapshotTier
+                {
+                    TierId = t.Id,
+                    Bugs   = SlaBugsRaw(t.Id).Select(ToSnapshotBug).ToList()
+                }).ToList()
+            };
+
+            await Repo.AddSlaSnapshotAsync(new SlaSnapshot
+            {
+                SnapshotDate = today,
+                CapturedAt   = DateTime.Now,
+                DataJson     = JsonSerializer.Serialize(data)
+            });
+        }
+        catch { /* swallow — a failed snapshot must not surface as a dashboard error */ }
+    }
+
+    private async Task LoadSnapshotDatesAsync()
+    {
+        try { _slaSnapshotDates = await Repo.GetSlaSnapshotDatesAsync(); }
+        catch { _slaSnapshotDates = new(); }
+    }
+
+    private async Task ViewSnapshotAsync(DateTime date)
+    {
+        _slaDateDdOpen = false;
+        SlaSnapshot? snap;
+        try { snap = await Repo.GetSlaSnapshotAsync(date); }
+        catch (Exception ex) { _slaError = $"Failed to load snapshot: {ex.Message}"; return; }
+        if (snap == null) return;
+
+        var data = JsonSerializer.Deserialize<SlaSnapshotData>(snap.DataJson) ?? new();
+        List<SprintIssue> ForTier(string id) =>
+            data.Tiers.FirstOrDefault(t => t.TierId == id)?.Bugs.Select(FromSnapshotBug).ToList() ?? new();
+
+        _slaP2 = ForTier("P2");
+        _slaP3 = ForTier("P3");
+        _slaP4 = ForTier("P4");
+        _slaP5 = ForTier("P5");
+        _slaAsOf = snap.CapturedAt;
+
+        ClearSlaDrill();
+        ClearSlaFilters();               // product/customer sets can differ per snapshot; also flags a re-render
+        _slaChartsNeedRender = true;
+        StateHasChanged();
+    }
+
+    private void ReturnToLive()
+    {
+        _slaDateDdOpen = false;
+        if (!SlaIsHistorical) return;
+        _slaP2 = _liveP2; _slaP3 = _liveP3; _slaP4 = _liveP4; _slaP5 = _liveP5;
+        _slaAsOf = null;
+        ClearSlaDrill();
+        ClearSlaFilters();
+        _slaChartsNeedRender = true;
+        StateHasChanged();
     }
 
     private async Task RenderSlaChartsAsync()
@@ -841,7 +986,7 @@
         var datasets = new List<object>();
         for (int w = 0; w < SlaWeekOffsets.Length; w++)
         {
-            var snap = DateTime.Now.AddDays(-SlaWeekOffsets[w]);
+            var snap = SlaNow.AddDays(-SlaWeekOffsets[w]);
             var data = new int[4];
             foreach (var b in bugs)
             {
@@ -851,7 +996,7 @@
             var colors = SlaBucketRgb.Select(c => $"rgba({c},{SlaWeekAlpha[w]})").ToArray();
             datasets.Add(new
             {
-                label           = $"Week of {DateTime.Today.AddDays(-SlaWeekOffsets[w]):dd MMM}" + (SlaWeekOffsets[w] == 0 ? " (now)" : ""),
+                label           = $"Week of {SlaToday.AddDays(-SlaWeekOffsets[w]):dd MMM}" + (SlaWeekOffsets[w] == 0 ? " (now)" : ""),
                 backgroundColor = colors,
                 data,
                 borderRadius    = 3,
@@ -1003,7 +1148,7 @@
             ws.Cell(row, 6).Value = SlaCustomerOf(b);
             ws.Cell(row, 7).Value = SlaProductOf(b);
             if (b.Created.HasValue) ws.Cell(row, 8).Value = b.Created.Value;
-            ws.Cell(row, 9).Value = GetDaysOpen(b);
+            ws.Cell(row, 9).Value = SlaAgeDays(b);
             ws.Cell(row, 10).Value = SlaBucketName(bk);
             ws.Cell(row, 11).Value = bk == 0 ? "Yes" : "No";
             row++;
@@ -1014,7 +1159,7 @@
     // SLA tab — summary + one sheet per tier of the currently-filtered open bugs.
     private async Task ExportSlaAsync()
     {
-        var now = DateTime.Now;
+        var now = SlaNow;
         using var wb = new XLWorkbook();
 
         var sum = wb.Worksheets.Add("Summary");
@@ -1036,10 +1181,10 @@
         sum.Columns().AdjustToContents();
 
         foreach (var tier in SlaTiers)
-            WriteSlaSheet(wb.Worksheets.Add(tier.Num), tier, SlaBugsFor(tier.Id).OrderByDescending(b => GetDaysOpen(b)), now);
+            WriteSlaSheet(wb.Worksheets.Add(tier.Num), tier, SlaBugsFor(tier.Id).OrderByDescending(b => SlaAgeDays(b)), now);
 
         var suffix = SlaHasFilter ? "filtered-" : "";
-        await DownloadWorkbookAsync(wb, $"SLA-Export-{suffix}{DateTime.Today:yyyy-MM-dd}.xlsx");
+        await DownloadWorkbookAsync(wb, $"SLA-Export-{suffix}{SlaToday:yyyy-MM-dd}.xlsx");
     }
 
     // Drill-down — just the tickets in the currently-open (tier · week · bucket) panel, honoring filters.
@@ -1052,10 +1197,10 @@
         if (drill.Count == 0) return;
 
         using var wb = new XLWorkbook();
-        WriteSlaSheet(wb.Worksheets.Add("Tickets"), tier, drill, DateTime.Now);
+        WriteSlaSheet(wb.Worksheets.Add("Tickets"), tier, drill, SlaNow);
 
         var bucketSlug = _slaDrillBucket switch { 0 => "inside", 1 => "lt7d", 2 => "7-30d", 3 => "gt30d", _ => "bucket" };
-        await DownloadWorkbookAsync(wb, $"SLA-{tier.Num}-{bucketSlug}-{DateTime.Today:yyyy-MM-dd}.xlsx");
+        await DownloadWorkbookAsync(wb, $"SLA-{tier.Num}-{bucketSlug}-{SlaToday:yyyy-MM-dd}.xlsx");
     }
 
     // ── Lifecycle ───────────────────────────────────────────────────────────────
@@ -1221,6 +1366,57 @@
         border: 1px solid var(--danger-border);
         border-radius: var(--r-sm);
         padding: 10px 14px;
+        font-size: 13px;
+    }
+
+    /* ── SLA history: date picker + historical banner ────────────────── */
+    .sb-date-panel { min-width: 220px; }
+
+    .sb-date-opt {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        text-align: left;
+        border: none;
+        background: transparent;
+        padding: 8px 14px;
+        font-size: 13px;
+        font-family: inherit;
+        color: var(--txt-1);
+        cursor: pointer;
+        border-radius: 6px;
+    }
+    .sb-date-opt:hover { background: var(--surface-2); }
+    .sb-date-opt.sel  { background: var(--primary-light); color: var(--primary); font-weight: 600; }
+
+    .sb-date-live-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: var(--success);
+        flex-shrink: 0;
+    }
+
+    .sb-date-today {
+        margin-left: auto;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        color: var(--success);
+        background: var(--success-light, #dcfce7);
+        border-radius: 10px;
+        padding: 1px 7px;
+    }
+
+    .sb-hist-banner {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #92400e;
+        border-radius: var(--r-md);
+        padding: 10px 16px;
         font-size: 13px;
     }
 

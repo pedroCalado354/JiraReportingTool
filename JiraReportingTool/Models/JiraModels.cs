@@ -264,3 +264,43 @@ public class EpicSummary
 
 // ── Epic Metadata (Committed Date + Customers, from Jira custom fields on the epic) ──
 public record EpicMeta(DateTime? CommittedDate, string CommittedCustomers);
+
+// ── SLA history snapshot (Support Bugs · SLAs dashboard) ──────────────────────
+// One row per calendar day. DataJson holds the open SLA tickets per tier as they
+// were at capture time, so the whole dashboard (charts / compliance / drill-downs)
+// can be re-rendered "as of" that day. We serialize a DTO rather than reuse the
+// SprintIssue table because Customer/Product/Created-driven buckets rely on fields
+// that are [NotMapped] on SprintIssue.
+public class SlaSnapshot
+{
+    public int Id { get; set; }
+    /// <summary>Local calendar day the snapshot represents (date component only). Unique.</summary>
+    public DateTime SnapshotDate { get; set; }
+    /// <summary>Local instant the snapshot was captured — used as "now" when re-rendering history.</summary>
+    public DateTime CapturedAt { get; set; }
+    /// <summary>Serialized <see cref="SlaSnapshotData"/>.</summary>
+    public string DataJson { get; set; } = "";
+}
+
+public class SlaSnapshotData
+{
+    public List<SlaSnapshotTier> Tiers { get; set; } = new();
+}
+
+public class SlaSnapshotTier
+{
+    public string TierId { get; set; } = "";               // "P2".."P5"
+    public List<SlaSnapshotBug> Bugs { get; set; } = new();
+}
+
+public class SlaSnapshotBug
+{
+    public string Key { get; set; } = "";
+    public string Summary { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string Priority { get; set; } = "";
+    public string Assignee { get; set; } = "";
+    public string Customer { get; set; } = "";
+    public string Product { get; set; } = "";
+    public DateTime? Created { get; set; }
+}
