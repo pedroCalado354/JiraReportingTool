@@ -27,18 +27,20 @@
                 <span class="sb-load-sub">Health, time logged &amp; sprint progress</span>
             </div>
 
-            <div class="sb-cfg-group">
-                <label class="sb-cfg-label">Epic Key</label>
-                <input class="sb-input sb-epic-input" placeholder="e.g. JM-16560" @bind="_epicKeyInput" @bind:event="oninput"
-                       @onkeydown="@(async e => { if (e.Key == "Enter") await LoadAsync(); })" />
-            </div>
-            <div class="sb-cfg-group">
-                <label class="sb-cfg-label">Sprint Start</label>
-                <InputDate class="sb-input sb-input-date" @bind-Value="_sprintStart" />
-            </div>
-            <div class="sb-cfg-group">
-                <label class="sb-cfg-label">Sprint End</label>
-                <InputDate class="sb-input sb-input-date" @bind-Value="_sprintEnd" />
+            <div class="sb-load-controls">
+                <div class="sb-cfg-group">
+                    <label class="sb-cfg-label">Epic Key</label>
+                    <input class="sb-input sb-epic-input" placeholder="e.g. JM-16560" @bind="_epicKeyInput" @bind:event="oninput"
+                           @onkeydown="@(async e => { if (e.Key == "Enter") await LoadAsync(); })" />
+                </div>
+                <div class="sb-cfg-group">
+                    <label class="sb-cfg-label">Sprint Start</label>
+                    <InputDate class="sb-input sb-input-date" @bind-Value="_sprintStart" />
+                </div>
+                <div class="sb-cfg-group">
+                    <label class="sb-cfg-label">Sprint End</label>
+                    <InputDate class="sb-input sb-input-date" @bind-Value="_sprintEnd" />
+                </div>
             </div>
 
             <div class="sb-load-actions">
@@ -66,135 +68,138 @@
 
     @if (_bugs.Count > 0)
     {
+        <!-- ═══════════════════ ISSUE-TYPE SCOPE ═══════════════════ -->
+        <div class="sb-scope-bar">
+            <div class="sb-scope-seg" role="tablist" aria-label="Issue type scope">
+                <button class="sb-scope-btn @(_typeScope == "all" ? "active" : "")" @onclick='() => SetTypeScope("all")'>
+                    All Combined <span class="sb-scope-n">@_bugs.Count</span>
+                </button>
+                <button class="sb-scope-btn @(_typeScope == "bug" ? "active" : "")" @onclick='() => SetTypeScope("bug")'>
+                    <span class="sb-scope-dot sb-scope-dot-bug"></span>Bugs <span class="sb-scope-n">@BugTypeCount</span>
+                </button>
+                @if (RedesignTypeCount > 0 || _typeScope == "redesign")
+                {
+                    <button class="sb-scope-btn @(_typeScope == "redesign" ? "active" : "")" @onclick='() => SetTypeScope("redesign")'>
+                        <span class="sb-scope-dot sb-scope-dot-redesign"></span>Redesign <span class="sb-scope-n">@RedesignTypeCount</span>
+                    </button>
+                }
+            </div>
+            <span class="sb-scope-hint">
+                @if (_typeScope == "all")
+                {
+                    var otherCount = _bugs.Count - BugTypeCount - RedesignTypeCount;
+                    <span>@BugTypeCount bugs · @RedesignTypeCount redesign@(otherCount > 0 ? $" · {otherCount} other" : "")</span>
+                }
+                else
+                {
+                    <span>metrics, tables, charts &amp; exports scoped to @(_typeScope == "bug" ? "Bug" : "Redesign") issues</span>
+                }
+            </span>
+        </div>
+
         <!-- ═══════════════════ KPI GRID ═══════════════════ -->
-        <div class="v2-kpi-grid" style="margin-bottom:16px">
+        <div class="sbk-grid">
 
             <!-- Completion -->
-            <div class="v2-kpi @(DonePct >= 70 ? "v2-kpi-success" : DonePct >= 40 ? "v2-kpi-warn" : "v2-kpi-danger")">
-                <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Completion</div>
-                <div class="v2-kpi-value">@DonePct<span class="v2-kpi-of">%</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(DonePct >= 70 ? "v2-bar-fill-success" : DonePct >= 40 ? "v2-bar-fill-warn" : "v2-bar-fill-danger")"
-                         style="width:@DonePct%"></div>
-                </div>
-                <div class="v2-kpi-sub">@DoneCount done · @InProgressCount active · @(TotalCount - DoneCount - InProgressCount) to do @if (IsFiltered) { <span>· @TotalCount / @_bugs.Count shown</span> }</div>
+            <div class="sbk-card @(DonePct >= 70 ? "sbk-success" : DonePct >= 40 ? "sbk-warn" : "sbk-danger")">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-check2-circle"></i></span><span class="sbk-title">Completion</span></div>
+                <div class="sbk-value">@DonePct<span class="sbk-unit">%</span></div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@DonePct%"></div></div>
+                <div class="sbk-sub">@DoneCount done · @InProgressCount active · @(TotalCount - DoneCount - InProgressCount) to do @if (IsFiltered) { <span>· @TotalCount / @ScopedCount shown</span> }</div>
             </div>
 
             <!-- Started & Closed this sprint -->
-            <div class="v2-kpi v2-kpi-success">
-                <div class="v2-kpi-head"><i class="bi bi-check2-all"></i>Started &amp; Closed</div>
-                <div class="v2-kpi-value">@StartedAndClosedCount<span class="v2-kpi-of">of @DoneCount done</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill v2-bar-fill-success"
-                         style="width:@(DoneCount > 0 ? Math.Min(StartedAndClosedCount * 100 / DoneCount, 100) : 0)%"></div>
-                </div>
-                <div class="v2-kpi-sub">picked up &amp; resolved within @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
+            <div class="sbk-card sbk-success">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-check2-all"></i></span><span class="sbk-title">Started &amp; Closed</span></div>
+                <div class="sbk-value">@StartedAndClosedCount<span class="sbk-unit">of @DoneCount done</span></div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@(DoneCount > 0 ? Math.Min(StartedAndClosedCount * 100 / DoneCount, 100) : 0)%"></div></div>
+                <div class="sbk-sub">picked up &amp; resolved within @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
             </div>
 
             <!-- Added into Sprint -->
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-box-arrow-in-down-right"></i>Added into Sprint</div>
-                <div class="v2-kpi-value">@AddedToSprintCount</div>
-                <div class="v2-kpi-sub">created @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
+            <div class="sbk-card sbk-neutral">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-box-arrow-in-down-right"></i></span><span class="sbk-title">Added into Sprint</span></div>
+                <div class="sbk-value">@AddedToSprintCount</div>
+                <div class="sbk-sub">created @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
             </div>
 
             <!-- Closed This Sprint -->
-            <div class="v2-kpi v2-kpi-success">
-                <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Closed This Sprint</div>
-                <div class="v2-kpi-value">@ClosedThisSprintCount<span class="v2-kpi-of">of @DoneCount done</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill v2-bar-fill-success"
-                         style="width:@(DoneCount > 0 ? Math.Min(ClosedThisSprintCount * 100 / DoneCount, 100) : 0)%"></div>
-                </div>
-                <div class="v2-kpi-sub">resolved within sprint window</div>
+            <div class="sbk-card sbk-success">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-check2-circle"></i></span><span class="sbk-title">Closed This Sprint</span></div>
+                <div class="sbk-value">@ClosedThisSprintCount<span class="sbk-unit">of @DoneCount done</span></div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@(DoneCount > 0 ? Math.Min(ClosedThisSprintCount * 100 / DoneCount, 100) : 0)%"></div></div>
+                <div class="sbk-sub">resolved within sprint window</div>
             </div>
 
             <!-- Sprint Logged -->
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Sprint Logged</div>
-                <div class="v2-kpi-value">@FormatSeconds(TotalSprintSeconds)</div>
-                <div class="v2-kpi-sub">@_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
+            <div class="sbk-card sbk-neutral">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-stopwatch"></i></span><span class="sbk-title">Sprint Logged</span></div>
+                <div class="sbk-value">@FormatSeconds(TotalSprintSeconds)</div>
+                <div class="sbk-sub">@_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
             </div>
 
             <!-- Daily Burn -->
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-speedometer"></i>Daily Burn</div>
-                <div class="v2-kpi-value">@($"{DailyBurnHours:0.0}")<span class="v2-kpi-of">h / day</span></div>
-                <div class="v2-kpi-sub">@WeekdaysElapsed of @TotalWeekdays weekdays elapsed</div>
+            <div class="sbk-card sbk-neutral">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-speedometer"></i></span><span class="sbk-title">Daily Burn</span></div>
+                <div class="sbk-value">@($"{DailyBurnHours:0.0}")<span class="sbk-unit">h / day</span></div>
+                <div class="sbk-sub">@WeekdaysElapsed of @TotalWeekdays weekdays elapsed</div>
             </div>
 
             <!-- Total Logged -->
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Total Logged</div>
+            <div class="sbk-card sbk-neutral">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-clock-history"></i></span><span class="sbk-title">Total Logged</span></div>
                 @{
                     var loggedTotal = TotalLoggedSeconds + TotalRemainingSeconds;
                     var loggedPct   = loggedTotal > 0 ? (int)(TotalLoggedSeconds * 100 / loggedTotal) : 0;
                 }
-                <div class="v2-kpi-value">@FormatSeconds(TotalLoggedSeconds)</div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill" style="width:@loggedPct%"></div>
-                </div>
-                <div class="v2-kpi-sub">+ @FormatSeconds(TotalRemainingSeconds) remaining</div>
+                <div class="sbk-value">@FormatSeconds(TotalLoggedSeconds)</div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@loggedPct%"></div></div>
+                <div class="sbk-sub">+ @FormatSeconds(TotalRemainingSeconds) remaining</div>
             </div>
 
-            <!-- Stale Bugs -->
-            <div class="v2-kpi @(StaleCount == 0 ? "v2-kpi-success" : StaleCount > InProgressCount / 2 ? "v2-kpi-danger" : "v2-kpi-warn")">
-                <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Stale Bugs</div>
-                <div class="v2-kpi-value">@StaleCount<span class="v2-kpi-of">of @InProgressCount active</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(StaleCount == 0 ? "v2-bar-fill-success" : StaleCount > InProgressCount / 2 ? "v2-bar-fill-danger" : "v2-bar-fill-warn")"
-                         style="width:@(InProgressCount > 0 ? Math.Min(StaleCount * 100 / InProgressCount, 100) : 0)%"></div>
-                </div>
-                <div class="v2-kpi-sub">in-progress without activity 24h+</div>
+            <!-- Stale -->
+            <div class="sbk-card @(StaleCount == 0 ? "sbk-success" : StaleCount > InProgressCount / 2 ? "sbk-danger" : "sbk-warn")">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-hourglass-split"></i></span><span class="sbk-title">Stale @(_typeScope == "bug" ? "Bugs" : "Issues")</span></div>
+                <div class="sbk-value">@StaleCount<span class="sbk-unit">of @InProgressCount active</span></div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@(InProgressCount > 0 ? Math.Min(StaleCount * 100 / InProgressCount, 100) : 0)%"></div></div>
+                <div class="sbk-sub">in-progress without activity 24h+</div>
             </div>
 
             <!-- Overdue -->
-            <div class="v2-kpi @(OverdueCount == 0 ? "v2-kpi-success" : "v2-kpi-danger")">
-                <div class="v2-kpi-head"><i class="bi bi-exclamation-triangle"></i>Overdue</div>
-                <div class="v2-kpi-value">@OverdueCount</div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(OverdueCount == 0 ? "v2-bar-fill-success" : "v2-bar-fill-danger")"
-                         style="width:@(TotalCount > 0 ? Math.Min(OverdueCount * 100 / TotalCount, 100) : 0)%"></div>
-                </div>
-                <div class="v2-kpi-sub">@AtRiskCount at risk · @OnTrackCount on track · @NoDueDateCount no date</div>
+            <div class="sbk-card @(OverdueCount == 0 ? "sbk-success" : "sbk-danger")">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-exclamation-triangle"></i></span><span class="sbk-title">Overdue</span></div>
+                <div class="sbk-value">@OverdueCount</div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@(TotalCount > 0 ? Math.Min(OverdueCount * 100 / TotalCount, 100) : 0)%"></div></div>
+                <div class="sbk-sub">@AtRiskCount at risk · @OnTrackCount on track · @NoDueDateCount no date</div>
             </div>
 
             <!-- Avg Age -->
-            <div class="v2-kpi @(AvgOpenAgeDays >= 60 ? "v2-kpi-danger" : AvgOpenAgeDays >= 30 ? "v2-kpi-warn" : "v2-kpi-success")">
-                <div class="v2-kpi-head"><i class="bi bi-calendar-x"></i>Avg Age</div>
-                <div class="v2-kpi-value">@($"{AvgOpenAgeDays:0}")<span class="v2-kpi-of">days</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(AvgOpenAgeDays >= 60 ? "v2-bar-fill-danger" : AvgOpenAgeDays >= 30 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
-                         style="width:@(Math.Min((int)(AvgOpenAgeDays / 90.0 * 100), 100))%"></div>
-                </div>
-                <div class="v2-kpi-sub">@BugsNoTimeOpen untracked · @OnHoldCount on hold</div>
+            <div class="sbk-card @(AvgOpenAgeDays >= 60 ? "sbk-danger" : AvgOpenAgeDays >= 30 ? "sbk-warn" : "sbk-success")">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-calendar-x"></i></span><span class="sbk-title">Avg Age</span></div>
+                <div class="sbk-value">@($"{AvgOpenAgeDays:0}")<span class="sbk-unit">days</span></div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@(Math.Min((int)(AvgOpenAgeDays / 90.0 * 100), 100))%"></div></div>
+                <div class="sbk-sub">@BugsNoTimeOpen untracked · @OnHoldCount on hold</div>
             </div>
 
             <!-- Avg Time to Conclude -->
-            <div class="v2-kpi @(AvgResolutionDays >= 30 ? "v2-kpi-danger" : AvgResolutionDays >= 14 ? "v2-kpi-warn" : "v2-kpi-success")">
-                <div class="v2-kpi-head"><i class="bi bi-hourglass-bottom"></i>Avg Time to Conclude</div>
-                <div class="v2-kpi-value">@($"{AvgResolutionDays:0.0}")<span class="v2-kpi-of">days / bug</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(AvgResolutionDays >= 30 ? "v2-bar-fill-danger" : AvgResolutionDays >= 14 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
-                         style="width:@(Math.Min((int)(AvgResolutionDays / 60.0 * 100), 100))%"></div>
-                </div>
-                <div class="v2-kpi-sub">@(AvgResolutionCount > 0 ? $"created → resolved this sprint · {AvgResolutionCount} bug{(AvgResolutionCount == 1 ? "" : "s")}" : "no bugs resolved this sprint")</div>
+            <div class="sbk-card @(AvgResolutionDays >= 30 ? "sbk-danger" : AvgResolutionDays >= 14 ? "sbk-warn" : "sbk-success")">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-hourglass-bottom"></i></span><span class="sbk-title">Avg Time to Conclude</span></div>
+                <div class="sbk-value">@($"{AvgResolutionDays:0.0}")<span class="sbk-unit">days / @ScopeNoun</span></div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@(Math.Min((int)(AvgResolutionDays / 60.0 * 100), 100))%"></div></div>
+                <div class="sbk-sub">@(AvgResolutionCount > 0 ? $"created → resolved this sprint · {AvgResolutionCount} {ScopeNoun}{(AvgResolutionCount == 1 ? "" : "s")}" : $"no {ScopeNoun}s resolved this sprint")</div>
             </div>
 
             <!-- Avg Logged: Dev Ready → Done -->
-            <div class="v2-kpi @(AvgDevReadyToDoneHours >= 24 ? "v2-kpi-danger" : AvgDevReadyToDoneHours >= 8 ? "v2-kpi-warn" : "v2-kpi-success")">
-                <div class="v2-kpi-head"><i class="bi bi-hourglass-bottom"></i>Avg Effort to Conclude</div>
-                <div class="v2-kpi-value">@($"{AvgDevReadyToDoneHours:0.0}")<span class="v2-kpi-of">h / bug</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(AvgDevReadyToDoneHours >= 24 ? "v2-bar-fill-danger" : AvgDevReadyToDoneHours >= 8 ? "v2-bar-fill-warn" : "v2-bar-fill-success")"
-                         style="width:@(Math.Min((int)(AvgDevReadyToDoneHours / 40.0 * 100), 100))%"></div>
-                </div>
-                <div class="v2-kpi-sub">@(AvgDevReadyToDoneCount > 0 ? $"Dev Ready → Done this sprint · {AvgDevReadyToDoneCount} bug{(AvgDevReadyToDoneCount == 1 ? "" : "s")}" : "no Dev Ready data this sprint")</div>
+            <div class="sbk-card @(AvgDevReadyToDoneHours >= 24 ? "sbk-danger" : AvgDevReadyToDoneHours >= 8 ? "sbk-warn" : "sbk-success")">
+                <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-hourglass-bottom"></i></span><span class="sbk-title">Avg Effort to Conclude</span></div>
+                <div class="sbk-value">@($"{AvgDevReadyToDoneHours:0.0}")<span class="sbk-unit">h / @ScopeNoun</span></div>
+                <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@(Math.Min((int)(AvgDevReadyToDoneHours / 40.0 * 100), 100))%"></div></div>
+                <div class="sbk-sub">@(AvgDevReadyToDoneCount > 0 ? $"Dev Ready → Done this sprint · {AvgDevReadyToDoneCount} {ScopeNoun}{(AvgDevReadyToDoneCount == 1 ? "" : "s")}" : "no Dev Ready data this sprint")</div>
             </div>
 
         </div>
         <!-- ═══════════════════ FILTER BAR ═══════════════════ -->
-        <div class="sb-section">
+        <div class="sb-section sb-filterbar">
             <div class="sb-section-header" @onclick="() => _showFilters = !_showFilters">
                 <span class="sb-section-toggle">@(_showFilters ? "▾" : "▸")</span>
                 <span class="sb-section-title">Filters</span>
@@ -207,160 +212,212 @@
             @if (_showFilters)
             {
 
-            <!-- ── Row 1: checkbox lists + date ranges ─────────────── -->
-            <div class="sb-filter-grid">
+            <!-- ── Row 1: searchable dropdowns + date ranges ─────────── -->
+            <div class="sb-filterbar-row">
 
                 <!-- Assignee / Worklog Author -->
-                <div class="sb-filter-col">
-                    <div class="sb-filter-col-hdr">
-                        <span class="sb-filter-label">@(_personFilterByAuthor ? "Worklog Author" : "Assignee")</span>
-                        @if (_selectedAssignees.Count > 0)
+                <div class="sb-fb-group">
+                    <span class="sb-fb-cap">@(_personFilterByAuthor ? "Worklog Author" : "Assignee")</span>
+                    <div class="sb-dd">
+                        <button class="sb-dd-btn @(_selectedAssignees.Count > 0 ? "active" : "")" @onclick='() => ToggleFilterDropdown("assignee")'>
+                            @(_selectedAssignees.Count == 0 ? "All people" : $"{_selectedAssignees.Count} selected")
+                            <span class="sb-dd-caret">▾</span>
+                        </button>
+                        @if (_assigneeDdOpen)
                         {
-                            <span class="sb-filter-count">@_selectedAssignees.Count</span>
-                        }
-                        <div class="sb-filter-col-actions">
-                            <button class="sb-filter-clear-link" @onclick="SelectAllAssignees">All</button>
-                            <span class="sb-filter-action-sep">·</span>
-                            <button class="sb-filter-clear-link" @onclick="() => _selectedAssignees.Clear()">None</button>
-                        </div>
-                    </div>
-                    <label class="sb-person-mode" title="When on, logged-time metrics count only the selected people's worklogs and include any bug they logged on (matches Jira's worklogAuthor). When off, filters by who the bug is assigned to.">
-                        <input type="checkbox" checked="@_personFilterByAuthor" @onchange="TogglePersonFilterMode" />
-                        <span>Match by worklog author</span>
-                    </label>
-                    <div class="sb-check-list">
-                        @foreach (var name in AllAssignees)
-                        {
-                            var n = name;
-                            <label class="sb-check-item">
-                                <input type="checkbox" checked="@(_selectedAssignees.Contains(n))"
-                                       @onchange="() => ToggleAssignee(n)" />
-                                <span title="@n">@GetShortName(n)</span>
-                            </label>
+                            <div class="sb-dd-backdrop" @onclick="CloseFilterDropdowns"></div>
+                            <div class="sb-dd-panel">
+                                <div class="sb-dd-head">
+                                    <input class="sb-dd-search" placeholder="Search people…" @bind="_assigneeSearch" @bind:event="oninput" />
+                                    @if (_selectedAssignees.Count > 0)
+                                    {
+                                        <button class="sb-dd-clear" @onclick="() => _selectedAssignees.Clear()">Clear</button>
+                                    }
+                                </div>
+                                <label class="sb-person-mode" title="When on, logged-time metrics count only the selected people's worklogs and include any issue they logged on (matches Jira's worklogAuthor). When off, filters by who the issue is assigned to.">
+                                    <input type="checkbox" checked="@_personFilterByAuthor" @onchange="TogglePersonFilterMode" />
+                                    <span>Match by worklog author</span>
+                                </label>
+                                <div class="sb-dd-list">
+                                    @foreach (var name in AllAssignees.Where(a => string.IsNullOrEmpty(_assigneeSearch) || a.Contains(_assigneeSearch, StringComparison.OrdinalIgnoreCase)))
+                                    {
+                                        var n = name;
+                                        <label class="sb-dd-opt">
+                                            <input type="checkbox" checked="@(_selectedAssignees.Contains(n))" @onchange="() => ToggleAssignee(n)" />
+                                            <span class="sb-dd-opt-name" title="@n">@n</span>
+                                            <span class="sb-dd-opt-n">@CountForAssignee(n)</span>
+                                        </label>
+                                    }
+                                </div>
+                            </div>
                         }
                     </div>
                 </div>
 
                 <!-- Customer -->
-                <div class="sb-filter-col">
-                    <div class="sb-filter-col-hdr">
-                        <span class="sb-filter-label">Customer</span>
-                        @if (_selectedCustomers.Count > 0)
+                <div class="sb-fb-group">
+                    <span class="sb-fb-cap">Customer</span>
+                    <div class="sb-dd">
+                        <button class="sb-dd-btn @(_selectedCustomers.Count > 0 ? "active" : "")" @onclick='() => ToggleFilterDropdown("customer")'>
+                            @(_selectedCustomers.Count == 0 ? "All customers" : $"{_selectedCustomers.Count} selected")
+                            <span class="sb-dd-caret">▾</span>
+                        </button>
+                        @if (_customerDdOpen)
                         {
-                            <span class="sb-filter-count">@_selectedCustomers.Count</span>
-                        }
-                        <div class="sb-filter-col-actions">
-                            <button class="sb-filter-clear-link" @onclick="SelectAllCustomers">All</button>
-                            <span class="sb-filter-action-sep">·</span>
-                            <button class="sb-filter-clear-link" @onclick="() => _selectedCustomers.Clear()">None</button>
-                        </div>
-                    </div>
-                    <div class="sb-check-list">
-                        @foreach (var c in AllCustomers)
-                        {
-                            var cust = c;
-                            <label class="sb-check-item">
-                                <input type="checkbox" checked="@(_selectedCustomers.Contains(cust))"
-                                       @onchange="() => ToggleCustomer(cust)" />
-                                <span title="@cust">@cust</span>
-                            </label>
+                            <div class="sb-dd-backdrop" @onclick="CloseFilterDropdowns"></div>
+                            <div class="sb-dd-panel">
+                                <div class="sb-dd-head">
+                                    <input class="sb-dd-search" placeholder="Search customers…" @bind="_customerSearch" @bind:event="oninput" />
+                                    @if (_selectedCustomers.Count > 0)
+                                    {
+                                        <button class="sb-dd-clear" @onclick="() => _selectedCustomers.Clear()">Clear</button>
+                                    }
+                                </div>
+                                <div class="sb-dd-list">
+                                    @foreach (var c in AllCustomers.Where(c => string.IsNullOrEmpty(_customerSearch) || c.Contains(_customerSearch, StringComparison.OrdinalIgnoreCase)))
+                                    {
+                                        var cust = c;
+                                        <label class="sb-dd-opt">
+                                            <input type="checkbox" checked="@(_selectedCustomers.Contains(cust))" @onchange="() => ToggleCustomer(cust)" />
+                                            <span class="sb-dd-opt-name" title="@cust">@cust</span>
+                                            <span class="sb-dd-opt-n">@CountForCustomer(cust)</span>
+                                        </label>
+                                    }
+                                </div>
+                            </div>
                         }
                     </div>
                 </div>
 
                 <!-- Labels -->
-                <div class="sb-filter-col">
-                    <div class="sb-filter-col-hdr">
-                        <span class="sb-filter-label">Labels</span>
-                        @if (_selectedLabels.Count > 0)
+                <div class="sb-fb-group">
+                    <span class="sb-fb-cap">Labels</span>
+                    <div class="sb-dd">
+                        <button class="sb-dd-btn @(_selectedLabels.Count > 0 ? "active" : "")" @onclick='() => ToggleFilterDropdown("label")' disabled="@(!AllLabels.Any())">
+                            @(!AllLabels.Any() ? "No labels" : _selectedLabels.Count == 0 ? "All labels" : $"{_selectedLabels.Count} selected")
+                            <span class="sb-dd-caret">▾</span>
+                        </button>
+                        @if (_labelDdOpen)
                         {
-                            <span class="sb-filter-count">@_selectedLabels.Count</span>
-                        }
-                        <div class="sb-filter-col-actions">
-                            <button class="sb-filter-clear-link" @onclick="SelectAllLabels">All</button>
-                            <span class="sb-filter-action-sep">·</span>
-                            <button class="sb-filter-clear-link" @onclick="() => _selectedLabels.Clear()">None</button>
-                        </div>
-                    </div>
-                    <div class="sb-check-list">
-                        @foreach (var l in AllLabels)
-                        {
-                            var lbl = l;
-                            <label class="sb-check-item">
-                                <input type="checkbox" checked="@(_selectedLabels.Contains(lbl))"
-                                       @onchange="() => ToggleLabel(lbl)" />
-                                <span title="@lbl">@lbl</span>
-                            </label>
-                        }
-                        @if (!AllLabels.Any())
-                        {
-                            <span class="sb-filter-empty">No labels</span>
+                            <div class="sb-dd-backdrop" @onclick="CloseFilterDropdowns"></div>
+                            <div class="sb-dd-panel">
+                                <div class="sb-dd-head">
+                                    <input class="sb-dd-search" placeholder="Search labels…" @bind="_labelSearch" @bind:event="oninput" />
+                                    @if (_selectedLabels.Count > 0)
+                                    {
+                                        <button class="sb-dd-clear" @onclick="() => _selectedLabels.Clear()">Clear</button>
+                                    }
+                                </div>
+                                <div class="sb-dd-list">
+                                    @foreach (var l in AllLabels.Where(l => string.IsNullOrEmpty(_labelSearch) || l.Contains(_labelSearch, StringComparison.OrdinalIgnoreCase)))
+                                    {
+                                        var lbl = l;
+                                        <label class="sb-dd-opt">
+                                            <input type="checkbox" checked="@(_selectedLabels.Contains(lbl))" @onchange="() => ToggleLabel(lbl)" />
+                                            <span class="sb-dd-opt-name" title="@lbl">@lbl</span>
+                                            <span class="sb-dd-opt-n">@CountForLabel(lbl)</span>
+                                        </label>
+                                    }
+                                </div>
+                            </div>
                         }
                     </div>
                 </div>
 
                 <!-- Status -->
-                <div class="sb-filter-col">
-                    <div class="sb-filter-col-hdr">
-                        <span class="sb-filter-label">Status</span>
-                        @if (_selectedStatuses.Count > 0)
+                <div class="sb-fb-group">
+                    <span class="sb-fb-cap">Status</span>
+                    <div class="sb-dd">
+                        <button class="sb-dd-btn @(_selectedStatuses.Count > 0 ? "active" : "")" @onclick='() => ToggleFilterDropdown("status")'>
+                            @(_selectedStatuses.Count == 0 ? "All statuses" : $"{_selectedStatuses.Count} selected")
+                            <span class="sb-dd-caret">▾</span>
+                        </button>
+                        @if (_statusDdOpen)
                         {
-                            <span class="sb-filter-count">@_selectedStatuses.Count</span>
-                        }
-                        <div class="sb-filter-col-actions">
-                            <button class="sb-filter-clear-link" @onclick="SelectAllStatuses">All</button>
-                            <span class="sb-filter-action-sep">·</span>
-                            <button class="sb-filter-clear-link" @onclick="() => _selectedStatuses.Clear()">None</button>
-                        </div>
-                    </div>
-                    <div class="sb-check-list">
-                        @foreach (var s in AllStatuses)
-                        {
-                            var st = s;
-                            <label class="sb-check-item">
-                                <input type="checkbox" checked="@(_selectedStatuses.Contains(st))"
-                                       @onchange="() => ToggleStatus(st)" />
-                                <span>@st</span>
-                            </label>
+                            <div class="sb-dd-backdrop" @onclick="CloseFilterDropdowns"></div>
+                            <div class="sb-dd-panel">
+                                <div class="sb-dd-head">
+                                    <input class="sb-dd-search" placeholder="Search statuses…" @bind="_statusSearch" @bind:event="oninput" />
+                                    @if (_selectedStatuses.Count > 0)
+                                    {
+                                        <button class="sb-dd-clear" @onclick="() => _selectedStatuses.Clear()">Clear</button>
+                                    }
+                                </div>
+                                <div class="sb-dd-list">
+                                    @foreach (var s in AllStatuses.Where(s => string.IsNullOrEmpty(_statusSearch) || s.Contains(_statusSearch, StringComparison.OrdinalIgnoreCase)))
+                                    {
+                                        var st = s;
+                                        <label class="sb-dd-opt">
+                                            <input type="checkbox" checked="@(_selectedStatuses.Contains(st))" @onchange="() => ToggleStatus(st)" />
+                                            <span class="sb-dd-opt-name">@st</span>
+                                            <span class="sb-dd-opt-n">@CountForStatus(st)</span>
+                                        </label>
+                                    }
+                                </div>
+                            </div>
                         }
                     </div>
                 </div>
 
                 <!-- Due Date range -->
-                <div class="sb-filter-col">
-                    <div class="sb-filter-col-hdr">
-                        <span class="sb-filter-label">Due Date</span>
+                <div class="sb-fb-group">
+                    <span class="sb-fb-cap">
+                        Due Date
                         @if (_dueDateFrom.HasValue || _dueDateTo.HasValue)
                         {
                             <button class="sb-filter-clear-link" @onclick="() => { _dueDateFrom = null; _dueDateTo = null; }">Clear</button>
                         }
-                    </div>
+                    </span>
                     <div class="sb-date-range">
-                        <span class="sb-date-range-lbl">From</span>
                         <InputDate class="sb-input sb-input-date sb-filter-date" @bind-Value="_dueDateFrom" />
-                        <span class="sb-date-range-lbl">To</span>
+                        <span class="sb-date-range-lbl">→</span>
                         <InputDate class="sb-input sb-input-date sb-filter-date" @bind-Value="_dueDateTo" />
                     </div>
                 </div>
 
                 <!-- Last Activity range -->
-                <div class="sb-filter-col">
-                    <div class="sb-filter-col-hdr">
-                        <span class="sb-filter-label">Last Activity</span>
+                <div class="sb-fb-group">
+                    <span class="sb-fb-cap">
+                        Last Activity
                         @if (_activityFrom.HasValue || _activityTo.HasValue)
                         {
                             <button class="sb-filter-clear-link" @onclick="() => { _activityFrom = null; _activityTo = null; }">Clear</button>
                         }
-                    </div>
+                    </span>
                     <div class="sb-date-range">
-                        <span class="sb-date-range-lbl">From</span>
                         <InputDate class="sb-input sb-input-date sb-filter-date" @bind-Value="_activityFrom" />
-                        <span class="sb-date-range-lbl">To</span>
+                        <span class="sb-date-range-lbl">→</span>
                         <InputDate class="sb-input sb-input-date sb-filter-date" @bind-Value="_activityTo" />
                     </div>
                 </div>
 
             </div>
+
+            @if (_selectedAssignees.Count + _selectedCustomers.Count + _selectedLabels.Count + _selectedStatuses.Count > 0)
+            {
+                <div class="sb-fb-chips">
+                    @foreach (var a in _selectedAssignees.OrderBy(x => x))
+                    {
+                        var val = a;
+                        <button class="sb-fb-chip" @onclick="() => ToggleAssignee(val)" title="Remove @val"><span class="sb-fb-chip-cap">@(_personFilterByAuthor ? "author" : "assignee")</span>@GetShortName(val) ✕</button>
+                    }
+                    @foreach (var c in _selectedCustomers.OrderBy(x => x))
+                    {
+                        var val = c;
+                        <button class="sb-fb-chip" @onclick="() => ToggleCustomer(val)" title="Remove @val"><span class="sb-fb-chip-cap">customer</span>@val ✕</button>
+                    }
+                    @foreach (var l in _selectedLabels.OrderBy(x => x))
+                    {
+                        var val = l;
+                        <button class="sb-fb-chip" @onclick="() => ToggleLabel(val)" title="Remove @val"><span class="sb-fb-chip-cap">label</span>@val ✕</button>
+                    }
+                    @foreach (var s in _selectedStatuses.OrderBy(x => x))
+                    {
+                        var val = s;
+                        <button class="sb-fb-chip" @onclick="() => ToggleStatus(val)" title="Remove @val"><span class="sb-fb-chip-cap">status</span>@val ✕</button>
+                    }
+                </div>
+            }
 
             <div class="sb-filter-sep"></div>
 
@@ -418,7 +475,7 @@
                                 <div class="sb-ac-avatar" style="background:@GetAvatarColor(grp.Name)">@GetInitials(grp.Name)</div>
                                 <div class="sb-ac-head-info">
                                     <div class="sb-ac-name">@grp.Name</div>
-                                    <div class="sb-ac-pct-label">@acPct% complete · @grp.Total bugs</div>
+                                    <div class="sb-ac-pct-label">@acPct% complete · @grp.Total @(ScopeNoun)s</div>
                                 </div>
                             </div>
                             <div class="sb-ac-progress">
@@ -444,7 +501,7 @@
         <!-- ═══════════════════ TABS ═══════════════════ -->
         <div class="sb-tabs">
             <button class="sb-tab @(_activeTab == "bugs" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "bugs"'>
-                Bugs
+                @(_typeScope == "bug" ? "Bugs" : _typeScope == "redesign" ? "Redesign" : "Issues")
                 <span class="sb-tab-badge sb-tab-badge-neutral">@FilteredBugs.Count()</span>
             </button>
             <button class="sb-tab @(_activeTab == "calendar" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "calendar"'>
@@ -465,6 +522,13 @@
             <button class="sb-tab @(_activeTab == "breakdowns" ? "sb-tab-active" : "")" @onclick="SwitchToBreakdownsTab">
                 Breakdowns
             </button>
+            <button class="sb-tab @(_activeTab == "jssupport-linked" ? "sb-tab-active" : "")" @onclick="SwitchToLinkedTabAsync">
+                JSSUPPORT Linked
+                @if (_linkedBugsLoaded && LinkedSupportBugs.Count > 0)
+                {
+                    <span class="sb-tab-badge sb-tab-badge-neutral">@LinkedSupportBugs.Count</span>
+                }
+            </button>
             <button class="sb-tab @(_activeTab == "dashboard" ? "sb-tab-active" : "")" @onclick='() => _activeTab = "dashboard"'>
                 Dashboard Control
             </button>
@@ -475,7 +539,7 @@
         {
         <div class="sb-section">
             <div class="sb-bugs-toolbar">
-                <span class="sb-bugs-count">@FilteredBugs.Count() bug@(FilteredBugs.Count() == 1 ? "" : "s")</span>
+                <span class="sb-bugs-count">@FilteredBugs.Count() @ScopeNoun@(FilteredBugs.Count() == 1 ? "" : "s")</span>
                 <div class="sb-bugs-toolbar-right">
                     <div class="sb-bug-search-wrap">
                         <svg class="sb-bug-search-icon" xmlns="http://www.w3.org/2000/svg" width="13" height="13" fill="currentColor" viewBox="0 0 16 16">
@@ -717,7 +781,7 @@
 
                         @if (!FilteredBugs.Any())
                         {
-                            <tr><td colspan="15" class="sb-empty">No bugs match the current filters.</td></tr>
+                            <tr><td colspan="15" class="sb-empty">No @(ScopeNoun)s match the current filters.</td></tr>
                         }
                     </tbody>
                 </table>
@@ -747,11 +811,11 @@
                     <button class="sb-btn sb-btn-ghost sb-cal-nav" @onclick="CalNextMonth">&#8250;</button>
                     @if (monthTotal > 0)
                     {
-                        <span class="sb-cal-badge">@monthTotal bug@(monthTotal == 1 ? "" : "s") due</span>
+                        <span class="sb-cal-badge">@monthTotal @ScopeNoun@(monthTotal == 1 ? "" : "s") due</span>
                     }
                     else
                     {
-                        <span class="sb-cal-empty-month">No bugs with due dates in this month</span>
+                        <span class="sb-cal-empty-month">No @(ScopeNoun)s with due dates in this month</span>
                     }
                 </div>
                 <div class="sb-cal-grid-wrap">
@@ -940,7 +1004,7 @@
                             }
                             @if (!SortedAgeBugs.Any())
                             {
-                                <tr><td colspan="8" class="sb-empty">No open bugs.</td></tr>
+                                <tr><td colspan="8" class="sb-empty">No open @(ScopeNoun)s.</td></tr>
                             }
                         </tbody>
                     </table>
@@ -965,13 +1029,13 @@
                     </div>
                 </div>
                 <div class="sb-chart-card">
-                    <div class="sb-chart-title">Bug Age (open only)</div>
+                    <div class="sb-chart-title">@(_typeScope == "bug" ? "Bug" : "Issue") Age (open only)</div>
                     <div class="sb-chart-canvas-wrap">
                         <canvas id="sb-chart-age"></canvas>
                     </div>
                 </div>
                 <div class="sb-chart-card sb-chart-card-wide">
-                    <div class="sb-chart-title">Bugs per Assignee</div>
+                    <div class="sb-chart-title">@(_typeScope == "bug" ? "Bugs" : "Issues") per Assignee</div>
                     <div class="sb-chart-canvas-wrap" style="height:320px">
                         <canvas id="sb-chart-assignee"></canvas>
                     </div>
@@ -1060,6 +1124,185 @@
             </div>
         } <!-- end breakdowns tab -->
 
+        <!-- ═══════════════════ JSSUPPORT LINKED TAB ═══════════════════ -->
+        @if (_activeTab == "jssupport-linked")
+        {
+            <div class="sb-section sb-lk-section">
+                <div class="sb-section-header" style="cursor:default">
+                    <span class="sb-section-title">Bugs linked to JSSUPPORT</span>
+                    <span class="sb-section-sub">type Bug · created @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM") · linked to a JSSUPPORT ticket · excluding @(_loadedEpicKey)'s issues</span>
+                    <button class="sb-btn sb-btn-ghost" style="margin-left:auto;padding:3px 12px;font-size:12px" @onclick="LoadLinkedBugsAsync" disabled="@_linkedBugsLoading" title="Re-fetch using the current sprint dates">
+                        ⟳ Refresh
+                    </button>
+                </div>
+                @if (!_linkedBugsLoading && string.IsNullOrEmpty(_linkedBugsError) && _linkedBugsLoaded)
+                {
+                    <div class="sb-lk-toolbar">
+                        <span class="sb-fb-cap">Worklog Author</span>
+                        <div class="sb-dd">
+                            <button class="sb-dd-btn @(_lkSelectedAuthors.Count > 0 ? "active" : "")" @onclick="() => _lkAuthorDdOpen = !_lkAuthorDdOpen">
+                                @(_lkSelectedAuthors.Count == 0 ? "All authors" : $"{_lkSelectedAuthors.Count} selected")
+                                <span class="sb-dd-caret">▾</span>
+                            </button>
+                            @if (_lkAuthorDdOpen)
+                            {
+                                <div class="sb-dd-backdrop" @onclick="CloseLkAuthorDropdown"></div>
+                                <div class="sb-dd-panel">
+                                    <div class="sb-dd-head">
+                                        <input class="sb-dd-search" placeholder="Search authors…" @bind="_lkAuthorSearch" @bind:event="oninput" />
+                                        @if (_lkSelectedAuthors.Count > 0)
+                                        {
+                                            <button class="sb-dd-clear" @onclick="() => _lkSelectedAuthors.Clear()">Clear</button>
+                                        }
+                                    </div>
+                                    <div class="sb-dd-list">
+                                        @foreach (var author in LinkedBugAuthors.Where(a => string.IsNullOrEmpty(_lkAuthorSearch) || a.Contains(_lkAuthorSearch, StringComparison.OrdinalIgnoreCase)))
+                                        {
+                                            var au = author;
+                                            <label class="sb-dd-opt">
+                                                <input type="checkbox" checked="@(_lkSelectedAuthors.Contains(au))" @onchange="() => ToggleLkAuthor(au)" />
+                                                <span class="sb-dd-opt-name" title="@au">@au</span>
+                                                <span class="sb-dd-opt-n">@CountForLkAuthor(au)</span>
+                                            </label>
+                                        }
+                                        @if (!LinkedBugAuthors.Any())
+                                        {
+                                            <div class="sb-empty" style="padding:10px;font-size:12px">No worklog authors in these bugs.</div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                        @foreach (var au in _lkSelectedAuthors.OrderBy(x => x))
+                        {
+                            var val = au;
+                            <button class="sb-fb-chip" @onclick="() => ToggleLkAuthor(val)" title="Remove @val"><span class="sb-fb-chip-cap">author</span>@GetShortName(val) ✕</button>
+                        }
+                        <span class="sb-lk-toolbar-count">@LinkedSupportBugs.Count of @LinkedBaseBugs.Count bug@(LinkedBaseBugs.Count == 1 ? "" : "s")</span>
+                    </div>
+                }
+                @if (_linkedBugsLoading)
+                {
+                    <div class="sb-empty" style="padding:32px">Fetching bugs created @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")…</div>
+                }
+                else if (!string.IsNullOrEmpty(_linkedBugsError))
+                {
+                    <div class="sb-error" style="margin:12px 16px">@_linkedBugsError</div>
+                }
+                else
+                {
+                    <div class="sb-table-wrap">
+                        <table class="sb-table">
+                            <thead>
+                                <tr>
+                                    <th class="sb-th sb-th-pri sortable @SILk("pri")" @onclick='() => SortLk("pri")' title="Priority">P</th>
+                                    <th class="sb-th sb-th-key sortable @SILk("key")" @onclick='() => SortLk("key")'>Key</th>
+                                    <th class="sb-th sb-th-title sortable @SILk("title")" @onclick='() => SortLk("title")'>Title</th>
+                                    <th class="sb-th sb-th-customer sortable @SILk("customer")" @onclick='() => SortLk("customer")'>Customer</th>
+                                    <th class="sb-th sb-th-status sortable @SILk("status")" @onclick='() => SortLk("status")'>Status</th>
+                                    <th class="sb-th sb-th-due sortable @SILk("created")" @onclick='() => SortLk("created")'>Created</th>
+                                    <th class="sb-th sb-th-est sortable @SILk("age")" @onclick='() => SortLk("age")'>Age</th>
+                                    <th class="sb-th sb-th-est sortable @SILk("logged")" @onclick='() => SortLk("logged")'>Logged</th>
+                                    <th class="sb-th">JSSUPPORT Links</th>
+                                    <th class="sb-th sb-th-expand"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var bug in LinkedSupportBugs)
+                                {
+                                    var lkAge      = GetDaysOpen(bug);
+                                    var lkExpanded = _expandedLinkedKeys.Contains(bug.Key);
+                                    <tr class="sb-row @(lkExpanded ? "sb-row-expanded" : "")">
+                                        <td class="sb-td sb-td-pri"><span class="sb-pri-dot @GetPriorityClass(bug.Priority)" title="@bug.Priority"></span></td>
+                                        <td class="sb-td sb-td-key"><a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a></td>
+                                        <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
+                                        <td class="sb-td sb-td-customer">@(string.IsNullOrEmpty(bug.Customer) ? "—" : bug.Customer)</td>
+                                        <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
+                                        <td class="sb-td sb-td-due">@(bug.Created.HasValue ? bug.Created.Value.ToString("dd MMM yyyy") : "—")</td>
+                                        <td class="sb-td sb-td-est">
+                                            <span class="@(lkAge >= 90 ? "sb-age-badge sb-age-badge-old" : lkAge >= 30 ? "sb-age-badge sb-age-badge-aging" : lkAge >= 7 ? "sb-age-badge sb-age-badge-recent" : "sb-age-badge sb-age-badge-fresh")">@lkAge d</span>
+                                        </td>
+                                        <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                                        <td class="sb-td">
+                                            @foreach (var lk in JsSupportLinksOf(bug))
+                                            {
+                                                <a class="sb-lk-chip" href="@_jiraBase/browse/@lk" target="_blank" rel="noopener noreferrer">@lk ↗</a>
+                                            }
+                                        </td>
+                                        <td class="sb-td sb-td-expand">
+                                            <button class="btn small sb-expand-btn" @onclick="() => ToggleLinkedRow(bug.Key)"
+                                                    title="@(lkExpanded ? "Collapse" : (bug.Worklogs.Count > 0 ? $"{bug.Worklogs.Count} worklogs" : "No worklogs"))">
+                                                @(lkExpanded ? "▲" : (bug.Worklogs.Count > 0 ? $"▼ {bug.Worklogs.Count}" : "▼"))
+                                            </button>
+                                        </td>
+                                    </tr>
+
+                                    @if (lkExpanded)
+                                    {
+                                        var lkByAuthor = bug.Worklogs
+                                            .GroupBy(w => w.Author)
+                                            .Select(g => (Author: g.Key, Seconds: g.Sum(w => w.TimeSpentSeconds)))
+                                            .OrderByDescending(x => x.Seconds)
+                                            .ToList();
+                                        <tr class="sb-worklog-row">
+                                            <td colspan="10" class="sb-worklog-cell">
+                                                @if (bug.Worklogs.Count == 0)
+                                                {
+                                                    <div class="sb-empty" style="padding:14px">No time logged on @bug.Key yet.</div>
+                                                }
+                                                else
+                                                {
+                                                    <div class="sb-worklog-wrap">
+                                                        <div class="sb-worklog-header">
+                                                            <span>Worklogs (@bug.Worklogs.Count) · @FormatSeconds(bug.Worklogs.Sum(w => w.TimeSpentSeconds)) total</span>
+                                                        </div>
+                                                        <div class="sb-lk-author-row">
+                                                            @foreach (var a in lkByAuthor)
+                                                            {
+                                                                <span class="sb-lk-author-chip" title="@a.Author">
+                                                                    <span class="sb-ac-avatar" style="background:@GetAvatarColor(a.Author);width:18px;height:18px;font-size:7px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;color:#fff;font-weight:700;flex-shrink:0">@GetInitials(a.Author)</span>
+                                                                    @GetShortName(a.Author) · <strong>@FormatSeconds(a.Seconds)</strong>
+                                                                </span>
+                                                            }
+                                                        </div>
+                                                        <table class="sb-wl-table">
+                                                            <thead>
+                                                                <tr>
+                                                                    <th>Date</th>
+                                                                    <th>Author</th>
+                                                                    <th>Time</th>
+                                                                    <th>Comment</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody>
+                                                                @foreach (var wl in bug.Worklogs.OrderByDescending(w => w.Started))
+                                                                {
+                                                                    <tr>
+                                                                        <td>@wl.Started.ToString("dd MMM yyyy, HH:mm")</td>
+                                                                        <td>@wl.Author</td>
+                                                                        <td class="sb-wl-time">@wl.TimeSpent</td>
+                                                                        <td class="sb-wl-comment">@(string.IsNullOrEmpty(wl.Comment) ? "—" : wl.Comment)</td>
+                                                                    </tr>
+                                                                }
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                }
+                                @if (!LinkedSupportBugs.Any())
+                                {
+                                    <tr><td colspan="10" class="sb-empty">No bugs created in this window are linked to a JSSUPPORT ticket outside the epic.</td></tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+        } <!-- end jssupport linked tab -->
+
         <!-- ═══════════════════ DASHBOARD CONTROL TAB ═══════════════════ -->
         @if (_activeTab == "dashboard")
         {
@@ -1082,7 +1325,7 @@
             <div class="sb-dash-kpis">
                 <div class="sb-dash-kpi">
                     <div class="sb-dash-kpi-val" style="color:var(--primary)">@dbActiveBugs.Count</div>
-                    <div class="sb-dash-kpi-lbl">Bugs Touched</div>
+                    <div class="sb-dash-kpi-lbl">@(_typeScope == "bug" ? "Bugs" : "Issues") Touched</div>
                 </div>
                 <div class="sb-dash-kpi">
                     <div class="sb-dash-kpi-val" style="color:var(--success)">@dbResolvedCnt</div>
@@ -1256,7 +1499,7 @@
             {
                 <div class="sb-dash-untouched-banner">
                     <span>⚠</span>
-                    <strong>@dbUntouched.Count open bug@(dbUntouched.Count == 1 ? "" : "s") had no activity this sprint</strong>
+                    <strong>@dbUntouched.Count open @ScopeNoun@(dbUntouched.Count == 1 ? "" : "s") had no activity this sprint</strong>
                     <span style="font-weight:400;font-size:12px">— these may be stale or forgotten</span>
                 </div>
                 <div class="sb-section">
@@ -1297,7 +1540,7 @@
                                 }
                                 @if (dbUntouched.Count > 25)
                                 {
-                                    <tr><td colspan="7" class="sb-empty" style="font-style:normal;font-size:12px">…and @(dbUntouched.Count - 25) more untouched bugs</td></tr>
+                                    <tr><td colspan="7" class="sb-empty" style="font-style:normal;font-size:12px">…and @(dbUntouched.Count - 25) more untouched @(ScopeNoun)s</td></tr>
                                 }
                             </tbody>
                         </table>
@@ -1343,11 +1586,19 @@
     }
     else if (!_loading && !string.IsNullOrEmpty(_loadedEpicKey))
     {
-        <div class="sb-empty-state">No bugs found for epic <strong>@_loadedEpicKey</strong>.</div>
+        <div class="sb-empty-state">
+            <div class="sb-empty-state-ico"><i class="bi bi-inbox"></i></div>
+            <div class="sb-empty-state-title">No issues found for epic <strong>@_loadedEpicKey</strong></div>
+            <div class="sb-empty-state-hint">Check the epic key and try again.</div>
+        </div>
     }
     else if (!_loading && string.IsNullOrEmpty(_loadedEpicKey))
     {
-        <div class="sb-empty-state">Enter a support bug epic key above and click <strong>Load Bugs</strong> to get started.</div>
+        <div class="sb-empty-state">
+            <div class="sb-empty-state-ico"><i class="bi bi-bug"></i></div>
+            <div class="sb-empty-state-title">Load a support epic to get started</div>
+            <div class="sb-empty-state-hint">Enter an epic key above and click <strong>Load Bugs</strong> — metrics can then be split between Bugs, Redesign and All Combined.</div>
+        </div>
     }
 
     <!-- ═══════════════════ JSSUPPORT ISSUE KEYS ═══════════════════ -->
@@ -1455,7 +1706,11 @@
     private HashSet<string>    _selectedCustomers = new();
     private HashSet<string>    _selectedLabels    = new();
     private string             _healthFilter      = "all";
+    private string             _typeScope         = "all"; // "all" | "bug" | "redesign"
     private string             _activeTab            = "bugs";
+    // Searchable dropdown state (filter bar)
+    private bool   _assigneeDdOpen, _customerDdOpen, _labelDdOpen, _statusDdOpen;
+    private string _assigneeSearch = "", _customerSearch = "", _labelSearch = "", _statusSearch = "";
     private bool               _chartsNeedRender     = false;
     private bool               _stripChartsNeedRender = false;
     private bool               _breakdownsChartNeedRender = false;
@@ -1534,22 +1789,52 @@
 
     private string _jiraBase => Config["Jira:BaseUrl"]?.TrimEnd('/') ?? "";
 
+    // ── Issue-type scope (All / Bugs / Redesign) ───────────────────────────────
+    // Everything below (KPIs, filters, tabs, charts, exports) derives from ScopedBugs,
+    // so switching scope re-computes the whole dashboard for that issue type.
+    private static bool IsType(SprintIssue b, string type) =>
+        string.Equals(b.IssueType, type, StringComparison.OrdinalIgnoreCase);
+
+    private IEnumerable<SprintIssue> ScopedBugs => _typeScope switch
+    {
+        "bug"      => _bugs.Where(b => IsType(b, "Bug")),
+        "redesign" => _bugs.Where(b => IsType(b, "Redesign")),
+        _          => _bugs
+    };
+
+    private int BugTypeCount      => _bugs.Count(b => IsType(b, "Bug"));
+    private int RedesignTypeCount => _bugs.Count(b => IsType(b, "Redesign"));
+    private int ScopedCount       => ScopedBugs.Count();
+
+    // Noun used in labels: "bug" only when the Bugs scope is active.
+    private string ScopeNoun => _typeScope == "bug" ? "bug" : "issue";
+
+    private void SetTypeScope(string scope)
+    {
+        if (_typeScope == scope) return;
+        _typeScope = scope;
+        // Charts read the scoped data — force a rebuild of whichever canvases are live.
+        _stripChartsNeedRender     = true;
+        _chartsNeedRender          = true;
+        _breakdownsChartNeedRender = true;
+    }
+
     // ── Computed / Filtered ────────────────────────────────────────────────────
     // When matching by worklog author, also surface people who logged time but aren't assignees.
     private IEnumerable<string> AllAssignees
     {
         get
         {
-            var names = _bugs.Select(b => b.Assignee ?? "Unassigned");
+            var names = ScopedBugs.Select(b => b.Assignee ?? "Unassigned");
             if (_personFilterByAuthor)
-                names = names.Concat(_bugs.SelectMany(b => b.Worklogs.Select(w => w.Author)))
+                names = names.Concat(ScopedBugs.SelectMany(b => b.Worklogs.Select(w => w.Author)))
                              .Where(n => !string.IsNullOrWhiteSpace(n));
             return names.Distinct().OrderBy(a => a);
         }
     }
 
     private IEnumerable<string> AllStatuses =>
-        _bugs.Select(b => b.Status ?? "—")
+        ScopedBugs.Select(b => b.Status ?? "—")
              .Where(s => s != "—")
              .Distinct()
              .OrderBy(s => s);
@@ -1557,13 +1842,13 @@
     private const string NoCustomerLabel = "(none)";
 
     private IEnumerable<string> AllCustomers =>
-        _bugs.Select(b => string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer)
+        ScopedBugs.Select(b => string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer)
              .Distinct()
              .OrderBy(c => c == NoCustomerLabel ? 1 : 0)
              .ThenBy(c => c);
 
     private IEnumerable<string> AllLabels =>
-        _bugs.Where(b => b.Labels != null)
+        ScopedBugs.Where(b => b.Labels != null)
              .SelectMany(b => b.Labels)
              .Where(l => !string.IsNullOrWhiteSpace(l))
              .Distinct()
@@ -1572,7 +1857,7 @@
     private static readonly string[] PriorityOrder = ["Critical", "Highest", "High", "Medium", "Low", "Lowest"];
 
     private IEnumerable<string> AllPriorities =>
-        _bugs.Select(b => b.Priority ?? "")
+        ScopedBugs.Select(b => b.Priority ?? "")
              .Where(p => !string.IsNullOrEmpty(p))
              .Distinct()
              .OrderBy(p => { var i = Array.IndexOf(PriorityOrder, p); return i < 0 ? 99 : i; });
@@ -1593,7 +1878,7 @@
     {
         get
         {
-            var q = _bugs.AsEnumerable();
+            var q = ScopedBugs;
             if (_selectedAssignees.Count > 0)
                 // Author mode: match Jira's worklogAuthor view — include a bug if the selected person is
                 // the assignee OR logged time on it (logged-hours metrics are author-scoped to match).
@@ -1919,12 +2204,12 @@
         _dashSelectedDay = (_dashSelectedDay.HasValue && _dashSelectedDay.Value == day) ? null : day;
 
     private List<SprintIssue> DashActiveBugs =>
-        _bugs.Where(b => GetSprintWorklogs(b).Count > 0)
+        ScopedBugs.Where(b => GetSprintWorklogs(b).Count > 0)
              .OrderBy(b => GetSprintWorklogs(b).Min(w => w.Started))
              .ToList();
 
     private List<SprintIssue> DashUntouchedBugs =>
-        _bugs.Where(b => !IsDone(b) && GetSprintWorklogs(b).Count == 0)
+        ScopedBugs.Where(b => !IsDone(b) && GetSprintWorklogs(b).Count == 0)
              .OrderByDescending(b => GetDaysOpen(b))
              .ToList();
 
@@ -1991,8 +2276,8 @@
     }
 
     private string FilterSubtitle => IsFiltered
-        ? $"{TotalCount} of {_bugs.Count} bugs shown · {ActiveFilterCount} filter{(ActiveFilterCount == 1 ? "" : "s")} active"
-        : $"{_bugs.Count} bugs · no filters applied";
+        ? $"{TotalCount} of {ScopedCount} {ScopeNoun}s shown · {ActiveFilterCount} filter{(ActiveFilterCount == 1 ? "" : "s")} active"
+        : $"{ScopedCount} {ScopeNoun}s · no filters applied";
 
     private void ClearFilters()
     {
@@ -2008,6 +2293,33 @@
         _dueDateTo      = null;
         _activityFrom   = null;
         _activityTo     = null;
+        CloseFilterDropdowns();
+    }
+
+    private void CloseFilterDropdowns()
+    {
+        _assigneeDdOpen = _customerDdOpen = _labelDdOpen = _statusDdOpen = false;
+        _assigneeSearch = _customerSearch = _labelSearch = _statusSearch = "";
+    }
+
+    // Only one filter dropdown open at a time; opening one closes the rest.
+    private void ToggleFilterDropdown(string which)
+    {
+        var open = which switch
+        {
+            "assignee" => _assigneeDdOpen,
+            "customer" => _customerDdOpen,
+            "label"    => _labelDdOpen,
+            _          => _statusDdOpen
+        };
+        CloseFilterDropdowns();
+        switch (which)
+        {
+            case "assignee": _assigneeDdOpen = !open; break;
+            case "customer": _customerDdOpen = !open; break;
+            case "label":    _labelDdOpen    = !open; break;
+            default:         _statusDdOpen   = !open; break;
+        }
     }
 
     // ── Load ───────────────────────────────────────────────────────────────────
@@ -2030,6 +2342,8 @@
         _dueDateTo    = null;
         _activityFrom = null;
         _activityTo   = null;
+        CloseFilterDropdowns();
+        _linkedBugsLoaded = false; // sprint window may have changed — refetch on next tab open
         StateHasChanged();
 
         try
@@ -2071,6 +2385,118 @@
         }
         catch { _jssupportIssues = new(); }
         finally { _jssupportLoading = false; }
+    }
+
+    // ── JSSUPPORT-linked bugs tab ─────────────────────────────────────────────
+    // Bugs created inside the sprint window that link to a JSSUPPORT ticket and are
+    // NOT children of the loaded epic. Fetched lazily on first tab open, uncached.
+    private List<SprintIssue> _linkedBugsRaw = new();
+    private bool   _linkedBugsLoading;
+    private bool   _linkedBugsLoaded;
+    private string _linkedBugsError = "";
+
+    private string _sortColLk = ""; private bool _sortAscLk = true;
+    private void SortLk(string col) { if (_sortColLk == col) _sortAscLk = !_sortAscLk; else { _sortColLk = col; _sortAscLk = true; } }
+    private string SILk(string col) => _sortColLk == col ? (_sortAscLk ? "sort-asc" : "sort-desc") : "";
+
+    private readonly HashSet<string> _expandedLinkedKeys = new();
+    private void ToggleLinkedRow(string key)
+    {
+        if (!_expandedLinkedKeys.Remove(key)) _expandedLinkedKeys.Add(key);
+    }
+
+    // Worklog-author filter for the JSSUPPORT Linked tab (independent of the main filter bar).
+    private readonly HashSet<string> _lkSelectedAuthors = new();
+    private bool   _lkAuthorDdOpen;
+    private string _lkAuthorSearch = "";
+
+    private void ToggleLkAuthor(string author)
+    {
+        if (!_lkSelectedAuthors.Remove(author)) _lkSelectedAuthors.Add(author);
+    }
+
+    private void CloseLkAuthorDropdown()
+    {
+        _lkAuthorDdOpen = false;
+        _lkAuthorSearch = "";
+    }
+
+    private IEnumerable<string> LinkedBugAuthors => LinkedBaseBugs
+        .SelectMany(b => b.Worklogs.Select(w => w.Author))
+        .Where(a => !string.IsNullOrWhiteSpace(a))
+        .Distinct()
+        .OrderBy(a => a);
+
+    private int CountForLkAuthor(string author) =>
+        LinkedBaseBugs.Count(b => b.Worklogs.Any(w => w.Author == author));
+
+    private static List<string> JsSupportLinksOf(SprintIssue b) => b.LinkedIssueKeys
+        .Where(k => k.StartsWith("JSSUPPORT", StringComparison.OrdinalIgnoreCase))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(k => k)
+        .ToList();
+
+    // JSSUPPORT-linked + outside the epic, before the tab's own author filter — the base
+    // set the author dropdown options/counts are built from.
+    private List<SprintIssue> LinkedBaseBugs
+    {
+        get
+        {
+            var epicKeys = _bugs.Select(b => b.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return _linkedBugsRaw
+                .Where(b => JsSupportLinksOf(b).Count > 0 && !epicKeys.Contains(b.Key))
+                .ToList();
+        }
+    }
+
+    private List<SprintIssue> LinkedSupportBugs
+    {
+        get
+        {
+            var q = LinkedBaseBugs.AsEnumerable();
+            if (_lkSelectedAuthors.Count > 0)
+                q = q.Where(b => b.Worklogs.Any(w => _lkSelectedAuthors.Contains(w.Author)));
+            return (_sortColLk switch
+            {
+                "pri"      => _sortAscLk ? q.OrderBy(b => PriOrder(b))                          : q.OrderByDescending(b => PriOrder(b)),
+                "key"      => _sortAscLk ? q.OrderBy(b => b.Key)                                : q.OrderByDescending(b => b.Key),
+                "title"    => _sortAscLk ? q.OrderBy(b => b.Summary)                            : q.OrderByDescending(b => b.Summary),
+                "customer" => _sortAscLk ? q.OrderBy(b => b.Customer)                           : q.OrderByDescending(b => b.Customer),
+                "status"   => _sortAscLk ? q.OrderBy(b => b.Status)                             : q.OrderByDescending(b => b.Status),
+                "created"  => _sortAscLk ? q.OrderBy(b => b.Created ?? DateTime.MaxValue)       : q.OrderByDescending(b => b.Created ?? DateTime.MinValue),
+                "age"      => _sortAscLk ? q.OrderBy(b => GetDaysOpen(b))                       : q.OrderByDescending(b => GetDaysOpen(b)),
+                "logged"   => _sortAscLk ? q.OrderBy(b => b.TimeSpentSeconds)                   : q.OrderByDescending(b => b.TimeSpentSeconds),
+                _          => q.OrderByDescending(b => b.Created ?? DateTime.MinValue)
+            }).ToList();
+        }
+    }
+
+    private async Task SwitchToLinkedTabAsync()
+    {
+        _activeTab = "jssupport-linked";
+        if (!_linkedBugsLoaded && !_linkedBugsLoading)
+            await LoadLinkedBugsAsync();
+    }
+
+    private async Task LoadLinkedBugsAsync()
+    {
+        _linkedBugsLoading = true;
+        _linkedBugsError   = "";
+        StateHasChanged();
+        try
+        {
+            var report = await JiraService.GetBugsWithLinksAsync(_sprintStart, _sprintEnd);
+            _linkedBugsRaw    = report.Issues ?? new();
+            _linkedBugsLoaded = true;
+            _expandedLinkedKeys.Clear();
+            _lkSelectedAuthors.Clear();
+            CloseLkAuthorDropdown();
+        }
+        catch (Exception ex)
+        {
+            _linkedBugsError = $"Failed to fetch JSSUPPORT-linked bugs: {ex.Message}";
+        }
+        finally { _linkedBugsLoading = false; }
     }
 
     private static List<string> ParseIssueKeys(string input)
@@ -2284,10 +2710,16 @@
         if (!_selectedLabels.Remove(label)) _selectedLabels.Add(label);
     }
 
-    private void SelectAllAssignees() => _selectedAssignees = new HashSet<string>(AllAssignees);
-    private void SelectAllStatuses()  => _selectedStatuses  = new HashSet<string>(AllStatuses);
-    private void SelectAllCustomers() => _selectedCustomers = new HashSet<string>(AllCustomers);
-    private void SelectAllLabels()    => _selectedLabels    = new HashSet<string>(AllLabels);
+    // Per-option counts shown in the filter dropdowns (scoped, pre-filter).
+    private int CountForAssignee(string n) => _personFilterByAuthor
+        ? ScopedBugs.Count(b => (b.Assignee ?? "Unassigned") == n || b.Worklogs.Any(w => w.Author == n))
+        : ScopedBugs.Count(b => (b.Assignee ?? "Unassigned") == n);
+    private int CountForCustomer(string c) =>
+        ScopedBugs.Count(b => (string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer) == c);
+    private int CountForLabel(string l) =>
+        ScopedBugs.Count(b => b.Labels != null && b.Labels.Contains(l));
+    private int CountForStatus(string s) =>
+        ScopedBugs.Count(b => (b.Status ?? "—") == s);
 
     private static string GetShortName(string name)
     {
@@ -2428,7 +2860,7 @@
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
         var base64   = Convert.ToBase64String(ms.ToArray());
-        var fileName = $"SupportBugs_{_loadedEpicKey}_{DateTime.Now:yyyyMMdd}.xlsx";
+        var fileName = $"SupportBugs_{_loadedEpicKey}{ScopeFileSuffix}_{DateTime.Now:yyyyMMdd}.xlsx";
         const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
         await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
     }
@@ -2461,9 +2893,16 @@
         }
         var bytes  = System.Text.Encoding.UTF8.GetBytes(sb.ToString());
         var base64 = Convert.ToBase64String(bytes);
-        var fileName = $"SupportBugs_{_loadedEpicKey}_{DateTime.Now:yyyyMMdd}.csv";
+        var fileName = $"SupportBugs_{_loadedEpicKey}{ScopeFileSuffix}_{DateTime.Now:yyyyMMdd}.csv";
         await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, "text/csv;charset=utf-8");
     }
+
+    private string ScopeFileSuffix => _typeScope switch
+    {
+        "bug"      => "_Bugs",
+        "redesign" => "_Redesign",
+        _          => ""
+    };
 
     private static string CsvEscape(string value)
     {
@@ -2796,6 +3235,14 @@
         align-self: center;
     }
 
+    .sb-load-controls {
+        display: flex;
+        align-items: flex-end;
+        gap: 12px;
+        flex-wrap: wrap;
+        margin-left: auto;
+    }
+
     .sb-load-title-row {
         display: flex;
         align-items: center;
@@ -2825,7 +3272,7 @@
         border-radius: 20px;
         transition: background 0.15s;
     }
-    .sb-epic-badge:hover { background: #dbeafe; text-decoration: none; }
+    .sb-epic-badge:hover { filter: brightness(0.96); text-decoration: none; }
 
     .sb-cfg-group {
         display: flex;
@@ -2842,14 +3289,14 @@
     }
 
     .sb-input {
-        border: 1px solid #d1d5db;
+        border: 1px solid var(--border);
         border-radius: 6px;
         padding: 6px 10px;
         font-size: 13px;
         font-family: inherit;
         outline: none;
         transition: border-color .15s, box-shadow .15s;
-        background: #fff;
+        background: var(--surface);
         color: var(--txt-1);
     }
     .sb-input:focus {
@@ -2886,7 +3333,7 @@
     .sb-btn:hover:not(:disabled) { opacity: .88; }
 
     .sb-btn-primary { background: var(--primary); color: #fff; }
-    .sb-btn-ghost   { background: transparent; border: 1px solid #d1d5db; color: var(--txt-2); }
+    .sb-btn-ghost   { background: transparent; border: 1px solid var(--border); color: var(--txt-2); }
     .sb-btn-ghost:hover:not(:disabled) { background: var(--surface-2); opacity: 1; }
 
     .sb-spinner {
@@ -2908,6 +3355,172 @@
         padding: 10px 14px;
         font-size: 13px;
     }
+
+    /* ── Issue-type scope switcher ───────────────────────────────── */
+    .sb-scope-bar {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+    }
+
+    .sb-scope-seg {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 3px;
+        box-shadow: var(--sh-xs);
+    }
+
+    .sb-scope-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        border: none;
+        background: transparent;
+        color: var(--txt-2);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 7px 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: background .12s, color .12s, box-shadow .12s;
+        white-space: nowrap;
+    }
+    .sb-scope-btn:hover { color: var(--txt-1); }
+    .sb-scope-btn.active {
+        background: var(--surface);
+        color: var(--txt-1);
+        box-shadow: var(--sh-sm);
+    }
+
+    .sb-scope-n {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--txt-3);
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 0 7px;
+        line-height: 17px;
+    }
+    .sb-scope-btn.active .sb-scope-n {
+        color: var(--primary);
+        background: var(--primary-light);
+        border-color: var(--primary-border);
+    }
+
+    .sb-scope-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+    }
+    .sb-scope-dot-bug      { background: var(--danger); }
+    .sb-scope-dot-redesign { background: #8b5cf6; }
+
+    .sb-scope-hint { font-size: 12px; color: var(--txt-3); }
+
+    /* ── KPI cards ───────────────────────────────────────────────── */
+    .sbk-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+        gap: 12px;
+    }
+
+    .sbk-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--r-md);
+        padding: 14px 16px 12px;
+        box-shadow: var(--sh-xs);
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+        transition: box-shadow .15s, border-color .15s;
+    }
+    .sbk-card:hover { box-shadow: var(--sh-sm); }
+
+    .sbk-head {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 10.5px;
+        font-weight: 700;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        margin-bottom: 8px;
+        white-space: nowrap;
+        overflow: hidden;
+    }
+    .sbk-title { overflow: hidden; text-overflow: ellipsis; }
+
+    .sbk-ico {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 12px;
+        flex-shrink: 0;
+        background: var(--surface-2);
+        color: var(--txt-3);
+    }
+
+    .sbk-value {
+        font-size: 25px;
+        font-weight: 750;
+        color: var(--txt-1);
+        line-height: 1.1;
+        letter-spacing: -0.3px;
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        flex-wrap: wrap;
+    }
+
+    .sbk-unit {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--txt-3);
+        letter-spacing: 0;
+    }
+
+    .sbk-meter {
+        height: 4px;
+        background: var(--surface-2);
+        border-radius: 2px;
+        overflow: hidden;
+        margin-top: 9px;
+    }
+    .sbk-meter-fill {
+        height: 100%;
+        border-radius: 2px;
+        background: var(--primary);
+        transition: width .3s ease;
+    }
+
+    .sbk-sub {
+        font-size: 11px;
+        color: var(--txt-3);
+        margin-top: 7px;
+        line-height: 1.45;
+    }
+
+    /* Tone variants: icon tint + meter color */
+    .sbk-success .sbk-ico        { background: var(--success-light, #dcfce7); color: var(--success); }
+    .sbk-success .sbk-meter-fill { background: var(--success); }
+    .sbk-warn .sbk-ico           { background: var(--warning-light, #fef3c7); color: var(--warning); }
+    .sbk-warn .sbk-meter-fill    { background: var(--warning); }
+    .sbk-danger .sbk-ico         { background: var(--danger-light); color: var(--danger); }
+    .sbk-danger .sbk-meter-fill  { background: var(--danger); }
+    .sbk-neutral .sbk-ico        { background: var(--primary-light); color: var(--primary); }
 
     /* ── Metric strip ────────────────────────────────────────────── */
     .sb-metrics {
@@ -2981,35 +3594,36 @@
         box-shadow: var(--sh-xs);
     }
 
-    /* ── Checkbox+date-range grid (top row) ──────────────────────── */
-    .sb-filter-grid {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 0;
-    }
+    /* ── Filter bar (searchable dropdowns + date ranges) ─────────── */
+    /* .sb-section sets overflow:hidden later in this sheet — needs the higher
+       specificity here so the dropdown panels can overflow the section. */
+    .sb-section.sb-filterbar { overflow: visible; }
 
-    .sb-filter-col {
+    .sb-filterbar-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 18px;
+        flex-wrap: wrap;
         padding: 12px 16px 14px;
-        border-right: 1px solid var(--border);
-        border-bottom: 1px solid var(--border);
-    }
-    /* no right border at the end of each row of 3 */
-    .sb-filter-col:nth-child(3n) { border-right: none; }
-    /* no bottom border on the last row */
-    .sb-filter-col:nth-last-child(-n+3) { border-bottom: none; }
-
-    .sb-filter-empty {
-        font-size: 12px;
-        color: var(--txt-3);
-        font-style: italic;
-        padding: 4px 0;
     }
 
-    .sb-filter-col-hdr {
+    .sb-fb-group {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+    }
+
+    .sb-fb-cap {
         display: flex;
         align-items: center;
         gap: 8px;
-        margin-bottom: 8px;
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--txt-3);
+        text-transform: uppercase;
+        letter-spacing: .07em;
+        white-space: nowrap;
     }
 
     .sb-filter-clear-link {
@@ -3020,25 +3634,10 @@
         cursor: pointer;
         padding: 0;
         font-weight: 500;
+        text-transform: none;
+        letter-spacing: 0;
     }
     .sb-filter-clear-link:hover { text-decoration: underline; }
-
-    .sb-filter-col-actions {
-        margin-left: auto;
-        display: flex;
-        align-items: center;
-        gap: 6px;
-    }
-    .sb-filter-action-sep { color: var(--txt-4); font-size: 11px; }
-
-    .sb-filter-count {
-        font-size: 10px;
-        font-weight: 700;
-        color: var(--primary);
-        background: var(--primary-light);
-        border-radius: 10px;
-        padding: 1px 6px;
-    }
 
     .sb-section-clear { margin-left: auto; }
 
@@ -3049,58 +3648,179 @@
         font-size: 11px;
         color: var(--txt-2);
         cursor: pointer;
-        margin: 2px 0 8px;
+        padding: 8px 12px 2px;
         user-select: none;
     }
-    .sb-person-mode input { cursor: pointer; }
+    .sb-person-mode input { cursor: pointer; accent-color: var(--primary); }
 
-    .sb-check-list {
-        display: flex;
-        flex-direction: column;
-        gap: 5px;
-        max-height: 150px;
-        overflow-y: auto;
+    /* Searchable multi-select dropdown (shared pattern with /support-bugs-slas) */
+    .sb-dd { position: relative; display: inline-block; }
+
+    .sb-dd-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--border);
+        background: var(--surface);
+        color: var(--txt-2);
+        font-family: inherit;
+        font-size: 12.5px;
+        font-weight: 500;
+        padding: 6px 12px;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: border-color .12s, background .12s, color .12s;
+        white-space: nowrap;
+        min-width: 128px;
+        justify-content: space-between;
+    }
+    .sb-dd-btn:hover:not(:disabled) { border-color: var(--primary-border); color: var(--txt-1); }
+    .sb-dd-btn:disabled { opacity: .5; cursor: not-allowed; }
+    .sb-dd-btn.active {
+        border-color: var(--primary-border);
+        background: var(--primary-light);
+        color: var(--primary);
+        font-weight: 600;
+    }
+    .sb-dd-caret { font-size: 10px; color: var(--txt-4); }
+    .sb-dd-btn.active .sb-dd-caret { color: var(--primary); }
+
+    .sb-dd-backdrop { position: fixed; inset: 0; z-index: 40; }
+
+    .sb-dd-panel {
+        position: absolute;
+        top: calc(100% + 5px);
+        left: 0;
+        z-index: 41;
+        width: 280px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        box-shadow: var(--sh-md);
+        overflow: hidden;
     }
 
-    .sb-check-item {
+    .sb-dd-head {
         display: flex;
         align-items: center;
-        gap: 7px;
+        gap: 8px;
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--border);
+        background: var(--surface-2);
+    }
+
+    .sb-dd-search {
+        flex: 1;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--txt-1);
+        font-family: inherit;
         font-size: 12px;
+        padding: 5px 9px;
+        outline: none;
+        min-width: 0;
+    }
+    .sb-dd-search:focus { border-color: var(--primary); }
+
+    .sb-dd-clear {
+        background: none;
+        border: none;
+        color: var(--primary);
+        font-size: 11.5px;
+        font-weight: 600;
+        cursor: pointer;
+        padding: 2px 4px;
+        white-space: nowrap;
+    }
+    .sb-dd-clear:hover { text-decoration: underline; }
+
+    .sb-dd-list { max-height: 280px; overflow-y: auto; padding: 4px 0; }
+
+    .sb-dd-opt {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 6px 12px;
+        font-size: 12.5px;
         color: var(--txt-2);
         cursor: pointer;
         user-select: none;
+        transition: background .1s;
+    }
+    .sb-dd-opt:hover { background: var(--surface-2); color: var(--txt-1); }
+    .sb-dd-opt input { cursor: pointer; accent-color: var(--primary); flex-shrink: 0; }
+
+    .sb-dd-opt-name {
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
         white-space: nowrap;
     }
-    .sb-check-item input[type="checkbox"] {
-        width: 13px;
-        height: 13px;
-        cursor: pointer;
-        accent-color: var(--primary);
+
+    .sb-dd-opt-n {
+        font-size: 10.5px;
+        font-weight: 700;
+        color: var(--txt-4);
+        background: var(--surface-2);
+        border-radius: 9px;
+        padding: 1px 7px;
         flex-shrink: 0;
     }
-    .sb-check-item:hover { color: var(--txt-1); }
+
+    /* Selected-filter chips echoed under the dropdown row */
+    .sb-fb-chips {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 0 16px 12px;
+    }
+
+    .sb-fb-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--primary-border);
+        background: var(--primary-light);
+        color: var(--primary);
+        font-family: inherit;
+        font-size: 11.5px;
+        font-weight: 600;
+        padding: 3px 10px;
+        border-radius: 20px;
+        cursor: pointer;
+        transition: opacity .12s;
+        line-height: 1.5;
+    }
+    .sb-fb-chip:hover { opacity: .75; }
+
+    .sb-fb-chip-cap {
+        font-size: 9.5px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        opacity: .65;
+    }
 
     .sb-date-range {
         display: flex;
-        flex-direction: column;
+        align-items: center;
         gap: 6px;
     }
 
     .sb-date-range-lbl {
-        font-size: 10px;
-        font-weight: 600;
+        font-size: 11px;
         color: var(--txt-4);
-        text-transform: uppercase;
-        letter-spacing: .06em;
-        margin-top: 4px;
+        flex-shrink: 0;
     }
-    .sb-date-range-lbl:first-child { margin-top: 0; }
 
     .sb-filter-date {
         font-size: 12px;
         padding: 4px 8px;
-        height: 28px;
+        height: 30px;
+        width: 124px;
     }
 
     /* ── Chip-filter row (bottom row) ────────────────────────────── */
@@ -3203,7 +3923,8 @@
         border-bottom: 1px solid var(--border);
         transition: background 0.1s;
     }
-    .sb-section-header:hover { background: #e9ecef; }
+    .sb-section-header:hover { filter: brightness(0.98); }
+    .sb-filterbar > .sb-section-header { border-radius: var(--r-md) var(--r-md) 0 0; }
 
     .sb-section-toggle { font-size: 11px; color: var(--txt-4); }
 
@@ -3349,6 +4070,9 @@
         background: var(--surface-2);
         border-bottom: 2px solid var(--border);
         white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 2;
     }
 
     .sb-th-pri      { width: 28px; text-align: center; }
@@ -3373,18 +4097,35 @@
         color: var(--txt-2);
     }
 
-    .sb-row:hover .sb-td { background: #f8fafc; }
-    .sb-row-expanded .sb-td { background: #eff6ff; }
+    .sb-row:hover .sb-td { background: var(--surface-2); }
+    .sb-row-expanded .sb-td { background: var(--primary-light); }
 
     .sb-td-key { font-family: monospace; font-size: 12px; }
     .sb-td-title { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .sb-td-assignee { font-size: 12px; }
     .sb-td-labels   { font-size: 11px; }
     .sb-label-chip  { display: inline-block; padding: 1px 6px; margin: 1px 2px; border-radius: 10px; background: var(--surface-2); border: 1px solid var(--border); color: var(--txt-2); white-space: nowrap; }
+    .sb-lk-chip     { display: inline-block; padding: 1px 8px; margin: 1px 2px; border-radius: 10px; background: var(--primary-light); border: 1px solid var(--primary-border); color: var(--primary); font-size: 11px; font-weight: 600; white-space: nowrap; text-decoration: none; }
+    .sb-lk-chip:hover { filter: brightness(0.96); text-decoration: none; }
+    /* JSSUPPORT Linked tab — dropdown panel must overflow the section (same trick as the filter bar) */
+    .sb-section.sb-lk-section { overflow: visible; }
+    .sb-section.sb-lk-section > .sb-section-header { border-radius: var(--r-md) var(--r-md) 0 0; }
+    .sb-lk-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        padding: 10px 16px;
+        border-bottom: 1px solid var(--border);
+    }
+    .sb-lk-toolbar-count { margin-left: auto; font-size: 12px; color: var(--txt-3); white-space: nowrap; }
+
+    .sb-lk-author-row  { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0 10px; }
+    .sb-lk-author-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 4px; border-radius: 20px; background: var(--surface-2); border: 1px solid var(--border); color: var(--txt-2); font-size: 11.5px; white-space: nowrap; }
     .sb-td-est { text-align: right; font-size: 12px; color: var(--txt-3); white-space: nowrap; }
     .sb-td-pct { text-align: center; }
     .sb-td-activity { font-size: 12px; color: var(--txt-2); white-space: nowrap; }
-    .sb-td-stale { font-size: 12px; background: #fee2e2 !important; color: #991b1b; white-space: nowrap; }
+    .sb-td-stale { font-size: 12px; background: var(--danger-light) !important; color: var(--danger); white-space: nowrap; }
     .sb-td-expand { text-align: center; }
 
     .sb-sprint-time { color: var(--primary); font-weight: 600; }
@@ -3834,10 +4575,33 @@
     /* ── Empty states ────────────────────────────────────────────── */
     .sb-empty-state {
         text-align: center;
-        padding: 48px 24px;
+        padding: 56px 24px;
         color: var(--txt-3);
         font-size: 14px;
+        background: var(--surface);
+        border: 1px dashed var(--border);
+        border-radius: var(--r-md);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
     }
+
+    .sb-empty-state-ico {
+        width: 44px;
+        height: 44px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        background: var(--primary-light);
+        color: var(--primary);
+        margin-bottom: 6px;
+    }
+
+    .sb-empty-state-title { font-size: 15px; font-weight: 600; color: var(--txt-1); }
+    .sb-empty-state-hint  { font-size: 13px; color: var(--txt-3); max-width: 460px; }
 
     .sb-empty {
         text-align: center;
@@ -4354,5 +5118,22 @@
     .sb-chart-canvas-wrap {
         position: relative;
         height: 250px;
+    }
+
+    /* ── Responsive ──────────────────────────────────────────────── */
+    @@media (max-width: 1100px) {
+        .sb-charts-grid { grid-template-columns: 1fr 1fr; }
+        .sb-age-buckets { grid-template-columns: repeat(2, 1fr); }
+        .sb-load-controls { margin-left: 0; }
+    }
+
+    @@media (max-width: 720px) {
+        .sb-charts-grid { grid-template-columns: 1fr; }
+        .sb-age-buckets { grid-template-columns: 1fr; }
+        .sbk-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+        .sb-scope-bar { align-items: flex-start; flex-direction: column; gap: 8px; }
+        .sb-filterbar-row { gap: 12px; }
+        .sb-jss-textarea { width: 100%; }
+        .sb-jss-input-row { flex-direction: column; }
     }
 </style>

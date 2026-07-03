@@ -174,6 +174,14 @@
                 <div class="wh2-filter-col">
                     <div class="wh2-filter-head">
                         <span class="wh2-filter-title"><i class="bi bi-people"></i> Members</span>
+                        <label class="wh2-roster-toggle" title="Show only people who exist in the Team Roster (matched by Jira account, email or name). Filters members, epics, charts and tables.">
+                            <input type="checkbox" checked="@_rosterOnly" @onchange="e => ToggleRosterOnly((bool)e.Value!)" />
+                            <span>Roster only</span>
+                            @if (_rosterOnly)
+                            {
+                                <span class="wh2-roster-toggle-n">@RosterAuthorSet.Count matched</span>
+                            }
+                        </label>
                         <div class="wh2-filter-actions">
                             <button class="wh2-link-btn" @onclick="SelectAllMembers">All</button>
                             <span class="wh2-dot-sep">·</span>
@@ -250,9 +258,9 @@
             <div class="v2-card">
                 <div class="v2-section-title"><i class="bi bi-bar-chart-line" style="color:var(--v2-brand)"></i>Logged vs Capacity per Member</div>
                 <div class="wh2-util-key">
-                    <span class="wh2-util-key-item"><span class="wh2-util-dot" style="background:#16a34a"></span>&lt; 60% capacity</span>
+                    <span class="wh2-util-key-item"><span class="wh2-util-dot" style="background:#16a34a"></span>≥ 80% capacity</span>
                     <span class="wh2-util-key-item"><span class="wh2-util-dot" style="background:#f59e0b"></span>60–80%</span>
-                    <span class="wh2-util-key-item"><span class="wh2-util-dot" style="background:#dc2626"></span>≥ 80%</span>
+                    <span class="wh2-util-key-item"><span class="wh2-util-dot" style="background:#dc2626"></span>&lt; 60%</span>
                 </div>
                 <div style="height:@(Math.Clamp(ActiveMemberCount * 30, 220, 520))px;position:relative">
                     <canvas id="chart-hours-member"></canvas>
@@ -645,6 +653,9 @@
     .wh2-dot-sep        { font-size: 10px; color: var(--v2-ink-4); }
     .wh2-filter-count   { font-size: 11px; color: var(--v2-ink-4); margin-top: 8px; }
     .wh2-chip-search    { width: 100%; margin-bottom: 8px; }
+    .wh2-roster-toggle  { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 600; color: var(--v2-ink-2); cursor: pointer; user-select: none; margin: 0 auto 0 12px; }
+    .wh2-roster-toggle input { cursor: pointer; accent-color: var(--v2-brand); }
+    .wh2-roster-toggle-n { font-size: 10px; font-weight: 700; color: var(--v2-brand); background: color-mix(in srgb, var(--v2-brand) 12%, transparent); border-radius: 8px; padding: 1px 6px; }
 
     /* chip list */
     .wh2-chip-list { display: flex; flex-wrap: wrap; gap: 4px; max-height: 120px; overflow-y: auto; padding: 2px 0 4px; }
@@ -812,6 +823,59 @@
     private decimal HoursPerDayFor(string author) =>
         _roster.FirstOrDefault(r => AuthorMatchesMember(author, r.Name))?.HoursPerDay ?? 6m;
 
+    // ── Roster-only filter ───────────────────────────────────────────────────────
+    private bool _rosterOnly;
+    private HashSet<string>? _rosterAuthorCache;
+
+    // Display names (worklog authors + assignees) that resolve to an ACTIVE roster member.
+    // Worklog authors match by Jira accountId first, then email, then the name heuristic;
+    // assignees carry no Jira identity on this page, so they match by name only.
+    private HashSet<string> RosterAuthorSet
+    {
+        get
+        {
+            if (_rosterAuthorCache is not null) return _rosterAuthorCache;
+
+            var active = _roster.Where(r => r.Active).ToList();
+            var accountIds = active.Where(r => !string.IsNullOrWhiteSpace(r.JiraAccountId))
+                                   .Select(r => r.JiraAccountId!.Trim())
+                                   .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var emails = active.Where(r => !string.IsNullOrWhiteSpace(r.JiraEmail))
+                               .Select(r => r.JiraEmail!.Trim())
+                               .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var wl in SprintReports.SelectMany(r => r.Issues).SelectMany(i => i.Worklogs))
+            {
+                if (string.IsNullOrEmpty(wl.Author) || set.Contains(wl.Author)) continue;
+                if ((!string.IsNullOrEmpty(wl.AuthorAccountId) && accountIds.Contains(wl.AuthorAccountId)) ||
+                    (!string.IsNullOrEmpty(wl.AuthorEmail)     && emails.Contains(wl.AuthorEmail)) ||
+                    active.Any(r => AuthorMatchesMember(wl.Author, r.Name)))
+                {
+                    set.Add(wl.Author);
+                }
+            }
+            foreach (var assignee in SprintReports.SelectMany(r => r.Issues)
+                         .Select(i => i.Assignee).Where(a => !string.IsNullOrEmpty(a)).Distinct())
+            {
+                if (!set.Contains(assignee) && active.Any(r => AuthorMatchesMember(assignee, r.Name)))
+                    set.Add(assignee);
+            }
+            return _rosterAuthorCache = set;
+        }
+    }
+
+    private bool IsRosterPerson(string? name) =>
+        !string.IsNullOrEmpty(name) && RosterAuthorSet.Contains(name);
+
+    private void ToggleRosterOnly(bool on)
+    {
+        _rosterOnly = on;
+        if (on)
+            SelectedMembers.RemoveWhere(m => !RosterAuthorSet.Contains(m));
+        OnFilterChanged();
+    }
+
     // ── Filters ────────────────────────────────────────────────────────────────
     private HashSet<string> SelectedMembers = [];
     private HashSet<string> SelectedEpics   = [];
@@ -824,6 +888,7 @@
         .SelectMany(i => i.Worklogs)
         .Select(w => w.Author)
         .Where(a => !string.IsNullOrEmpty(a))
+        .Where(a => !_rosterOnly || RosterAuthorSet.Contains(a))
         .Distinct().Order().ToList();
 
     private List<(string Key, string Name)> AllEpics => SprintReports
@@ -864,6 +929,7 @@
     private List<WorklogRow> FilteredWorklogs =>
         AllWorklogs.Where(w =>
             !string.IsNullOrEmpty(w.Author) &&
+            (!_rosterOnly || RosterAuthorSet.Contains(w.Author)) &&
             (SelectedMembers.Count == 0 || SelectedMembers.Contains(w.Author)) &&
             (SelectedEpics.Count == 0   || SelectedEpics.Contains(w.EpicKey)) &&
             (!DateFrom.HasValue || w.Date >= DateFrom.Value.Date) &&
@@ -879,6 +945,7 @@
                 .SelectMany(r => r.Issues.Select(i => (Issue: i, SprintName: r.SprintName)))
                 .Where(x => x.Issue.StatusCategoryKey == "done" && IsFeatureIssue(x.Issue))
                 .Where(x => SelectedEpics.Count == 0 || SelectedEpics.Contains(x.Issue.EpicKey))
+                .Where(x => !_rosterOnly || IsRosterPerson(x.Issue.Assignee))
                 .Where(x => SelectedMembers.Count == 0 || SelectedMembers.Contains(x.Issue.Assignee))
                 .DistinctBy(x => x.Issue.Key)
                 .Select(x => new DoneFeatureRow(
@@ -1133,6 +1200,7 @@
 
             ParsedSprintIds = ids;
             SprintReports   = reports;
+            _rosterAuthorCache = null; // roster + worklogs changed — rebuild the match set lazily
 
             // Bound the view to the sprint window so capacity/heatmap aren't skewed by
             // stale worklogs logged on these issues long before the sprint. Users can clear it.
@@ -1206,10 +1274,10 @@
             .OrderByDescending(m => m.Hours).ToList();
         if (byMember.Count == 0) return;
 
-        // Colour each Logged bar by utilisation against the 60% target:
-        // green < 60% (within target), amber 60–80%, red ≥ 80%.
-        static string UtilFill(double u)   => u < 60 ? "rgba(22,163,74,0.85)"  : u < 80 ? "rgba(245,158,11,0.85)" : "rgba(220,38,38,0.85)";
-        static string UtilStroke(double u) => u < 60 ? "rgba(21,128,61,1)"     : u < 80 ? "rgba(180,83,9,1)"     : "rgba(185,28,28,1)";
+        // Colour each Logged bar by utilisation: green ≥ 80% (well utilised),
+        // amber 60–80%, red < 60% (under-utilised).
+        static string UtilFill(double u)   => u >= 80 ? "rgba(22,163,74,0.85)"  : u >= 60 ? "rgba(245,158,11,0.85)" : "rgba(220,38,38,0.85)";
+        static string UtilStroke(double u) => u >= 80 ? "rgba(21,128,61,1)"     : u >= 60 ? "rgba(180,83,9,1)"     : "rgba(185,28,28,1)";
 
         await JS.InvokeVoidAsync("renderChart", "chart-hours-member", new
         {

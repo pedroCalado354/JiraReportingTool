@@ -209,6 +209,9 @@ public class SprintIssue
     /// <summary>"JS Project[Radio Buttons]" field — Rentway Legacy / Rentway Pro / Integrations. Not persisted.</summary>
     [NotMapped] public string    Product         { get; set; } = "";
     [NotMapped] public DateTime? PrioListDate    { get; set; }
+    /// <summary>Keys of all issues linked via issue links (inward + outward, any link type).
+    /// Only populated on API paths that request the "issuelinks" field. Not persisted.</summary>
+    [NotMapped] public List<string> LinkedIssueKeys { get; set; } = new();
     /// <summary>First time the issue transitioned into the "Dev Ready" status (from changelog). Not persisted.</summary>
     [NotMapped] public DateTime? DevReadyDate    { get; set; }
     /// <summary>First time the issue transitioned into the "QA Ready" status (from changelog). Not persisted.</summary>

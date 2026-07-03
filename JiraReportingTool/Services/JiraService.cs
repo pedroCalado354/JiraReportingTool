@@ -597,6 +597,21 @@ public class JiraService : IJiraService
                     .Where(l => !string.IsNullOrEmpty(l))
                     .ToList();
 
+            // Issue links (inward + outward, any link type) — only present when the
+            // "issuelinks" field is requested.
+            if (fields.TryGetProperty("issuelinks", out var linksEl) && linksEl.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var link in linksEl.EnumerateArray())
+                {
+                    if (link.TryGetProperty("inwardIssue", out var inw) &&
+                        inw.TryGetProperty("key", out var inwKey) && !string.IsNullOrEmpty(inwKey.GetString()))
+                        issue.LinkedIssueKeys.Add(inwKey.GetString()!);
+                    if (link.TryGetProperty("outwardIssue", out var outw) &&
+                        outw.TryGetProperty("key", out var outwKey) && !string.IsNullOrEmpty(outwKey.GetString()))
+                        issue.LinkedIssueKeys.Add(outwKey.GetString()!);
+                }
+            }
+
             // Customers Jimpisoft dropdown (dynamic field ID)
             if (customerFieldId != null &&
                 fields.TryGetProperty(customerFieldId, out var custEl) &&
@@ -958,6 +973,23 @@ public class JiraService : IJiraService
         var jql = Uri.EscapeDataString(rawJql);
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, _) = ParseSprintReport(json, "", customerFieldId);
+        return report;
+    }
+
+    /// <summary>
+    /// Bugs created inside the given window (project JM), with <see cref="SprintIssue.LinkedIssueKeys"/>
+    /// populated so callers can filter by linked issues (e.g. bugs related to JSSUPPORT tickets). Not cached.
+    /// </summary>
+    public async Task<SprintReport> GetBugsWithLinksAsync(DateOnly createdFrom, DateOnly createdTo)
+    {
+        var customerFieldId = await GetCustomerFieldIdAsync();
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,created,duedate,labels,issuelinks"
+            + (customerFieldId != null ? $",{customerFieldId}" : "");
+        var jql = Uri.EscapeDataString(
+            $"project = JM AND issuetype = Bug AND createdDate >= \"{createdFrom:yyyy-MM-dd}\" AND createdDate <= \"{createdTo:yyyy-MM-dd}\" ORDER BY created DESC");
+        var json = await FetchAllPagesAsync(jql, fields);
+        var (report, truncated) = ParseSprintReport(json, "", customerFieldId);
+        await FetchMissingWorklogsAsync(report, truncated);
         return report;
     }
 

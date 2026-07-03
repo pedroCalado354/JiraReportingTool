@@ -188,40 +188,6 @@
             }
         </div>
 
-        <!-- ═══ HEALTH GAUGE ════════════════════════════════════════════════ -->
-        <div class="v2-gauge">
-            <div class="v2-gauge-score @($"v2-gauge-score-{HealthBand}")">@HealthScore</div>
-            <div class="v2-gauge-mid">
-                <div class="v2-gauge-label">Sprint Health Score</div>
-                <div class="v2-gauge-track">
-                    <div class="v2-gauge-marker" style="left:@HealthScore%;"></div>
-                </div>
-                <div class="v2-gauge-desc">
-                    @HealthMessage
-                </div>
-            </div>
-            <div class="v2-gauge-side">
-                <div class="v2-gauge-side-stat">
-                    <div class="v2-gauge-side-val">@((int)Report.SprintProgressPct)%</div>
-                    <div class="v2-gauge-side-lbl">Time elapsed</div>
-                </div>
-                <div class="v2-gauge-side-stat">
-                    <div class="v2-gauge-side-val @(CompletionBehind ? "v2-text-danger" : "v2-text-success")">
-                        @((int)CompletionPct)%
-                    </div>
-                    <div class="v2-gauge-side-lbl">Work done</div>
-                </div>
-                <div class="v2-gauge-side-stat">
-                    <div class="v2-gauge-side-val @(IsOverCapacity ? "v2-text-danger" : "")">@($"{TotalRemainingHours:F0}h")</div>
-                    <div class="v2-gauge-side-lbl">Remaining</div>
-                </div>
-                <div class="v2-gauge-side-stat">
-                    <div class="v2-gauge-side-val">@($"{CapacityHours:F0}h")</div>
-                    <div class="v2-gauge-side-lbl">Capacity</div>
-                </div>
-            </div>
-        </div>
-
         <!-- ═══ KPI GRID — DELIVERY WORK (all non-bug issue types) ══════════ -->
         <div class="v2-kpi-section-head">
             <div class="v2-section-title" style="margin-bottom:0"><i class="bi bi-check2-square"></i>Delivery Work <span class="v2-section-note">Task issue type only</span></div>
@@ -232,6 +198,45 @@
                 }
             </div>
         </div>
+
+        <!-- ═══ HEALTH GAUGE — DELIVERY WORK ════════════════════════════════ -->
+        <div class="v2-gauge">
+            <div class="v2-gauge-score @($"v2-gauge-score-{TaskHealthBand}")">@TaskHealthScore</div>
+            <div class="v2-gauge-mid">
+                <div class="v2-gauge-label">Sprint Health Score · Delivery Work</div>
+                <div class="v2-gauge-track">
+                    <div class="v2-gauge-marker" style="left:@TaskHealthScore%;"></div>
+                </div>
+                <div class="v2-gauge-desc">
+                    @TaskHealthMessage@(TaskPlanOverCommit ? $" Planned work exceeds full-sprint capacity by {(TaskPlannedHours - TaskFullSprintCapacityHours):F0}h." : "")
+                </div>
+            </div>
+            <div class="v2-gauge-side">
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@((int)Report.SprintProgressPct)%</div>
+                    <div class="v2-gauge-side-lbl">Time elapsed</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(TaskCompletionBehind ? "v2-text-danger" : "v2-text-success")">
+                        @((int)TaskCompletionPct)%
+                    </div>
+                    <div class="v2-gauge-side-lbl">Work done</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(TaskPlanOverCommit ? "v2-text-danger" : "")">@($"{TaskPlannedHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Planned</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(TaskOverCapacity ? "v2-text-danger" : "")">@($"{TaskRemainingHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Remaining</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@($"{TaskCapacityHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Capacity</div>
+                </div>
+            </div>
+        </div>
+
         <div class="v2-kpi-grid">
             <!-- Completion (tasks) -->
             <div class="v2-kpi @(TaskCompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
@@ -245,14 +250,19 @@
                 <div class="v2-kpi-sub" style="margin-top:4px">@($"{TaskDoneHours:F0}h") logged on done · @($"{TaskDoneAndInReviewHours:F0}h") proj. incl. in review</div>
             </div>
 
-            <!-- Sprint Health (tasks) -->
-            <div class="v2-kpi v2-kpi-@TaskHealthBand">
-                <div class="v2-kpi-head"><i class="bi bi-heart-pulse"></i>Sprint Health</div>
-                <div class="v2-kpi-value @(TaskHealthBand == "success" ? "v2-text-success" : TaskHealthBand == "danger" ? "v2-text-danger" : "")">@TaskHealthScore<span class="v2-kpi-of">/ 100</span></div>
+            <!-- Planned Tasks (tasks) -->
+            @{
+                var taskPlanPct = TaskFullSprintCapacityHours > 0 ? (int)(TaskPlannedHours / TaskFullSprintCapacityHours * 100) : 0;
+                var taskPlanBand = !TaskPlanOverCommit ? "success" : TaskPlannedHours <= TaskFullSprintCapacityHours * 1.15 ? "warn" : "danger";
+            }
+            <div class="v2-kpi v2-kpi-clickable v2-kpi-@taskPlanBand" @onclick='() => OpenTeamTime("Planned", true)' title="Click for per-team planned vs capacity">
+                <div class="v2-kpi-head"><i class="bi bi-clipboard-data"></i>Planned Tasks</div>
+                <div class="v2-kpi-value">@($"{TaskPlannedHours:F0}h")<span class="v2-kpi-of">of @($"{TaskFullSprintCapacityHours:F0}h") capacity</span></div>
                 <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill v2-bar-fill-@TaskHealthBand" style="width:@TaskHealthScore%"></div>
+                    <div class="v2-bar-fill v2-bar-fill-@taskPlanBand" style="width:@Math.Min(taskPlanPct, 100)%"></div>
                 </div>
-                <div class="v2-kpi-sub">@TaskHealthMessage</div>
+                <div class="v2-kpi-sub">sum of original estimates · @taskPlanPct% of sprint capacity</div>
+                <div class="v2-kpi-sub" style="margin-top:4px">@TaskEstimatedCount of @TaskOnlyIssues.Count estimated · @TaskUnestimatedCount unestimated</div>
             </div>
 
             <!-- Capacity (tasks) -->
@@ -264,6 +274,7 @@
                          style="width:@(TaskCapacityHours > 0 ? Math.Min(TaskRemainingHours / TaskCapacityHours * 100, 100) : 0)%"></div>
                 </div>
                 <div class="v2-kpi-sub">@(TaskOverCapacity ? $"⚠ {(TaskRemainingHours - TaskCapacityHours):F0}h over capacity" : $"+{(TaskCapacityHours - TaskRemainingHours):F0}h buffer")</div>
+                <div class="v2-kpi-sub" style="margin-top:4px">planned @($"{TaskPlannedHours:F0}h") of @($"{TaskFullSprintCapacityHours:F0}h") full-sprint capacity</div>
             </div>
 
             <!-- Burn Rate (tasks) -->
@@ -344,6 +355,45 @@
 
         <!-- ═══ KPI GRID — ALL ISSUE TYPES ══════════════════════════════════ -->
         <div class="v2-section-title"><i class="bi bi-collection"></i>All Issue Types <span class="v2-section-note">Every issue in the sprint</span></div>
+
+        <!-- ═══ HEALTH GAUGE — ALL ISSUE TYPES ══════════════════════════════ -->
+        <div class="v2-gauge">
+            <div class="v2-gauge-score @($"v2-gauge-score-{HealthBand}")">@HealthScore</div>
+            <div class="v2-gauge-mid">
+                <div class="v2-gauge-label">Sprint Health Score · All Issue Types</div>
+                <div class="v2-gauge-track">
+                    <div class="v2-gauge-marker" style="left:@HealthScore%;"></div>
+                </div>
+                <div class="v2-gauge-desc">
+                    @HealthMessage@(PlanOverCommit ? $" Planned work exceeds full-sprint capacity by {(PlannedHours - FullSprintCapacityHours):F0}h." : "")
+                </div>
+            </div>
+            <div class="v2-gauge-side">
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@((int)Report.SprintProgressPct)%</div>
+                    <div class="v2-gauge-side-lbl">Time elapsed</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(CompletionBehind ? "v2-text-danger" : "v2-text-success")">
+                        @((int)CompletionPct)%
+                    </div>
+                    <div class="v2-gauge-side-lbl">Work done</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(PlanOverCommit ? "v2-text-danger" : "")">@($"{PlannedHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Planned</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(IsOverCapacity ? "v2-text-danger" : "")">@($"{TotalRemainingHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Remaining</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@($"{CapacityHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Capacity</div>
+                </div>
+            </div>
+        </div>
+
         <div class="v2-kpi-grid">
             <!-- Completion (all) -->
             <div class="v2-kpi @(CompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
@@ -357,14 +407,19 @@
                 <div class="v2-kpi-sub" style="margin-top:4px">@($"{DoneHours:F0}h") logged on done · @($"{DoneAndInReviewHours:F0}h") proj. incl. in review</div>
             </div>
 
-            <!-- Sprint Health (all) -->
-            <div class="v2-kpi v2-kpi-@HealthBand">
-                <div class="v2-kpi-head"><i class="bi bi-heart-pulse"></i>Sprint Health</div>
-                <div class="v2-kpi-value @(HealthBand == "success" ? "v2-text-success" : HealthBand == "danger" ? "v2-text-danger" : "")">@HealthScore<span class="v2-kpi-of">/ 100</span></div>
+            <!-- Planned Work (all) -->
+            @{
+                var planPct = FullSprintCapacityHours > 0 ? (int)(PlannedHours / FullSprintCapacityHours * 100) : 0;
+                var planBand = !PlanOverCommit ? "success" : PlannedHours <= FullSprintCapacityHours * 1.15 ? "warn" : "danger";
+            }
+            <div class="v2-kpi v2-kpi-clickable v2-kpi-@planBand" @onclick='() => OpenTeamTime("Planned", false)' title="Click for per-team planned vs capacity">
+                <div class="v2-kpi-head"><i class="bi bi-clipboard-data"></i>Planned Work</div>
+                <div class="v2-kpi-value">@($"{PlannedHours:F0}h")<span class="v2-kpi-of">of @($"{FullSprintCapacityHours:F0}h") capacity</span></div>
                 <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill v2-bar-fill-@HealthBand" style="width:@HealthScore%"></div>
+                    <div class="v2-bar-fill v2-bar-fill-@planBand" style="width:@Math.Min(planPct, 100)%"></div>
                 </div>
-                <div class="v2-kpi-sub">@HealthMessage</div>
+                <div class="v2-kpi-sub">sum of original estimates · @planPct% of sprint capacity</div>
+                <div class="v2-kpi-sub" style="margin-top:4px">@EstimatedCount of @ActiveIssues.Count estimated · @UnestimatedCount unestimated</div>
             </div>
 
             <!-- Story Points (all) -->
@@ -389,6 +444,7 @@
                          style="width:@(CapacityHours > 0 ? Math.Min(TotalRemainingHours / CapacityHours * 100, 100) : 0)%"></div>
                 </div>
                 <div class="v2-kpi-sub">@(IsOverCapacity ? $"⚠ {(TotalRemainingHours - CapacityHours):F0}h over capacity" : $"+{(CapacityHours - TotalRemainingHours):F0}h buffer")</div>
+                <div class="v2-kpi-sub" style="margin-top:4px">planned @($"{PlannedHours:F0}h") of @($"{FullSprintCapacityHours:F0}h") full-sprint capacity</div>
             </div>
 
             <!-- Burn Rate (all) -->
@@ -3022,17 +3078,24 @@
             .Select(t => (Team: t, Rows: rows.Where(r => CanonTeam(r.Team) == t).ToList()))
             .Where(g => g.Rows.Count > 0)
             .ToList();
-        var shown     = groups.SelectMany(g => g.Rows).ToList();
-        var totLogged = shown.Sum(r => r.LoggedSprint);
-        var totCap    = shown.Sum(r => r.Capacity);
-        var totRem    = shown.Sum(r => r.RemainingHours);
+        var shown       = groups.SelectMany(g => g.Rows).ToList();
+        var ttTotalDays = Report?.TotalSprintDays ?? 10;
+        var ttElapsed   = Math.Max(1, Report?.ElapsedDays ?? 1);
+        var scopeLabel  = _teamTimeTaskOnly ? "Delivery work (Tasks only)" : "All issue types";
+        var metricSub   = _teamTimeCard switch
+        {
+            "Planned"   => $"planned = sum of original estimates on each member's assigned issues · full-sprint capacity = roster hours/day × {ttTotalDays} sprint days",
+            "Capacity"  => $"capacity = roster hours/day × {EffectiveDaysRemaining} day{(EffectiveDaysRemaining == 1 ? "" : "s")} left · remaining = open issues' remaining estimates · load = remaining vs capacity",
+            "Burn Rate" => $"avg/day = hours logged inside the sprint window ÷ {ttElapsed} elapsed day{(ttElapsed == 1 ? "" : "s")} · projected = avg/day × {ttTotalDays} sprint days",
+            _           => "hours logged inside the sprint window, matched to roster members by Jira account / email / name"
+        };
         <div class="v2-modal-overlay" @onclick="CloseTeamTime">
             <div class="v2-modal" @onclick:stopPropagation="true">
                 <div class="v2-modal-head">
                     <div>
-                        <div class="v2-modal-title"><i class="bi bi-people"></i> Time spent by team</div>
+                        <div class="v2-modal-title"><i class="bi bi-people"></i> @TeamTimeTitle</div>
                         <div class="v2-modal-sub">
-                            opened from <strong>@_teamTimeCard</strong> · <strong>@(_teamTimeTaskOnly ? "Delivery work (Tasks only)" : "All issue types")</strong> · totals grouped by team (@string.Join(" · ", TeamTimeTeams)) · hours logged inside the sprint window · capacity = roster hours/day × @EffectiveDaysRemaining day@(EffectiveDaysRemaining == 1 ? "" : "s") left
+                            <strong>@scopeLabel</strong> · grouped by team (@string.Join(" · ", TeamTimeTeams)) · @metricSub
                         </div>
                     </div>
                     <button class="v2-modal-close" @onclick="CloseTeamTime" title="Close">&times;</button>
@@ -3046,61 +3109,189 @@
                     {
                         <div class="v2-table-wrap" style="margin:0">
                             <table class="v2-table">
-                                <thead><tr>
-                                    <th>Team</th>
-                                    <th class="v2-table-num @Emph("Time Spent")">Logged (sprint)</th>
-                                    <th class="v2-table-num @Emph("Burn Rate")">Avg / day</th>
-                                    <th class="v2-table-num @Emph("Capacity")">Capacity</th>
-                                    <th class="@Emph("Capacity")">Utilization</th>
-                                    <th class="v2-table-num">Tasks</th>
-                                    <th class="v2-table-num">Done</th>
-                                    <th class="v2-table-num">Remaining</th>
-                                </tr></thead>
+                                <thead>
+                                    @switch (_teamTimeCard)
+                                    {
+                                        case "Planned":
+                                            <tr>
+                                                <th>Team</th>
+                                                <th class="v2-table-num">Planned</th>
+                                                <th class="v2-table-num">Sprint capacity</th>
+                                                <th>Plan load</th>
+                                                <th class="v2-table-num">Tasks</th>
+                                                <th class="v2-table-num">Done</th>
+                                            </tr>
+                                            break;
+                                        case "Capacity":
+                                            <tr>
+                                                <th>Team</th>
+                                                <th class="v2-table-num">Capacity (left)</th>
+                                                <th class="v2-table-num">Remaining</th>
+                                                <th>Load</th>
+                                                <th class="v2-table-num">Buffer</th>
+                                                <th class="v2-table-num">Tasks</th>
+                                                <th class="v2-table-num">Done</th>
+                                            </tr>
+                                            break;
+                                        case "Burn Rate":
+                                            <tr>
+                                                <th>Team</th>
+                                                <th class="v2-table-num">Logged (sprint)</th>
+                                                <th class="v2-table-num">Avg / day</th>
+                                                <th class="v2-table-num">Projected by end</th>
+                                                <th class="v2-table-num">Tasks</th>
+                                                <th class="v2-table-num">Done</th>
+                                            </tr>
+                                            break;
+                                        default:
+                                            <tr>
+                                                <th>Team</th>
+                                                <th class="v2-table-num">Logged (sprint)</th>
+                                                <th class="v2-table-num">on Done</th>
+                                                <th class="v2-table-num">Remaining</th>
+                                                <th class="v2-table-num">Tasks</th>
+                                                <th class="v2-table-num">Done</th>
+                                            </tr>
+                                            break;
+                                    }
+                                </thead>
                                 <tbody>
                                     @foreach (var g in groups)
                                     {
-                                        var gLogged = g.Rows.Sum(x => x.LoggedSprint);
-                                        var gAvg    = g.Rows.Sum(x => x.AvgPerDay);
-                                        var gCap    = g.Rows.Sum(x => x.Capacity);
-                                        var gRem    = g.Rows.Sum(x => x.RemainingHours);
-                                        var gTasks  = g.Rows.Sum(x => x.Tasks);
-                                        var gDone   = g.Rows.Sum(x => x.Done);
-                                        var util    = gCap > 0 ? gLogged / gCap * 100 : 0;
-                                        var over    = gCap > 0 && gLogged > gCap;
-                                        var status  = over ? "danger" : (util > 80 ? "warn" : "success");
-                                        <tr>
-                                            <td>
-                                                <span style="font-weight:700">@g.Team</span>
-                                                <span class="v2-hint" style="font-weight:400">· @g.Rows.Count member@(g.Rows.Count == 1 ? "" : "s")</span>
-                                            </td>
-                                            <td class="v2-table-num" style="font-weight:700">@($"{gLogged:F1}h")</td>
-                                            <td class="v2-table-num">@($"{gAvg:F1}h")</td>
-                                            <td class="v2-table-num">@($"{gCap:F0}h")</td>
-                                            <td>
-                                                <div style="display:flex;align-items:center;gap:8px;min-width:150px">
-                                                    <div class="v2-bar" style="flex:1;height:6px">
-                                                        <div class="v2-bar-fill v2-bar-fill-@status" style="width:@($"{Math.Min(util, 100):F0}")%"></div>
-                                                    </div>
-                                                    <span class="v2-hint" style="white-space:nowrap;@(over ? "color:var(--v2-danger)" : "")">@($"{util:F0}%")</span>
-                                                </div>
-                                            </td>
-                                            <td class="v2-table-num">@gTasks</td>
-                                            <td class="v2-table-num" style="color:var(--v2-success)">@gDone</td>
-                                            <td class="v2-table-num">@($"{gRem:F0}h")</td>
-                                        </tr>
+                                        var gLogged  = g.Rows.Sum(x => x.LoggedSprint);
+                                        var gAvg     = g.Rows.Sum(x => x.AvgPerDay);
+                                        var gCap     = g.Rows.Sum(x => x.Capacity);
+                                        var gRem     = g.Rows.Sum(x => x.RemainingHours);
+                                        var gTasks   = g.Rows.Sum(x => x.Tasks);
+                                        var gDone    = g.Rows.Sum(x => x.Done);
+                                        var gPlanned = g.Rows.Sum(x => x.PlannedHours);
+                                        var gFullCap = g.Rows.Sum(x => x.FullCapacity);
+                                        var gOnDone  = g.Rows.Sum(x => x.LoggedOnDone);
+                                        var teamCell = g.Team;
+                                        var teamN    = g.Rows.Count;
+
+                                        @switch (_teamTimeCard)
+                                        {
+                                            case "Planned":
+                                                var planLoad = gFullCap > 0 ? gPlanned / gFullCap * 100 : 0;
+                                                var planOver = gFullCap > 0 && gPlanned > gFullCap;
+                                                var planStatus = planOver ? "danger" : (planLoad > 85 ? "warn" : "success");
+                                                <tr>
+                                                    <td><span style="font-weight:700">@teamCell</span> <span class="v2-hint" style="font-weight:400">· @teamN member@(teamN == 1 ? "" : "s")</span></td>
+                                                    <td class="v2-table-num" style="font-weight:700">@($"{gPlanned:F0}h")</td>
+                                                    <td class="v2-table-num">@($"{gFullCap:F0}h")</td>
+                                                    <td>
+                                                        <div style="display:flex;align-items:center;gap:8px;min-width:150px">
+                                                            <div class="v2-bar" style="flex:1;height:6px">
+                                                                <div class="v2-bar-fill v2-bar-fill-@planStatus" style="width:@($"{Math.Min(planLoad, 100):F0}")%"></div>
+                                                            </div>
+                                                            <span class="v2-hint" style="white-space:nowrap;@(planOver ? "color:var(--v2-danger)" : "")">@($"{planLoad:F0}%")</span>
+                                                        </div>
+                                                    </td>
+                                                    <td class="v2-table-num">@gTasks</td>
+                                                    <td class="v2-table-num" style="color:var(--v2-success)">@gDone</td>
+                                                </tr>
+                                                break;
+                                            case "Capacity":
+                                                var capLoad = gCap > 0 ? gRem / gCap * 100 : 0;
+                                                var capOver = gRem > gCap;
+                                                var capStatus = capOver ? "danger" : (capLoad > 80 ? "warn" : "success");
+                                                <tr>
+                                                    <td><span style="font-weight:700">@teamCell</span> <span class="v2-hint" style="font-weight:400">· @teamN member@(teamN == 1 ? "" : "s")</span></td>
+                                                    <td class="v2-table-num" style="font-weight:700">@($"{gCap:F0}h")</td>
+                                                    <td class="v2-table-num">@($"{gRem:F0}h")</td>
+                                                    <td>
+                                                        <div style="display:flex;align-items:center;gap:8px;min-width:150px">
+                                                            <div class="v2-bar" style="flex:1;height:6px">
+                                                                <div class="v2-bar-fill v2-bar-fill-@capStatus" style="width:@($"{Math.Min(capLoad, 100):F0}")%"></div>
+                                                            </div>
+                                                            <span class="v2-hint" style="white-space:nowrap;@(capOver ? "color:var(--v2-danger)" : "")">@($"{capLoad:F0}%")</span>
+                                                        </div>
+                                                    </td>
+                                                    <td class="v2-table-num" style="@(capOver ? "color:var(--v2-danger);font-weight:700" : "color:var(--v2-success)")">@(capOver ? $"−{(gRem - gCap):F0}h" : $"+{(gCap - gRem):F0}h")</td>
+                                                    <td class="v2-table-num">@gTasks</td>
+                                                    <td class="v2-table-num" style="color:var(--v2-success)">@gDone</td>
+                                                </tr>
+                                                break;
+                                            case "Burn Rate":
+                                                <tr>
+                                                    <td><span style="font-weight:700">@teamCell</span> <span class="v2-hint" style="font-weight:400">· @teamN member@(teamN == 1 ? "" : "s")</span></td>
+                                                    <td class="v2-table-num" style="font-weight:700">@($"{gLogged:F1}h")</td>
+                                                    <td class="v2-table-num">@($"{gAvg:F1}h")</td>
+                                                    <td class="v2-table-num">@($"{(gAvg * ttTotalDays):F0}h")</td>
+                                                    <td class="v2-table-num">@gTasks</td>
+                                                    <td class="v2-table-num" style="color:var(--v2-success)">@gDone</td>
+                                                </tr>
+                                                break;
+                                            default:
+                                                <tr>
+                                                    <td><span style="font-weight:700">@teamCell</span> <span class="v2-hint" style="font-weight:400">· @teamN member@(teamN == 1 ? "" : "s")</span></td>
+                                                    <td class="v2-table-num" style="font-weight:700">@($"{gLogged:F1}h")</td>
+                                                    <td class="v2-table-num" style="color:var(--v2-success)">@($"{gOnDone:F1}h")</td>
+                                                    <td class="v2-table-num">@($"{gRem:F0}h")</td>
+                                                    <td class="v2-table-num">@gTasks</td>
+                                                    <td class="v2-table-num" style="color:var(--v2-success)">@gDone</td>
+                                                </tr>
+                                                break;
+                                        }
                                     }
                                 </tbody>
                                 <tfoot>
-                                    <tr class="v2-table-foot">
-                                        <td style="font-weight:700">All teams</td>
-                                        <td class="v2-table-num" style="font-weight:700">@($"{totLogged:F1}h")</td>
-                                        <td class="v2-table-num" style="font-weight:700">@($"{shown.Sum(r => r.AvgPerDay):F1}h")</td>
-                                        <td class="v2-table-num" style="font-weight:700">@($"{totCap:F0}h")</td>
-                                        <td class="v2-table-num" style="font-weight:700">@($"{(totCap > 0 ? totLogged / totCap * 100 : 0):F0}%")</td>
-                                        <td class="v2-table-num" style="font-weight:700">@shown.Sum(r => r.Tasks)</td>
-                                        <td class="v2-table-num" style="font-weight:700;color:var(--v2-success)">@shown.Sum(r => r.Done)</td>
-                                        <td class="v2-table-num" style="font-weight:700">@($"{totRem:F0}h")</td>
-                                    </tr>
+                                    @{
+                                        var totLogged  = shown.Sum(r => r.LoggedSprint);
+                                        var totCap     = shown.Sum(r => r.Capacity);
+                                        var totRem     = shown.Sum(r => r.RemainingHours);
+                                        var totPlanned = shown.Sum(r => r.PlannedHours);
+                                        var totFullCap = shown.Sum(r => r.FullCapacity);
+                                        var totOnDone  = shown.Sum(r => r.LoggedOnDone);
+                                        var totAvg     = shown.Sum(r => r.AvgPerDay);
+                                        var totTasks   = shown.Sum(r => r.Tasks);
+                                        var totDone    = shown.Sum(r => r.Done);
+                                    }
+                                    @switch (_teamTimeCard)
+                                    {
+                                        case "Planned":
+                                            <tr class="v2-table-foot">
+                                                <td style="font-weight:700">All teams</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{totPlanned:F0}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{totFullCap:F0}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{(totFullCap > 0 ? totPlanned / totFullCap * 100 : 0):F0}%")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@totTasks</td>
+                                                <td class="v2-table-num" style="font-weight:700;color:var(--v2-success)">@totDone</td>
+                                            </tr>
+                                            break;
+                                        case "Capacity":
+                                            <tr class="v2-table-foot">
+                                                <td style="font-weight:700">All teams</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{totCap:F0}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{totRem:F0}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{(totCap > 0 ? totRem / totCap * 100 : 0):F0}%")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@(totRem > totCap ? $"−{(totRem - totCap):F0}h" : $"+{(totCap - totRem):F0}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@totTasks</td>
+                                                <td class="v2-table-num" style="font-weight:700;color:var(--v2-success)">@totDone</td>
+                                            </tr>
+                                            break;
+                                        case "Burn Rate":
+                                            <tr class="v2-table-foot">
+                                                <td style="font-weight:700">All teams</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{totLogged:F1}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{totAvg:F1}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{(totAvg * ttTotalDays):F0}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@totTasks</td>
+                                                <td class="v2-table-num" style="font-weight:700;color:var(--v2-success)">@totDone</td>
+                                            </tr>
+                                            break;
+                                        default:
+                                            <tr class="v2-table-foot">
+                                                <td style="font-weight:700">All teams</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{totLogged:F1}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700;color:var(--v2-success)">@($"{totOnDone:F1}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@($"{totRem:F0}h")</td>
+                                                <td class="v2-table-num" style="font-weight:700">@totTasks</td>
+                                                <td class="v2-table-num" style="font-weight:700;color:var(--v2-success)">@totDone</td>
+                                            </tr>
+                                            break;
+                                    }
                                 </tfoot>
                             </table>
                         </div>
@@ -3226,6 +3417,38 @@
     }
 
     private bool   IsOverCapacity => TotalRemainingHours > CapacityHours;
+
+    // ── Planned hours (sum of original estimates) ────────────────────────────
+    private double PlannedHours     => ActiveIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
+    private double TaskPlannedHours => TaskOnlyIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
+
+    private int EstimatedCount     => ActiveIssues.Count(i => i.OriginalEstimateSeconds > 0);
+    private int TaskEstimatedCount => TaskOnlyIssues.Count(i => i.OriginalEstimateSeconds > 0);
+
+    // Full-sprint capacity (all sprint days, not just remaining) — the comparator for
+    // "did we commit more planned work than the team can deliver in the whole sprint?".
+    private double FullSprintCapacityHours
+    {
+        get
+        {
+            if (Report == null) return 0;
+            var contributors = Math.Max(1, ActiveIssues
+                .Where(i => i.Assignee != "Unassigned").Select(i => i.Assignee).Distinct().Count());
+            return Report.TotalSprintDays * 6.0 * contributors;
+        }
+    }
+    private double TaskFullSprintCapacityHours =>
+        Report == null ? 0 : Report.TotalSprintDays * 6.0 * TaskContributors;
+
+    private bool PlanOverCommit     => PlannedHours     > FullSprintCapacityHours;
+    private bool TaskPlanOverCommit => TaskPlannedHours > TaskFullSprintCapacityHours;
+
+    // Plan-load factor for the health score: 1.0 while committed (planned) hours fit the
+    // full-sprint capacity, degrading toward 0 as the sprint is overcommitted.
+    // Neutral 0.5 when nothing is estimated — no basis to praise or punish.
+    private static double PlanLoadFactor(double plannedHours, double fullCapacityHours) =>
+        plannedHours <= 0 ? 0.5 : fullCapacityHours <= 0 ? 0.0 : Math.Min(1.0, fullCapacityHours / plannedHours);
+
     private double HoursLoggedPerWorkday
     {
         get
@@ -3431,7 +3654,10 @@
 
             var execution = 1.0 - Math.Min(1.0, TaskStaleCount / (double)Math.Max(1, TaskInProgressCount));
 
-            var score = pace * 35 + capacity * 30 + risk * 20 + execution * 15;
+            // Plan load: overcommitting planned hours beyond full-sprint capacity erodes the score.
+            var planLoad = PlanLoadFactor(TaskPlannedHours, TaskFullSprintCapacityHours);
+
+            var score = pace * 30 + capacity * 25 + planLoad * 15 + risk * 15 + execution * 15;
             return Math.Clamp((int)Math.Round(score), 0, 100);
         }
     }
@@ -3592,7 +3818,10 @@
             // Quality: scale by 2 so 50% open bugs drives factor to 0.
             var quality = 1.0 - Math.Min(1.0, OpenBugsCount / (double)Math.Max(1, ActiveIssues.Count) * 2.0);
 
-            var score = pace * 35 + capacity * 30 + risk * 20 + quality * 15;
+            // Plan load: overcommitting planned hours beyond full-sprint capacity erodes the score.
+            var planLoad = PlanLoadFactor(PlannedHours, FullSprintCapacityHours);
+
+            var score = pace * 30 + capacity * 25 + planLoad * 15 + risk * 15 + quality * 15;
             return Math.Clamp((int)Math.Round(score), 0, 100);
         }
     }
@@ -4522,7 +4751,14 @@
 
     private void OpenTeamTime(string card, bool taskOnly) { _teamTimeCard = card; _teamTimeTaskOnly = taskOnly; _showTeamTime = true; }
     private void CloseTeamTime() => _showTeamTime = false;
-    private string Emph(string card) => _teamTimeCard == card ? "v2-th-emph" : "";
+
+    private string TeamTimeTitle => _teamTimeCard switch
+    {
+        "Planned"    => "Planned work by team",
+        "Capacity"   => "Capacity by team",
+        "Burn Rate"  => "Burn rate by team",
+        _            => "Time spent by team"
+    };
 
     // Issues the modal reports on, scoped to the section it was opened from.
     private List<SprintIssue> TeamTimeScopedIssues => _teamTimeTaskOnly ? TaskOnlyIssues : ActiveIssues;
@@ -4547,18 +4783,24 @@
     }
 
     private record TeamTimeRow(string Name, string Team, double LoggedSprint, double Capacity,
-                               double AvgPerDay, int Tasks, int Done, double RemainingHours);
+                               double AvgPerDay, int Tasks, int Done, double RemainingHours,
+                               double PlannedHours, double FullCapacity, double LoggedOnDone);
 
     private List<TeamTimeRow> TeamTimeRows
     {
         get
         {
             var days        = EffectiveDaysRemaining;
+            var totalDays   = Report?.TotalSprintDays ?? 10;
             var elapsed     = Math.Max(1, Report?.ElapsedDays ?? 1);
             var start       = Report?.StartDate?.Date;
             var end         = Report?.EndDate?.Date;
             var scopedIssues = TeamTimeScopedIssues;
             var allWorklogs = scopedIssues.SelectMany(i => i.Worklogs).ToList();
+            var doneWorklogs = scopedIssues
+                .Where(i => i.StatusCategoryKey == "done")
+                .SelectMany(i => i.Worklogs)
+                .ToList();
 
             bool InWindow(DateTime d) =>
                 (start == null || d.Date >= start) && (end == null || d.Date <= end);
@@ -4566,6 +4808,9 @@
             return _roster.Select(m =>
             {
                 var logged = allWorklogs
+                    .Where(w => WorklogByMember(w, m) && InWindow(w.Started))
+                    .Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
+                var loggedOnDone = doneWorklogs
                     .Where(w => WorklogByMember(w, m) && InWindow(w.Started))
                     .Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
                 var assigned = scopedIssues
@@ -4579,7 +4824,10 @@
                     AvgPerDay:      logged / elapsed,
                     Tasks:          assigned.Count,
                     Done:           assigned.Count(i => i.StatusCategoryKey == "done"),
-                    RemainingHours: assigned.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0);
+                    RemainingHours: assigned.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0,
+                    PlannedHours:   assigned.Sum(i => i.OriginalEstimateSeconds) / 3600.0,
+                    FullCapacity:   (double)m.HoursPerDay * totalDays,
+                    LoggedOnDone:   loggedOnDone);
             })
             .OrderByDescending(r => r.LoggedSprint)
             .ToList();

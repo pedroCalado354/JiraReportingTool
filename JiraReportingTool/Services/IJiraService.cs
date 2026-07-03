@@ -59,6 +59,13 @@ public interface IJiraService
     Task<SprintReport> GetBugsByJqlAsync(string rawJql);
 
     /// <summary>
+    /// Fetches bugs created inside the given window (project JM) with issue links populated
+    /// (SprintIssue.LinkedIssueKeys) so callers can filter by linked issues — e.g. bugs
+    /// relating to JSSUPPORT tickets. Not cached.
+    /// </summary>
+    Task<SprintReport> GetBugsWithLinksAsync(DateOnly createdFrom, DateOnly createdTo);
+
+    /// <summary>
     /// Fetches bugs from a raw JQL string, additionally resolving the "JS Project" (Product) radio-button field.
     /// Used by the SLA dashboard so tickets can be grouped by both customer and product.
     /// </summary>
