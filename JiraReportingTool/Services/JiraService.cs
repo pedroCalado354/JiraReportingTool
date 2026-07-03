@@ -611,34 +611,44 @@ public class JiraService : IJiraService
                 prodEl.TryGetProperty("value", out var prodVal))
                 issue.Product = prodVal.GetString() ?? "";
 
-            // Sprint metadata from customfield_10020 (array of sprints the issue belongs to)
+            // Sprint metadata from customfield_10020 (array of sprints the issue belongs to,
+            // in chronological order — first entry = first sprint, last entry = most recent).
             if (fields.TryGetProperty("customfield_10020", out var sprints) &&
                 sprints.ValueKind == JsonValueKind.Array)
             {
+                string? activeSprintName = null;
                 foreach (var s in sprints.EnumerateArray())
                 {
-                    if (!s.TryGetProperty("state", out var stateEl)) continue;
-                    var sprintState = stateEl.GetString() ?? "";
+                    if (s.ValueKind != JsonValueKind.Object) continue;
+                    var sprintState = s.TryGetProperty("state", out var stateEl) ? stateEl.GetString() ?? "" : "";
                     var sprintNameVal = s.TryGetProperty("name", out var sn) ? sn.GetString() ?? "" : "";
+                    DateTime? sprintStart = s.TryGetProperty("startDate", out var sd) && DateTime.TryParse(sd.GetString(), out var sdP) ? sdP : null;
+                    DateTime? sprintEnd   = s.TryGetProperty("endDate", out var ed) && DateTime.TryParse(ed.GetString(), out var edP) ? edP : null;
+                    int sprintId          = s.TryGetProperty("id", out var idEl) && idEl.TryGetInt32(out var idV) ? idV : 0;
 
-                    // Per-issue: prefer active sprint; fall back to first sprint in the list
+                    // Full ordered history — powers carry-over analysis on Support Trends.
+                    issue.Sprints.Add(new IssueSprint
+                    {
+                        Id = sprintId, Name = sprintNameVal, State = sprintState,
+                        StartDate = sprintStart, EndDate = sprintEnd
+                    });
+
+                    // Per-issue single name: prefer the active sprint, else first in the list.
                     if (string.IsNullOrEmpty(issue.SprintName))
                         issue.SprintName = sprintNameVal;
-                    if (sprintState == "active")
+                    if (sprintState == "active" && activeSprintName == null)
                     {
-                        issue.SprintName = sprintNameVal;
+                        activeSprintName = sprintNameVal;
                         // Report-level: populate start/end from the first active sprint found
                         if (report.SprintName == "")
                         {
                             report.SprintName = sprintNameVal;
-                            if (s.TryGetProperty("startDate", out var sd) && DateTime.TryParse(sd.GetString(), out var sdParsed))
-                                report.StartDate = sdParsed;
-                            if (s.TryGetProperty("endDate", out var ed) && DateTime.TryParse(ed.GetString(), out var edParsed))
-                                report.EndDate = edParsed;
+                            if (sprintStart.HasValue) report.StartDate = sprintStart.Value;
+                            if (sprintEnd.HasValue)   report.EndDate   = sprintEnd.Value;
                         }
-                        break; // active sprint found — done for this issue
                     }
                 }
+                if (activeSprintName != null) issue.SprintName = activeSprintName;
             }
 
             if (fields.TryGetProperty("worklog", out var worklog) &&
@@ -849,7 +859,7 @@ public class JiraService : IJiraService
         var jql = Uri.EscapeDataString(
             $"{typeClause} AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
         var customerFieldId = await GetCustomerFieldIdAsync();
-        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,parent,created,resolutiondate,duedate,labels"
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10020,parent,created,resolutiondate,duedate,labels"
             + (customerFieldId != null ? $",{customerFieldId}" : "");
         var json = await FetchAllPagesAsync(jql, fields);
         var (report, truncated) = ParseSprintReport(json, "", customerFieldId);

@@ -1156,6 +1156,57 @@
                                         }
                                     }
                                 }
+                                @{
+                                    var unassignedTotalSec = GetSupportBugUnmatchedSecondsInRange(bugMembers, SprintStart, SprintEnd);
+                                }
+                                @if (unassignedTotalSec > 0)
+                                {
+                                    <tr class="bugs-tr bugs-tr-unassigned">
+                                        <td class="bugs-td bugs-td-member">
+                                            <button class="bugs-member-toggle" @onclick="() => _unassignedBugRowExpanded = !_unassignedBugRowExpanded" title="Worklogs whose author doesn't match any roster member">
+                                                <span class="bugs-caret">@(_unassignedBugRowExpanded ? "▾" : "▸")</span>
+                                                Unassigned
+                                            </button>
+                                        </td>
+                                        @foreach (var wk in bugWeeks)
+                                        {
+                                            var wkUnSec = GetSupportBugUnmatchedSecondsInRange(bugMembers, wk.Start, wk.End);
+                                            <td class="bugs-td bugs-td-cell">
+                                                <div class="bugs-cell">
+                                                    <span class="bugs-planned">—</span>
+                                                    <span class="bugs-logged">@($"{wkUnSec / 3600m:0.#}h logged")</span>
+                                                    <span class="bugs-pct bugs-pct-gray">unmatched</span>
+                                                </div>
+                                            </td>
+                                        }
+                                        <td class="bugs-td bugs-td-cell bugs-td-total">
+                                            <div class="bugs-cell">
+                                                <span class="bugs-planned">—</span>
+                                                <span class="bugs-logged">@($"{unassignedTotalSec / 3600m:0.#}h logged")</span>
+                                                <span class="bugs-pct bugs-pct-gray">unmatched</span>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                    @if (_unassignedBugRowExpanded)
+                                    {
+                                        var byAuthor = GetSupportBugUnmatchedByAuthor(bugMembers, SprintStart, SprintEnd);
+                                        <tr class="bugs-detail-row">
+                                            <td colspan="@(bugWeeks.Count + 2)" class="bugs-detail-cell">
+                                                <table class="bugs-detail-table">
+                                                    <thead><tr><th>Worklog author</th><th class="bugs-detail-num">Logged</th></tr></thead>
+                                                    <tbody>
+                                                        @foreach (var a in byAuthor)
+                                                        {
+                                                            <tr><td>@a.Author</td><td class="bugs-detail-num">@FmtSec(a.Seconds)</td></tr>
+                                                        }
+                                                    </tbody>
+                                                    <tfoot><tr><td>@byAuthor.Count author(s) · not in roster</td><td class="bugs-detail-num">@FmtSec(unassignedTotalSec)</td></tr></tfoot>
+                                                </table>
+                                                <div class="bugs-detail-empty" style="margin-top:6px">These authors don't match a roster member. Add them — or set their Jira account/email — on the Team Roster page to attribute their hours.</div>
+                                            </td>
+                                        </tr>
+                                    }
+                                }
                             </tbody>
                             <tfoot>
                                 <tr class="bugs-total-row">
@@ -1163,7 +1214,7 @@
                                     @foreach (var wk in bugWeeks)
                                     {
                                         var wkTotalPlanned = bugMembers.Sum(m => GetSupportBugPlannedHoursInRange(m.Id, wk.Start, wk.End));
-                                        var wkTotalLoggedSec = bugMembers.Sum(m => GetSupportBugLoggedSecondsInRange(m.Name, wk.Start, wk.End));
+                                        var wkTotalLoggedSec = GetSupportBugLoggedSecondsAllInRange(wk.Start, wk.End);
                                         var wkTotalLoggedH   = wkTotalLoggedSec / 3600m;
                                         <td class="bugs-td bugs-td-cell">
                                             <div class="bugs-cell">
@@ -1175,7 +1226,7 @@
                                     }
                                     @{
                                         var grandPlanned    = bugMembers.Sum(m => GetSupportBugPlannedHoursInRange(m.Id, SprintStart, SprintEnd));
-                                        var grandLoggedSec  = bugMembers.Sum(m => GetSupportBugLoggedSecondsInRange(m.Name, SprintStart, SprintEnd));
+                                        var grandLoggedSec  = GetSupportBugLoggedSecondsAllInRange(SprintStart, SprintEnd);
                                         var grandLoggedH    = grandLoggedSec / 3600m;
                                     }
                                     <td class="bugs-td bugs-td-cell bugs-td-total">
@@ -1786,6 +1837,9 @@
     {
         if (!_expandedBugMembers.Add(memberId)) _expandedBugMembers.Remove(memberId);
     }
+
+    // The "Unassigned" row (worklogs whose author matches no roster member) drill-down toggle.
+    private bool _unassignedBugRowExpanded;
 
     // One row per support-bug issue a member logged time on, within [from, to].
     private sealed record BugLogRow(string Key, string Summary, int Seconds, int Worklogs, DateTime LastActivity);
@@ -3692,13 +3746,16 @@
                 catch { }
             }
 
-            // Refresh support bug issues (with up-to-date worklogs) for Time Logged column
+            // Refresh support bug issues (with up-to-date worklogs) for Time Logged column.
+            // bugsOnly:false — must match the initial load (LoadSupportBugEpic): the epic contains
+            // non-Bug types (Redesign, Task, Story) that carry logged work; excluding them here
+            // silently dropped their worklogs on every refresh (e.g. Redesign issues → wrong totals).
             _supportBugIssues.Clear();
             foreach (var epicKey in LoadedSupportBugEpics.Keys.ToList())
             {
                 try
                 {
-                    var bugReport = await JiraService.GetEpicBugsAsync(epicKey);
+                    var bugReport = await JiraService.GetEpicBugsAsync(epicKey, bugsOnly: false);
                     LoadedSupportBugEpics[epicKey].Tasks = bugReport.Issues;
                     foreach (var issue in bugReport.Issues)
                         if (!string.IsNullOrEmpty(issue.Key))
@@ -5053,6 +5110,50 @@ private static decimal ParseJiraDurationToHours(string? input)
             })
             .Where(r => r.Worklogs > 0)
             .OrderByDescending(r => r.Seconds)
+            .ToList();
+    }
+
+    // All support-bug worklog seconds in [from,to], regardless of author — matches the
+    // Support Bugs dashboard "Sprint Logged" total (which does not filter by roster member).
+    private int GetSupportBugLoggedSecondsAllInRange(DateOnly from, DateOnly to)
+    {
+        if (_supportBugIssues.Count == 0) return 0;
+        var fromDt = from.ToDateTime(TimeOnly.MinValue);
+        var toDt   = to.ToDateTime(TimeOnly.MaxValue);
+        return _supportBugIssues.Values
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= fromDt && w.Started <= toDt)
+            .Sum(w => w.TimeSpentSeconds);
+    }
+
+    // Support-bug worklog seconds in [from,to] whose author matches none of `members` —
+    // the hours that would otherwise be silently dropped from the per-member breakdown.
+    private int GetSupportBugUnmatchedSecondsInRange(IReadOnlyList<TeamMemberDto> members, DateOnly from, DateOnly to)
+    {
+        if (_supportBugIssues.Count == 0) return 0;
+        var fromDt = from.ToDateTime(TimeOnly.MinValue);
+        var toDt   = to.ToDateTime(TimeOnly.MaxValue);
+        return _supportBugIssues.Values
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= fromDt && w.Started <= toDt
+                     && !members.Any(m => WorklogByMember(w, m.Name)))
+            .Sum(w => w.TimeSpentSeconds);
+    }
+
+    // Unmatched worklogs in [from,to] grouped by author — powers the "Unassigned" drill-down
+    // so unmatched authors can be spotted and added/aliased in the roster.
+    private List<(string Author, int Seconds)> GetSupportBugUnmatchedByAuthor(IReadOnlyList<TeamMemberDto> members, DateOnly from, DateOnly to)
+    {
+        if (_supportBugIssues.Count == 0) return new();
+        var fromDt = from.ToDateTime(TimeOnly.MinValue);
+        var toDt   = to.ToDateTime(TimeOnly.MaxValue);
+        return _supportBugIssues.Values
+            .SelectMany(i => i.Worklogs)
+            .Where(w => w.Started >= fromDt && w.Started <= toDt
+                     && !members.Any(m => WorklogByMember(w, m.Name)))
+            .GroupBy(w => string.IsNullOrWhiteSpace(w.Author) ? "(unknown)" : w.Author, StringComparer.OrdinalIgnoreCase)
+            .Select(g => (Author: g.Key, Seconds: g.Sum(w => w.TimeSpentSeconds)))
+            .OrderByDescending(x => x.Seconds)
             .ToList();
     }
 

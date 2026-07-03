@@ -147,6 +147,20 @@ public class SprintReport
     }
 }
 
+/// <summary>
+/// One sprint an issue belongs to, parsed from a single entry of the Jira sprint field
+/// (customfield_10020). Transient — never persisted to the DB.
+/// </summary>
+public class IssueSprint
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    /// <summary>Jira sprint state: "active", "closed", or "future".</summary>
+    public string State { get; set; } = "";
+    public DateTime? StartDate { get; set; }
+    public DateTime? EndDate { get; set; }
+}
+
 public class SprintIssue
 {
     public int Id { get; set; }
@@ -175,6 +189,13 @@ public class SprintIssue
     public string EpicKey { get; set; } = "";
     public string EpicName { get; set; } = "No Epic";
     public string SprintName { get; set; } = "";
+    /// <summary>
+    /// Full ordered list of every sprint this issue has belonged to (from customfield_10020).
+    /// The order is chronological — index 0 is the first sprint it entered, the last entry is
+    /// its most recent sprint. Powers the sprint-over-sprint carry-over analysis on Support
+    /// Trends. Not persisted — only populated on API paths that request customfield_10020.
+    /// </summary>
+    [NotMapped] public List<IssueSprint> Sprints { get; set; } = new();
     public List<WorklogEntry> Worklogs { get; set; } = new();
     public List<string> Labels { get; set; } = new();
     public DateTime? Created { get; set; }

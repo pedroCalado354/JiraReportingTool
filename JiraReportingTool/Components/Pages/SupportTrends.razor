@@ -234,7 +234,7 @@
         <div class="v2-section"><span class="v2-section-title"><i class="bi bi-calendar3"></i> Sprint over Sprint</span></div>
         <div class="v2-grid-2">
             <div class="v2-card">
-                <div class="st-card-title"><i class="bi bi-funnel"></i> Created vs Resolved per sprint</div>
+                <div class="st-card-title"><i class="bi bi-funnel"></i> In sprint vs Done per sprint</div>
                 <div class="st-chart-box"><canvas id="st-chart-sprint-flow"></canvas></div>
             </div>
             <div class="v2-card">
@@ -248,9 +248,13 @@
                 <table class="v2-table">
                     <thead><tr>
                         <th>Sprint</th><th>Window</th>
-                        <th class="v2-table-num">Created</th><th class="v2-table-num">Resolved</th>
-                        <th class="v2-table-num">Net</th><th class="v2-table-num">Logged</th>
-                        <th class="v2-table-num">Avg Resolve</th><th class="v2-table-num">QA Rej.</th>
+                        <th class="v2-table-num" title="All tickets in this sprint's epic (matches Jira parent = epic)">In Sprint</th>
+                        <th class="v2-table-num" title="First appeared in this sprint — not carried from an earlier one">New</th>
+                        <th class="v2-table-num" title="Also lived in an earlier sprint (per the Jira sprint field)">Carried In</th>
+                        <th class="v2-table-num" title="Done tickets in this sprint's epic (matches Jira parent = epic AND status = Done)">Done</th>
+                        <th class="v2-table-num" title="Also appears in a later sprint — work continued past this one">Spilled</th>
+                        <th class="v2-table-num" title="Done ÷ In Sprint">Compl.</th>
+                        <th class="v2-table-num">Logged</th><th class="v2-table-num">QA Rej.</th>
                     </tr></thead>
                     <tbody>
                         @foreach (var s in SprintStats)
@@ -258,12 +262,14 @@
                             <tr>
                                 <td class="st-trunc" title="@s.Name" style="font-weight:600">@s.Name</td>
                                 <td class="st-muted-cell">@s.Start.ToString("dd MMM") – @s.End.ToString("dd MMM yy")</td>
-                                <td class="v2-table-num">@s.Created</td>
-                                <td class="v2-table-num v2-text-success">@s.Closed</td>
-                                <td class="v2-table-num @(s.Net >= 0 ? "v2-text-success" : "v2-text-danger")">@(s.Net >= 0 ? "+" : "")@s.Net</td>
+                                <td class="v2-table-num" style="font-weight:600">@s.InSprint</td>
+                                <td class="v2-table-num">@s.New</td>
+                                <td class="v2-table-num @(s.CarriedIn > 0 ? "v2-text-warn" : "")">@(s.CarriedIn > 0 ? s.CarriedIn.ToString() : "—")</td>
+                                <td class="v2-table-num v2-text-success">@s.DoneHere</td>
+                                <td class="v2-table-num @(s.SpilledOver > 0 ? "v2-text-danger" : "")">@(s.SpilledOver > 0 ? s.SpilledOver.ToString() : "—")</td>
+                                <td class="v2-table-num">@s.CompletionPct.ToString("0")%</td>
                                 <td class="v2-table-num">@FmtHM(s.LoggedSeconds)</td>
-                                <td class="v2-table-num">@(s.AvgResolve.HasValue ? $"{s.AvgResolve:0.0}d" : "—")</td>
-                                <td class="v2-table-num @(s.QaRejected > 0 ? "v2-text-danger" : "")">@s.QaRejected</td>
+                                <td class="v2-table-num @(s.QaRejected > 0 ? "v2-text-danger" : "")">@(s.QaRejected > 0 ? s.QaRejected.ToString() : "—")</td>
                             </tr>
                         }
                     </tbody>
@@ -273,11 +279,11 @@
 
         <!-- ═══ PER-SPRINT BREAKDOWNS (collapsible) ════════════════════════════ -->
         <div class="v2-section" style="margin-top:16px">
-            <span class="v2-section-title"><i class="bi bi-diagram-3"></i> Per-sprint breakdowns <span class="st-scope">bugs created in each sprint window · click a sprint to expand</span></span>
+            <span class="v2-section-title"><i class="bi bi-diagram-3"></i> Per-sprint breakdowns <span class="st-scope">tickets that belonged to each sprint · click a sprint to expand</span></span>
         </div>
         @foreach (var s in SprintStats)
         {
-            var prio = PriorityBreakdownForWindow(s.Start, s.End).ToList();
+            var prio = SprintPriorityBreakdown(s.Name).ToList();
             var sprintTotal = prio.Sum(r => r.Total);
             var expanded = _expandedSprints.Contains(s.Name);
             <div class="v2-card st-sprint-card">
@@ -288,9 +294,9 @@
                 </button>
                 @if (expanded)
                 {
-                    var custRows    = SprintByCustomer(s.Start, s.End);
-                    var labelRows   = SprintByLabel(s.Start, s.End);
-                    var workedRows  = SprintWorkedBy(s.Start, s.End);
+                    var custRows    = SprintByCustomer(s.Name, s.Start, s.End);
+                    var labelRows   = SprintByLabel(s.Name, s.Start, s.End);
+                    var workedRows  = SprintWorkedBy(s.Name, s.Start, s.End);
                     var workedTotal = workedRows.Sum(w => w.LoggedSeconds);
                     <div class="st-sprint-body">
                         <!-- By priority -->
@@ -298,7 +304,7 @@
                             <div class="st-card-title"><i class="bi bi-flag-fill"></i> By priority</div>
                             @if (sprintTotal == 0)
                             {
-                                <div class="st-muted-cell" style="padding:6px 2px">No bugs created in this sprint window.</div>
+                                <div class="st-muted-cell" style="padding:6px 2px">No tickets belonged to this sprint.</div>
                             }
                             else
                             {
@@ -879,10 +885,10 @@
              .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g)))
              .OrderBy(p => { var i = Array.IndexOf(PriorityOrder, p.Name); return i < 0 ? 99 : i; });
 
-    // Same priority breakdown as ByPriority, but scoped to the bugs created within one
-    // sprint window — powers the per-sprint "breakdown of the breakdown" on the Sprints tab.
-    private IEnumerable<PriorityCount> PriorityBreakdownForWindow(DateOnly start, DateOnly end) =>
-        _bugs.Where(b => InWin(b.Created, start, end))
+    // Same priority breakdown as ByPriority, but scoped to the tickets that belonged to one
+    // sprint — powers the per-sprint "breakdown of the breakdown" on the Sprints tab.
+    private IEnumerable<PriorityCount> SprintPriorityBreakdown(string sprintName) =>
+        BugsInSprint(sprintName)
              .GroupBy(b => string.IsNullOrWhiteSpace(b.Priority) ? "Medium" : b.Priority)
              .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g)))
              .OrderBy(p => { var i = Array.IndexOf(PriorityOrder, p.Name); return i < 0 ? 99 : i; });
@@ -1114,21 +1120,78 @@
              .OrderByDescending(g => g.TotalHours)
              .ToList();
 
-    // ── Sprint-over-sprint ──────────────────────────────────────────────────
-    private record SprintStat(string Name, DateOnly Start, DateOnly End, int Created, int Closed, int Net, int LoggedSeconds, double? AvgResolve, int QaRejected);
+    // ── Sprint-over-sprint (epic-scoped, with sprint-field carry-over) ─────────
+    // Each configured sprint owns one planning epic (e.g. 26.12 → JM-18265), so a
+    // sprint's tickets = that epic's children — this reconciles exactly with Jira's
+    // `parent = <epic>` count. The Jira sprint field (customfield_10020, captured as
+    // issue.Sprints) is then used *only* to detect movement: whether a ticket also
+    // lived in an earlier or later configured sprint.
 
-    private IEnumerable<SprintStat> SprintStats =>
-        _configs.OrderBy(c => c.StartDate).Select(c =>
+    private string ConfigName(SprintConfig c) => string.IsNullOrWhiteSpace(c.Name) ? c.EpicKey : c.Name;
+
+    // A ticket's Jira sprint entry matches a configured sprint by Sprint ID (exact) —
+    // falling back to name-contains ("26.12" ⊆ "Pro 26.12") when no ID is available.
+    private static bool SprintMatches(IssueSprint js, SprintConfig cfg) =>
+        (cfg.SprintId != 0 && js.Id == cfg.SprintId) ||
+        (cfg.SprintId == 0 && js.Id == 0 &&
+         !string.IsNullOrWhiteSpace(cfg.Name) && !string.IsNullOrWhiteSpace(js.Name) &&
+         js.Name.Contains(cfg.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    // Tickets belonging to a configured sprint = the children of its planning epic.
+    private IEnumerable<SprintIssue> EpicBugsFor(SprintConfig c) =>
+        _bugs.Where(b => !string.IsNullOrWhiteSpace(c.EpicKey) &&
+                         string.Equals(b.EpicKey?.Trim(), c.EpicKey.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    // Ordinals (chronological index) of every configured sprint this ticket's Jira sprint
+    // history touches. Used to tell carried-in (was in an earlier sprint) from spilled
+    // (also appears in a later sprint).
+    private List<int> ConfigSprintOrdinals(SprintIssue b, List<SprintConfig> ordered)
+    {
+        var set = new HashSet<int>();
+        foreach (var js in b.Sprints)
+            for (int i = 0; i < ordered.Count; i++)
+                if (SprintMatches(js, ordered[i])) { set.Add(i); break; }
+        return set.ToList();
+    }
+
+    // Bugs of the sprint whose display name is `sprintName` (epic-scoped).
+    private IEnumerable<SprintIssue> BugsInSprint(string sprintName)
+    {
+        var c = _configs.FirstOrDefault(x => ConfigName(x) == sprintName);
+        return c == null ? Enumerable.Empty<SprintIssue>() : EpicBugsFor(c);
+    }
+
+    private record SprintStat(string Name, DateOnly Start, DateOnly End,
+        int InSprint, int New, int CarriedIn, int DoneHere, int SpilledOver,
+        int LoggedSeconds, double CompletionPct, int QaRejected);
+
+    private IEnumerable<SprintStat> SprintStats
+    {
+        get
         {
-            var s = c.StartDate; var e = c.EndDate;
-            var created = _bugs.Count(b => InWin(b.Created, s, e));
-            var closedBugs = _bugs.Where(b => InWin(b.ResolutionDate, s, e)).ToList();
-            var logged = _bugs.Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds));
-            var qa = closedBugs.Count(b => b.QaRejectedCount > 0);
-            return new SprintStat(
-                string.IsNullOrWhiteSpace(c.Name) ? c.EpicKey : c.Name,
-                s, e, created, closedBugs.Count, closedBugs.Count - created, logged, AvgResolveOf(closedBugs), qa);
-        });
+            var ordered = _configs.OrderBy(c => c.StartDate).ToList();
+            return ordered.Select((c, ord) =>
+            {
+                var s = c.StartDate; var e = c.EndDate;
+                var epicBugs = EpicBugsFor(c).ToList();
+                var inSprint = epicBugs.Count;
+                var done     = epicBugs.Count(IsDone);
+                int isNew = 0, carriedIn = 0, spilled = 0, qa = 0;
+                foreach (var b in epicBugs)
+                {
+                    var ords     = ConfigSprintOrdinals(b, ordered);
+                    var earliest = ords.Count > 0 ? ords.Min() : ord;   // no sprint data → treat as new here
+                    var latest   = ords.Count > 0 ? ords.Max() : ord;
+                    if (earliest < ord) carriedIn++; else isNew++;       // was in an earlier sprint
+                    if (latest > ord) spilled++;                          // also appears in a later sprint
+                    if (b.QaRejectedCount > 0) qa++;
+                }
+                var logged = epicBugs.Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds));
+                var pct = inSprint == 0 ? 0 : done * 100.0 / inSprint;
+                return new SprintStat(ConfigName(c), s, e, inSprint, isNew, carriedIn, done, spilled, logged, pct, qa);
+            }).ToList();
+        }
+    }
 
     // ── Per-sprint breakdowns (Sprints tab, collapsible) ─────────────────────
     // Same customer / label / worked-by breakdowns as the Breakdowns tab, but scoped
@@ -1140,8 +1203,8 @@
         if (!_expandedSprints.Remove(name)) _expandedSprints.Add(name);
     }
 
-    private List<GroupStat> SprintByCustomer(DateOnly s, DateOnly e) =>
-        _bugs.Where(b => InWin(b.Created, s, e) && !string.IsNullOrWhiteSpace(b.Customer))
+    private List<GroupStat> SprintByCustomer(string sprintName, DateOnly s, DateOnly e) =>
+        BugsInSprint(sprintName).Where(b => !string.IsNullOrWhiteSpace(b.Customer))
              .GroupBy(b => b.Customer)
              .Select(g => new GroupStat(g.Key, g.Count(), g.Count(IsDone), g.Count(b => !IsDone(b)),
                  g.Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds)),
@@ -1150,8 +1213,8 @@
              .OrderByDescending(g => g.Total).ThenByDescending(g => g.LoggedSeconds)
              .ToList();
 
-    private List<GroupStat> SprintByLabel(DateOnly s, DateOnly e) =>
-        _bugs.Where(b => InWin(b.Created, s, e))
+    private List<GroupStat> SprintByLabel(string sprintName, DateOnly s, DateOnly e) =>
+        BugsInSprint(sprintName)
              .SelectMany(b => (b.Labels ?? new()).Select(l => (Label: l, Bug: b)))
              .Where(x => !string.IsNullOrWhiteSpace(x.Label))
              .GroupBy(x => x.Label)
@@ -1162,8 +1225,8 @@
              .OrderByDescending(g => g.Total).ThenByDescending(g => g.LoggedSeconds)
              .ToList();
 
-    private List<GroupStat> SprintWorkedBy(DateOnly s, DateOnly e) =>
-        _bugs.Where(b => InWin(b.Created, s, e))
+    private List<GroupStat> SprintWorkedBy(string sprintName, DateOnly s, DateOnly e) =>
+        BugsInSprint(sprintName)
              .SelectMany(b => b.Worklogs
                  .Where(w => !string.IsNullOrWhiteSpace(w.Author) && InWin(w.Started, s, e))
                  .Select(w => (Author: w.Author, Bug: b, Sec: w.TimeSpentSeconds)))
@@ -1307,8 +1370,8 @@
                 labels = sLabels,
                 datasets = new object[]
                 {
-                    new { label = "Created",  data = sprints.Select(s => s.Created).ToArray(), backgroundColor = "#94a3b8", borderRadius = 3 },
-                    new { label = "Resolved", data = sprints.Select(s => s.Closed).ToArray(),  backgroundColor = "#16a34a", borderRadius = 3 }
+                    new { label = "In Sprint", data = sprints.Select(s => s.InSprint).ToArray(), backgroundColor = "#94a3b8", borderRadius = 3 },
+                    new { label = "Done",      data = sprints.Select(s => s.DoneHere).ToArray(), backgroundColor = "#16a34a", borderRadius = 3 }
                 }
             },
             options = ChartOpts(true)
