@@ -283,14 +283,17 @@
         </div>
         @foreach (var s in SprintStats)
         {
-            var prio = SprintPriorityBreakdown(s.Name).ToList();
-            var sprintTotal = prio.Sum(r => r.Total);
+            var prioBugs      = SprintPriorityBreakdown(s.Name, "Bug").ToList();
+            var prioRedesigns = SprintPriorityBreakdown(s.Name, "Redesign").ToList();
+            var bugTotal      = prioBugs.Sum(r => r.Total);
+            var redesignTotal = prioRedesigns.Sum(r => r.Total);
+            var sprintTotal   = BugsInSprint(s.Name).Count();
             var expanded = _expandedSprints.Contains(s.Name);
             <div class="v2-card st-sprint-card">
                 <button class="st-sprint-head @(expanded ? "open" : "")" @onclick="() => ToggleSprint(s.Name)">
                     <i class="bi bi-chevron-@(expanded ? "down" : "right") st-sprint-chev"></i>
                     <span class="st-sprint-name"><i class="bi bi-calendar3"></i> @s.Name</span>
-                    <span class="st-scope">@s.Start.ToString("dd MMM") – @s.End.ToString("dd MMM yy") · @sprintTotal bug@(sprintTotal == 1 ? "" : "s")</span>
+                    <span class="st-scope">@s.Start.ToString("dd MMM") – @s.End.ToString("dd MMM yy") · @sprintTotal ticket@(sprintTotal == 1 ? "" : "s") · @bugTotal bug@(bugTotal == 1 ? "" : "s") · @redesignTotal redesign@(redesignTotal == 1 ? "" : "s")</span>
                 </button>
                 @if (expanded)
                 {
@@ -299,37 +302,16 @@
                     var workedRows  = SprintWorkedBy(s.Name, s.Start, s.End);
                     var workedTotal = workedRows.Sum(w => w.LoggedSeconds);
                     <div class="st-sprint-body">
-                        <!-- By priority -->
-                        <div class="st-sprint-sub">
-                            <div class="st-card-title"><i class="bi bi-flag-fill"></i> By priority</div>
-                            @if (sprintTotal == 0)
-                            {
-                                <div class="st-muted-cell" style="padding:6px 2px">No tickets belonged to this sprint.</div>
-                            }
-                            else
-                            {
-                                <div class="v2-table-wrap" style="margin:0">
-                                    <table class="v2-table" style="font-size:12px">
-                                        <thead><tr>
-                                            <th>Priority</th><th class="v2-table-num">Bugs</th><th class="v2-table-num">Open</th>
-                                            <th class="v2-table-num">Done</th><th class="v2-table-num" title="Avg logged effort from first Dev Ready → Done">Avg Fix</th><th class="v2-table-num">Share</th>
-                                        </tr></thead>
-                                        <tbody>
-                                            @foreach (var p in prio)
-                                            {
-                                                <tr>
-                                                    <td><span class="v2-pill @PriorityPill(p.Name)">@p.Name</span></td>
-                                                    <td class="v2-table-num">@p.Total</td>
-                                                    <td class="v2-table-num">@p.Open</td>
-                                                    <td class="v2-table-num v2-text-success">@p.Closed</td>
-                                                    <td class="v2-table-num">@(p.AvgFixHours.HasValue ? $"{p.AvgFixHours:0.0}h" : "—")</td>
-                                                    <td class="v2-table-num">@ShareCell(p.Total, sprintTotal)</td>
-                                                </tr>
-                                            }
-                                        </tbody>
-                                    </table>
-                                </div>
-                            }
+                        <!-- By priority, split by issue type: Bugs vs Redesign -->
+                        <div class="v2-grid-2">
+                            <div class="st-sprint-sub">
+                                <div class="st-card-title"><i class="bi bi-bug"></i> By priority — Bugs <span class="st-scope">@bugTotal ticket@(bugTotal == 1 ? "" : "s")</span></div>
+                                @SprintPriorityTable(prioBugs, bugTotal, "Bugs")
+                            </div>
+                            <div class="st-sprint-sub">
+                                <div class="st-card-title"><i class="bi bi-pencil-square"></i> By priority — Redesign <span class="st-scope">@redesignTotal ticket@(redesignTotal == 1 ? "" : "s")</span></div>
+                                @SprintPriorityTable(prioRedesigns, redesignTotal, "Redesigns")
+                            </div>
                         </div>
 
                         <div class="v2-grid-2">
@@ -887,11 +869,17 @@
 
     // Same priority breakdown as ByPriority, but scoped to the tickets that belonged to one
     // sprint — powers the per-sprint "breakdown of the breakdown" on the Sprints tab.
-    private IEnumerable<PriorityCount> SprintPriorityBreakdown(string sprintName) =>
-        BugsInSprint(sprintName)
+    // Passing an issueType ("Bug" / "Redesign") narrows the set to that type.
+    private IEnumerable<PriorityCount> SprintPriorityBreakdown(string sprintName, string? issueType = null)
+    {
+        var src = BugsInSprint(sprintName);
+        if (issueType is not null)
+            src = src.Where(b => string.Equals(b.IssueType, issueType, StringComparison.OrdinalIgnoreCase));
+        return src
              .GroupBy(b => string.IsNullOrWhiteSpace(b.Priority) ? "Medium" : b.Priority)
              .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g)))
              .OrderBy(p => { var i = Array.IndexOf(PriorityOrder, p.Name); return i < 0 ? 99 : i; });
+    }
 
     // Avg logged worklog effort (hours) from first "Dev Ready" transition until resolution,
     // across done bugs that have both timestamps. Same approach as the support-bugs dashboard.
@@ -1587,6 +1575,39 @@
             <div class="v2-kpi-sub">@s.SlaBreached past SLA · avg age @($"{s.AvgOpenAgeDays:0}")d</div>
         </div>
     </div>;
+
+    // Per-sprint priority table for one issue type (Bugs / Redesign on the Sprints tab).
+    // Share is computed within the subset, so each table reads as 100% of its own type.
+    private RenderFragment SprintPriorityTable(IReadOnlyList<PriorityCount> rows, int total, string unitLabel) => @<text>
+        @if (total == 0)
+        {
+            <div class="st-muted-cell" style="padding:6px 2px">No @unitLabel.ToLowerInvariant() belonged to this sprint.</div>
+        }
+        else
+        {
+            <div class="v2-table-wrap" style="margin:0">
+                <table class="v2-table" style="font-size:12px">
+                    <thead><tr>
+                        <th>Priority</th><th class="v2-table-num">@unitLabel</th><th class="v2-table-num">Open</th>
+                        <th class="v2-table-num">Done</th><th class="v2-table-num" title="Avg logged effort from first Dev Ready → Done">Avg Fix</th><th class="v2-table-num">Share</th>
+                    </tr></thead>
+                    <tbody>
+                        @foreach (var p in rows)
+                        {
+                            <tr>
+                                <td><span class="v2-pill @PriorityPill(p.Name)">@p.Name</span></td>
+                                <td class="v2-table-num">@p.Total</td>
+                                <td class="v2-table-num">@p.Open</td>
+                                <td class="v2-table-num v2-text-success">@p.Closed</td>
+                                <td class="v2-table-num">@(p.AvgFixHours.HasValue ? $"{p.AvgFixHours:0.0}h" : "—")</td>
+                                <td class="v2-table-num">@ShareCell(p.Total, total)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </text>;
 
     // Compact per-sprint breakdown table (customer / label / worked-by on the Sprints tab).
     // shareByLogged → the Share column is % of logged hours (worked-by) instead of % of bugs.
