@@ -1,0 +1,1049 @@
+@page "/sprint-progress"
+@rendermode InteractiveServer
+@using System.Globalization
+@using JiraReportingTool.Models
+@inject IJiraService JiraService
+@inject ISprintPlanService PlanService
+@inject TeamRosterService RosterService
+@inject SprintConfigService SprintConfig
+@inject IConfiguration Config
+
+<PageTitle>Sprint Planning Progress</PageTitle>
+
+<div class="sp-page">
+
+    <div class="sp-title-row">
+        <h3>Sprint Planning Progress</h3>
+        @if (_loadedOnce)
+        {
+            <span class="sp-freshness" title="When the sprint data was last fetched from Jira">
+                Data as of @(((_report?.SyncedAt) ?? _loadedAt)?.ToString("dd-MMM HH:mm"))
+            </span>
+        }
+    </div>
+
+    <div class="v2-card sp-toolbar">
+        <div class="sp-field">
+            <label>Sprint plan</label>
+            <select class="v2-select" value="@(_selectedPlanId?.ToString() ?? "")" @onchange="OnPlanChanged">
+                <option value="">— No plan (actuals only) —</option>
+                @foreach (var p in _plans)
+                {
+                    <option value="@p.Id">@($"{p.Name} ({p.SprintStart:dd-MMM} – {p.SprintEnd:dd-MMM})")</option>
+                }
+            </select>
+        </div>
+        <div class="sp-field">
+            <label>Jira sprint id</label>
+            <input class="v2-input sp-sprint-input" type="number" @bind="_sprintIdInput" />
+        </div>
+        <button class="btn primary" disabled="@(_loading || _sprintIdInput is not > 0)" @onclick="() => LoadAsync(false)">
+            @if (_loading)
+            {
+                <span class="spinner-border spinner-border-sm me-1" role="status"></span>
+            }
+            Load
+        </button>
+        <button class="btn" disabled="@(_loading || _sprintIdInput is not > 0)" @onclick="() => LoadAsync(true)"
+                title="Bypass the cache and fetch fresh data from Jira">
+            Refresh
+        </button>
+        <div class="sp-field">
+            <label>Member</label>
+            <select class="v2-select" value="@(_selectedMemberId?.ToString() ?? "")" @onchange="OnMemberChanged" disabled="@(!_loadedOnce)">
+                <option value="">All members</option>
+                @foreach (var team in _members.GroupBy(m => m.Team))
+                {
+                    <optgroup label="@team.Key">
+                        @foreach (var m in team)
+                        {
+                            <option value="@m.Id">@m.Name</option>
+                        }
+                    </optgroup>
+                }
+            </select>
+        </div>
+        <label class="sp-check">
+            <input type="checkbox" @bind="_showWeekends" @bind:after="OnWeekendsToggled" /> Weekends
+        </label>
+        @if (_loadedOnce)
+        {
+            <span class="sp-range">@_sprintStart.ToString("dd-MMM") → @_sprintEnd.ToString("dd-MMM") · @_report?.SprintName</span>
+        }
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="sp-banner sp-banner-error">@_error</div>
+    }
+    @if (_loadedOnce && _plan is null)
+    {
+        <div class="sp-banner sp-banner-info">No sprint plan selected — showing actuals only (no planned hours, no unplanned flags).</div>
+    }
+
+    @if (!_loadedOnce && !_loading)
+    {
+        <div class="v2-card sp-empty-state">
+            Enter a Jira sprint id and press <strong>Load</strong> to see planned vs logged work for the sprint.
+        </div>
+    }
+    else if (_loadedOnce)
+    {
+        @if (_selectedMemberId is null)
+        {
+            <!-- ═══ ALL-MEMBERS OVERVIEW GRID ═══════════════════════════ -->
+            <div class="v2-card sp-grid-card">
+                <div class="sp-legend">
+                    <span class="sp-chip sp-chip-demo"><span class="k">KEY-1</span><span class="h">2h</span></span> logged (planned)
+                    <span class="sp-chip sp-chip-unplanned sp-chip-demo"><span class="k">KEY-2</span><span class="h">1h</span></span> logged (unplanned)
+                    <span class="sp-chip sp-chip-ghost sp-chip-demo"><span class="k">KEY-3</span><span class="h">4h</span></span> planned, nothing logged
+                    <span class="sp-legend-hint">Click a cell for the day's detail.</span>
+                </div>
+                <div class="sp-scroll">
+                    <table class="sp-table">
+                        <colgroup>
+                            <col class="sp-col-member" />
+                            @foreach (var d in _visibleDates)
+                            {
+                                <col class="sp-col-date" />
+                            }
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th class="sp-corner">Member</th>
+                                @foreach (var d in _visibleDates)
+                                {
+                                    <th class="sp-date-th @DayHeaderClass(d)">
+                                        <div class="sp-dow">@d.ToString("ddd")</div>
+                                        <div class="sp-dom">@d.Day</div>
+                                        <div class="sp-mon">@d.ToString("MMM")</div>
+                                        @if (_holidaySet.Contains(d))
+                                        {
+                                            <div class="sp-hol-tag">H</div>
+                                        }
+                                    </th>
+                                }
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var team in _members.GroupBy(m => m.Team))
+                            {
+                                <tr class="sp-team-row">
+                                    <td class="sp-team-label" colspan="@(_visibleDates.Count + 1)">@team.Key</td>
+                                </tr>
+                                @foreach (var mem in team)
+                                {
+                                    <tr>
+                                        <td class="sp-sticky-col">
+                                            <div class="sp-member-name">@mem.Name</div>
+                                            <div class="sp-member-sub">
+                                                @(mem.DailyHours > 0m ? $"{FormatHours(mem.DailyHours)}/day" : "—")
+                                                @if (_kpis.TryGetValue(mem.Id, out var mk))
+                                                {
+                                                    <span> · logged @FormatHours(mk.LoggedTotal)</span>
+                                                }
+                                            </div>
+                                        </td>
+                                        @foreach (var d in _visibleDates)
+                                        {
+                                            var planned = Planned(mem.Id, d);
+                                            var actual = Actual(mem.Id, d);
+                                            var p = planned.Sum(x => x.Hours);
+                                            var a = actual.Sum(x => x.Hours);
+                                            var off = _holidaySet.Contains(d) || _timeOffSet.Contains((mem.Id, d));
+                                            var elapsed = d <= Today;
+                                            <td class="sp-cell @(off ? "sp-dayoff" : "") @(d == Today ? "sp-cell-today" : "") @(IsWeekend(d) ? "sp-cell-we" : "")"
+                                                @onclick="() => OpenDetail(mem.Id, d)">
+                                                @if (off && planned.Count == 0 && actual.Count == 0)
+                                                {
+                                                    <div class="sp-off-label">@(_holidaySet.Contains(d) ? "Holiday" : "Off")</div>
+                                                }
+                                                else
+                                                {
+                                                    var chips = actual.Count > 0 ? null : planned;
+                                                    <div class="sp-cell-hours">
+                                                        <span class="sp-p" title="Planned">P @FormatHours(p)</span>
+                                                        <span class="sp-a @VarianceClass(p, a, elapsed)" title="Logged">A @FormatHours(a)</span>
+                                                    </div>
+                                                    @if (mem.DailyHours > 0m)
+                                                    {
+                                                        var pw = Math.Min(100.0, (double)(p / mem.DailyHours) * 100).ToString("0", CultureInfo.InvariantCulture);
+                                                        var aw = Math.Min(100.0, (double)(a / mem.DailyHours) * 100).ToString("0", CultureInfo.InvariantCulture);
+                                                        <div class="sp-cell-bars">
+                                                            <div class="sp-minibar"><div class="sp-minibar-fill sp-bar-p" style="width:@(pw)%"></div></div>
+                                                            <div class="sp-minibar"><div class="sp-minibar-fill @BarClass(p, a, elapsed)" style="width:@(aw)%"></div></div>
+                                                        </div>
+                                                    }
+                                                    <div class="sp-chips">
+                                                        @if (actual.Count > 0)
+                                                        {
+                                                            @foreach (var ai in actual.Take(MaxChips))
+                                                            {
+                                                                var suffix = !ai.IsUnplanned ? ""
+                                                                    : ai.PlannedForOther ? " (planned for another member)"
+                                                                    : " (not in plan)";
+                                                                <span class="sp-chip @(ai.IsUnplanned ? "sp-chip-unplanned" : "")"
+                                                                      title="@($"{ai.IssueKey} — {ai.Summary}{suffix}")">
+                                                                    <span class="k">@ai.IssueKey</span><span class="h">@FormatHours(ai.Hours)</span>
+                                                                </span>
+                                                            }
+                                                            @if (actual.Count > MaxChips)
+                                                            {
+                                                                <span class="sp-chip sp-chip-more">+@(actual.Count - MaxChips)</span>
+                                                            }
+                                                        }
+                                                        else if (chips is not null && chips.Count > 0)
+                                                        {
+                                                            @foreach (var pi in chips.Take(MaxChips))
+                                                            {
+                                                                <span class="sp-chip sp-chip-ghost" style="@(pi.IsCustom ? $"border-color:{pi.Color};color:{pi.Color};" : "")"
+                                                                      title="Planned: @pi.Label">
+                                                                    <span class="k">@(pi.JiraKey ?? pi.Label)</span><span class="h">@FormatHours(pi.Hours)</span>
+                                                                </span>
+                                                            }
+                                                            @if (chips.Count > MaxChips)
+                                                            {
+                                                                <span class="sp-chip sp-chip-more">+@(chips.Count - MaxChips)</span>
+                                                            }
+                                                        }
+                                                    </div>
+                                                }
+                                            </td>
+                                        }
+                                    </tr>
+                                }
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+        else
+        {
+            <!-- ═══ SINGLE-MEMBER DRILLDOWN ═════════════════════════════ -->
+            var selMember = _members.FirstOrDefault(m => m.Id == _selectedMemberId);
+            @if (selMember is null)
+            {
+                <div class="sp-banner sp-banner-info">Member not found — pick another member.</div>
+            }
+            else
+            {
+                var k = _kpis.TryGetValue(selMember.Id, out var kk) ? kk : null;
+                <div class="sp-member-head">
+                    <h4>@selMember.Name <span class="sp-member-team">@selMember.Team</span></h4>
+                    <button class="btn small" @onclick="() => OnMemberSelected(null)">← All members</button>
+                </div>
+                @if (k is not null)
+                {
+                    <div class="v2-kpi-grid sp-kpis">
+                        <div class="v2-kpi">
+                            <div class="v2-kpi-head">Logged vs planned (to date)</div>
+                            <div class="v2-kpi-value">@FormatHours(k.LoggedToDate) <span class="v2-kpi-of">/ @FormatHours(k.PlannedToDate)</span></div>
+                            <div class="v2-kpi-sub">Whole sprint: @FormatHours(k.LoggedTotal) / @FormatHours(k.PlannedTotal)</div>
+                        </div>
+                        <div class="v2-kpi @(k.UtilizationPct >= 75 ? "v2-kpi-success" : k.UtilizationPct >= 50 ? "v2-kpi-warn" : "v2-kpi-danger")">
+                            <div class="v2-kpi-head">Utilization (to date)</div>
+                            <div class="v2-kpi-value">@k.UtilizationPct.ToString("0")%</div>
+                            <div class="v2-kpi-sub">of @FormatHours(k.CapacityToDate) capacity</div>
+                        </div>
+                        <div class="v2-kpi @(_plan is null ? "v2-kpi-neutral" : k.AdherencePct >= 75 ? "v2-kpi-success" : k.AdherencePct >= 50 ? "v2-kpi-warn" : "v2-kpi-danger")">
+                            <div class="v2-kpi-head">Plan adherence</div>
+                            <div class="v2-kpi-value">@(_plan is null ? "—" : $"{k.AdherencePct:0}%")</div>
+                            <div class="v2-kpi-sub">of logged time on planned tickets</div>
+                        </div>
+                        <div class="v2-kpi @(k.UnplannedHours > 0m ? "v2-kpi-warn" : "v2-kpi-neutral")">
+                            <div class="v2-kpi-head">Unplanned work</div>
+                            <div class="v2-kpi-value">@(_plan is null ? "—" : FormatHours(k.UnplannedHours))</div>
+                            <div class="v2-kpi-sub">logged on tickets not planned for them</div>
+                        </div>
+                        <div class="v2-kpi @(k.DaysNoLogs > 0 ? "v2-kpi-danger" : "v2-kpi-success")">
+                            <div class="v2-kpi-head">Days without logs</div>
+                            <div class="v2-kpi-value">@k.DaysNoLogs</div>
+                            <div class="v2-kpi-sub">elapsed working days with 0h logged</div>
+                        </div>
+                        @if (k.OutsideRangeHours > 0m)
+                        {
+                            <div class="v2-kpi v2-kpi-neutral">
+                                <div class="v2-kpi-head">Hidden weekend hours</div>
+                                <div class="v2-kpi-value">@FormatHours(k.OutsideRangeHours)</div>
+                                <div class="v2-kpi-sub">logged on weekends — enable Weekends to see them</div>
+                            </div>
+                        }
+                    </div>
+                }
+                <div class="sp-days">
+                    @foreach (var d in _visibleDates)
+                    {
+                        @DayDetail(selMember.Id, d)
+                    }
+                </div>
+            }
+        }
+    }
+
+    @if (_detail is not null)
+    {
+        var det = _detail.Value;
+        var detMember = _members.FirstOrDefault(m => m.Id == det.MemberId);
+        <div class="sp-backdrop" @onclick="CloseDetail"></div>
+        <div class="sp-modal">
+            <div class="sp-modal-head">
+                <strong>@detMember?.Name</strong>
+                <span class="sp-modal-actions">
+                    <button class="btn small" @onclick="() => OpenMemberView(det.MemberId)">Open member view</button>
+                    <button class="btn small" @onclick="CloseDetail">Close</button>
+                </span>
+            </div>
+            <div class="sp-modal-body">
+                @DayDetail(det.MemberId, det.Date)
+            </div>
+        </div>
+    }
+
+</div>
+
+@code {
+    // ── View state ─────────────────────────────────────────────
+    private bool _loading;
+    private bool _loadedOnce;
+    private string? _error;
+    private List<SprintPlanHeader> _plans = [];
+    private int? _selectedPlanId;
+    private int? _sprintIdInput;
+    private Guid? _selectedMemberId;
+    private bool _showWeekends;
+    private (Guid MemberId, DateOnly Date)? _detail;
+
+    private SprintPlanHeader? _plan;
+    private SprintReport? _report;
+    private DateTime? _loadedAt;
+    private DateOnly? _cfgStart, _cfgEnd;
+
+    private List<RosterMember> _allRoster = [];
+    private HashSet<DateOnly> _sharedHolidaySet = [];
+    private List<SprintConfig> _sprintConfigs = [];
+    private string? _supportBugEpicKey;
+    private HashSet<Guid> _supportBugPlannedMembers = [];
+
+    private DateOnly _sprintStart, _sprintEnd;
+    private List<DateOnly> _visibleDates = [];
+
+    private const int MaxChips = 3;
+    private static DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private string JiraBrowse => (Config["Jira:BaseUrl"] ?? "").TrimEnd('/') + "/browse/";
+
+    // ── Precomputed lookups (rebuilt in BuildLookups) ──────────
+    private sealed record MemberVm(Guid Id, string Name, string Team, decimal DailyHours, bool InRoster);
+    private sealed record PlannedItem(int TaskId, string Label, string? JiraKey, decimal Hours, bool IsCustom, string Color, string EpicKey);
+    private sealed record WorklogVm(string IssueKey, decimal Hours, string Comment, string Author, DateTime Started);
+    private sealed record ActualItem(string IssueKey, string Summary, decimal Hours, bool IsUnplanned, bool PlannedForOther, List<WorklogVm> Logs);
+    private sealed record MemberKpis(decimal PlannedTotal, decimal LoggedTotal, decimal PlannedToDate, decimal LoggedToDate,
+        decimal CapacityToDate, double UtilizationPct, double AdherencePct, decimal UnplannedHours,
+        int DaysNoLogs, decimal OutsideRangeHours);
+
+    private List<MemberVm> _members = [];
+    private Dictionary<(Guid, DateOnly), List<PlannedItem>> _plannedByCell = new();
+    private Dictionary<(Guid, DateOnly), List<ActualItem>> _actualByCell = new();
+    private Dictionary<Guid, HashSet<string>> _plannedKeysByMember = new();
+    private HashSet<string> _plannedKeysAll = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<DateOnly> _holidaySet = [];
+    private HashSet<(Guid, DateOnly)> _timeOffSet = [];
+    private Dictionary<Guid, MemberKpis> _kpis = new();
+    private Dictionary<Guid, decimal> _outsideRange = new();
+
+    // ── Init & load ────────────────────────────────────────────
+    protected override async Task OnInitializedAsync()
+    {
+        _allRoster = await RosterService.GetAllAsync();
+        _sharedHolidaySet = (await RosterService.GetHolidaysAsync()).Select(h => h.Date).ToHashSet();
+        _plans = await PlanService.GetAllAsync();
+
+        // Default plan: the one covering today; else the most recently updated.
+        _selectedPlanId = (_plans.FirstOrDefault(p => p.SprintStart <= Today && p.SprintEnd >= Today)
+                           ?? _plans.FirstOrDefault())?.Id;
+
+        _sprintConfigs = await SprintConfig.GetAllAsync();
+        var cfg = _sprintConfigs.FirstOrDefault(c => c.StartDate <= Today && c.EndDate >= Today);
+        _sprintIdInput = cfg?.SprintId;
+        _cfgStart = cfg?.StartDate;
+        _cfgEnd = cfg?.EndDate;
+
+        if (_sprintIdInput is > 0)
+            await LoadAsync(false);
+    }
+
+    private async Task LoadAsync(bool bypassCache)
+    {
+        if (_sprintIdInput is not > 0) { _error = "Enter a Jira sprint id."; return; }
+        _loading = true;
+        _error = null;
+        StateHasChanged();
+        try
+        {
+            _plan = _selectedPlanId is int id ? await PlanService.GetAsync(id) : null;
+            _report = await JiraService.GetDeliveryDataAsync(_sprintIdInput.Value, bypassCache);
+            _loadedAt = DateTime.Now;
+            _loadedOnce = true;
+            BuildAxis();
+            BuildLookups();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Load failed: {ex.Message}";
+        }
+        finally { _loading = false; }
+    }
+
+    private async Task OnPlanChanged(ChangeEventArgs e)
+    {
+        _selectedPlanId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+        if (!_loadedOnce) return;
+        _plan = _selectedPlanId is int pid ? await PlanService.GetAsync(pid) : null;
+        BuildAxis();
+        BuildLookups();
+    }
+
+    private void OnMemberChanged(ChangeEventArgs e)
+        => OnMemberSelected(Guid.TryParse(e.Value?.ToString(), out var g) ? g : null);
+
+    private void OnMemberSelected(Guid? id)
+    {
+        _selectedMemberId = id;
+        _detail = null;
+    }
+
+    private void OnWeekendsToggled()
+    {
+        if (!_loadedOnce) return;
+        BuildAxis();
+        BuildLookups();
+    }
+
+    private void OpenDetail(Guid memberId, DateOnly date) => _detail = (memberId, date);
+    private void CloseDetail() => _detail = null;
+
+    private void OpenMemberView(Guid memberId)
+    {
+        _detail = null;
+        _selectedMemberId = memberId;
+    }
+
+    // ── Axis ───────────────────────────────────────────────────
+    private void BuildAxis()
+    {
+        if (_plan is not null) { _sprintStart = _plan.SprintStart; _sprintEnd = _plan.SprintEnd; }
+        else if (_cfgStart is DateOnly cs && _cfgEnd is DateOnly ce) { _sprintStart = cs; _sprintEnd = ce; }
+        else if (_report is { StartDate: DateTime rs, EndDate: DateTime re })
+        { _sprintStart = DateOnly.FromDateTime(rs); _sprintEnd = DateOnly.FromDateTime(re); }
+        else { _sprintStart = Today.AddDays(-13); _sprintEnd = Today; }
+
+        if (_sprintEnd < _sprintStart) (_sprintStart, _sprintEnd) = (_sprintEnd, _sprintStart);
+
+        var all = Enumerable.Range(0, _sprintEnd.DayNumber - _sprintStart.DayNumber + 1)
+            .Select(i => _sprintStart.AddDays(i))
+            .ToList();
+        _visibleDates = _showWeekends ? all : all.Where(d => !IsWeekend(d)).ToList();
+    }
+
+    // ── Lookups ────────────────────────────────────────────────
+    private void BuildLookups()
+    {
+        _plannedByCell = new();
+        _actualByCell = new();
+        _plannedKeysByMember = new();
+        _plannedKeysAll = new(StringComparer.OrdinalIgnoreCase);
+        _holidaySet = new HashSet<DateOnly>(_sharedHolidaySet);
+        _timeOffSet = new();
+        _kpis = new();
+        _outsideRange = new();
+        _supportBugPlannedMembers = new();
+
+        // Support Bug Epic for the loaded sprint (Dashboard Config → Sprint Configurations):
+        // prefer the config row matching the loaded Jira sprint id, else the current row.
+        var sbCfg = _sprintConfigs.FirstOrDefault(c => c.SprintId != 0 && c.SprintId == _sprintIdInput)
+                 ?? _sprintConfigs.FirstOrDefault(c => c.StartDate <= Today && c.EndDate >= Today);
+        _supportBugEpicKey = string.IsNullOrWhiteSpace(sbCfg?.EpicKey) ? null : sbCfg!.EpicKey.Trim();
+
+        if (_plan is not null)
+        {
+            foreach (var h in _plan.Holidays) _holidaySet.Add(h.Date);
+            foreach (var t in _plan.TimeOffs) _timeOffSet.Add((t.MemberId, t.Date));
+        }
+
+        // Members: active roster first (roster order), then plan-referenced members not in
+        // the roster ("Former Members"), then unmatched worklog authors ("Not in roster").
+        var members = new List<MemberVm>();
+        var byId = new Dictionary<Guid, MemberVm>();
+        foreach (var r in _allRoster.Where(r => r.Active).OrderBy(r => r.Team).ThenBy(r => r.SortOrder).ThenBy(r => r.Name))
+        {
+            var vm = new MemberVm(MemberId(r.Name, r.Team), r.Name, r.Team, r.HoursPerDay > 0m ? r.HoursPerDay : 6m, true);
+            if (byId.TryAdd(vm.Id, vm)) members.Add(vm);
+        }
+        if (_plan is not null)
+        {
+            foreach (var a in _plan.Allocations)
+            {
+                if (a.MemberId == default || byId.ContainsKey(a.MemberId)) continue;
+                var roster = _allRoster.FirstOrDefault(r => MemberId(r.Name, r.Team) == a.MemberId);
+                var name = !string.IsNullOrWhiteSpace(a.MemberName) ? a.MemberName : roster?.Name ?? "Unknown";
+                var vm = new MemberVm(a.MemberId, name, roster?.Team ?? "Former Members",
+                    roster?.HoursPerDay > 0m ? roster!.HoursPerDay : 6m, roster is not null);
+                byId[vm.Id] = vm;
+                members.Add(vm);
+            }
+        }
+
+        var issueByKey = new Dictionary<string, SprintIssue>(StringComparer.OrdinalIgnoreCase);
+        var issueByJiraId = new Dictionary<string, SprintIssue>();
+        if (_report is not null)
+        {
+            foreach (var i in _report.Issues)
+            {
+                issueByKey.TryAdd(i.Key, i);
+                // JiraId is [NotMapped] → empty on cache hits; only useful after a live fetch.
+                if (!string.IsNullOrEmpty(i.JiraId)) issueByJiraId.TryAdd(i.JiraId, i);
+            }
+        }
+
+        // Planned cells + planned-key sets.
+        if (_plan is not null)
+        {
+            var customById = _plan.CustomTasks
+                .GroupBy(c => c.LocalId)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            foreach (var grp in _plan.Allocations.GroupBy(a => (a.MemberId, a.Date)))
+            {
+                var list = new List<PlannedItem>();
+                foreach (var taskGrp in grp.GroupBy(a => a.TaskId))
+                {
+                    var first = taskGrp.First();
+                    var hours = taskGrp.Sum(x => x.HoursAllocated);
+                    if (first.TaskId < 0)
+                    {
+                        customById.TryGetValue(first.TaskId, out var ct);
+                        var label = ct is not null ? $"{ct.Category}: {ct.Name}" : first.TaskLabel;
+                        var color = string.IsNullOrWhiteSpace(ct?.Color) ? "#64748b" : ct!.Color;
+                        list.Add(new PlannedItem(first.TaskId, label, null, hours, true, color, first.EpicKey));
+                    }
+                    else
+                    {
+                        var key = ResolveAllocationKey(first, issueByJiraId);
+                        list.Add(new PlannedItem(first.TaskId, first.TaskLabel, key, hours, false, "", first.EpicKey));
+                    }
+                }
+                _plannedByCell[grp.Key] = list.OrderByDescending(x => x.Hours).ToList();
+            }
+
+            foreach (var a in _plan.Allocations.Where(x => x.TaskId > 0))
+            {
+                var key = ResolveAllocationKey(a, issueByJiraId);
+                if (key is null) continue;
+                if (!_plannedKeysByMember.TryGetValue(a.MemberId, out var set))
+                    _plannedKeysByMember[a.MemberId] = set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                set.Add(key);
+                _plannedKeysAll.Add(key);
+            }
+
+            // Members with a "Support Bug" custom task anywhere in the plan — their logged
+            // work on tickets under the configured Support Bug Epic counts as planned.
+            _supportBugPlannedMembers = _plan.Allocations
+                .Where(a => a.TaskId < 0)
+                .Where(a => (customById.TryGetValue(a.TaskId, out var ct) &&
+                             ct.Category.Contains("Support Bug", StringComparison.OrdinalIgnoreCase))
+                         || a.TaskLabel.StartsWith("Support Bug", StringComparison.OrdinalIgnoreCase))
+                .Select(a => a.MemberId)
+                .ToHashSet();
+        }
+
+        // Actual cells: one pass over all worklogs; author→member memoized per identity.
+        var authorToMember = new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase);
+        var externals = new List<MemberVm>();
+
+        Guid ResolveAuthor(WorklogEntry w)
+        {
+            var idKey = !string.IsNullOrWhiteSpace(w.AuthorAccountId) ? "a:" + w.AuthorAccountId
+                      : !string.IsNullOrWhiteSpace(w.AuthorEmail) ? "e:" + w.AuthorEmail
+                      : "n:" + w.Author;
+            if (authorToMember.TryGetValue(idKey, out var known)) return known;
+
+            // Same priority as the planning page: accountId → email → display-name heuristic.
+            // Strong ids only decide when BOTH sides have a value.
+            bool Matches(RosterMember r)
+            {
+                if (!string.IsNullOrWhiteSpace(r.JiraAccountId) && !string.IsNullOrWhiteSpace(w.AuthorAccountId))
+                    return string.Equals(r.JiraAccountId, w.AuthorAccountId, StringComparison.OrdinalIgnoreCase);
+                if (!string.IsNullOrWhiteSpace(r.JiraEmail) && !string.IsNullOrWhiteSpace(w.AuthorEmail))
+                    return string.Equals(r.JiraEmail, w.AuthorEmail, StringComparison.OrdinalIgnoreCase);
+                return AuthorMatchesMember(w.Author, r.Name);
+            }
+
+            var match = _allRoster.Where(r => r.Active).FirstOrDefault(Matches)
+                        ?? _allRoster.FirstOrDefault(Matches);
+            Guid gid;
+            if (match is not null)
+            {
+                gid = MemberId(match.Name, match.Team);
+                if (!byId.ContainsKey(gid))
+                {
+                    // Inactive roster member with logs this sprint — still show their row.
+                    var vm = new MemberVm(gid, match.Name, match.Team, match.HoursPerDay > 0m ? match.HoursPerDay : 6m, true);
+                    byId[gid] = vm;
+                    members.Add(vm);
+                }
+            }
+            else
+            {
+                gid = MemberId(w.Author, "__external");
+                if (!byId.ContainsKey(gid))
+                {
+                    var vm = new MemberVm(gid, w.Author, "Not in roster", 0m, false);
+                    byId[gid] = vm;
+                    externals.Add(vm);
+                }
+            }
+            authorToMember[idKey] = gid;
+            return gid;
+        }
+
+        var cellLogs = new Dictionary<(Guid, DateOnly), Dictionary<string, List<WorklogVm>>>();
+        if (_report is not null)
+        {
+            foreach (var issue in _report.Issues)
+            {
+                foreach (var w in issue.Worklogs)
+                {
+                    if (string.IsNullOrWhiteSpace(w.Author) || w.TimeSpentSeconds <= 0) continue;
+                    var day = DateOnly.FromDateTime(w.Started.Date);
+                    // Sprint issues carry their full worklog history — logs outside this
+                    // sprint's range belong to other sprints and are ignored here.
+                    if (day < _sprintStart || day > _sprintEnd) continue;
+                    var gid = ResolveAuthor(w);
+                    var hours = w.TimeSpentSeconds / 3600m;
+                    if (!_showWeekends && IsWeekend(day))
+                    {
+                        _outsideRange[gid] = _outsideRange.GetValueOrDefault(gid) + hours;
+                        continue;
+                    }
+                    if (!cellLogs.TryGetValue((gid, day), out var byIssue))
+                        cellLogs[(gid, day)] = byIssue = new Dictionary<string, List<WorklogVm>>(StringComparer.OrdinalIgnoreCase);
+                    if (!byIssue.TryGetValue(issue.Key, out var logs))
+                        byIssue[issue.Key] = logs = new List<WorklogVm>();
+                    logs.Add(new WorklogVm(issue.Key, hours, w.Comment, w.Author, w.Started));
+                }
+            }
+        }
+
+        // A ticket under the configured Support Bug Epic counts as planned for members
+        // whose plan contains a "Support Bug" custom task.
+        bool IsSupportBugIssue(string key) =>
+            _supportBugEpicKey is not null
+            && issueByKey.TryGetValue(key, out var sbIss)
+            && string.Equals(sbIss.EpicKey?.Trim(), _supportBugEpicKey, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var (cell, byIssue) in cellLogs)
+        {
+            var plannedSet = _plannedKeysByMember.GetValueOrDefault(cell.Item1);
+            var coveredBySupportBug = _supportBugPlannedMembers.Contains(cell.Item1);
+            var items = byIssue.Select(kv =>
+            {
+                var logs = kv.Value.OrderBy(l => l.Started).ToList();
+                var hours = logs.Sum(l => l.Hours);
+                var isPlanned = plannedSet?.Contains(kv.Key) == true
+                    || (coveredBySupportBug && IsSupportBugIssue(kv.Key));
+                var summary = issueByKey.TryGetValue(kv.Key, out var iss) ? iss.Summary : "";
+                return new ActualItem(kv.Key, summary, hours,
+                    _plan is not null && !isPlanned,
+                    !isPlanned && _plannedKeysAll.Contains(kv.Key),
+                    logs);
+            })
+            .OrderByDescending(x => x.Hours)
+            .ToList();
+            _actualByCell[cell] = items;
+        }
+
+        _members = members.Concat(externals.OrderBy(x => x.Name)).ToList();
+
+        // KPIs per member.
+        foreach (var m in _members)
+        {
+            decimal plannedTotal = 0, plannedToDate = 0, loggedTotal = 0, loggedToDate = 0,
+                    capToDate = 0, unplanned = 0, plannedLogged = 0;
+            int daysNoLogs = 0;
+            foreach (var d in _visibleDates)
+            {
+                var p = _plannedByCell.TryGetValue((m.Id, d), out var pl) ? pl.Sum(x => x.Hours) : 0m;
+                var acts = _actualByCell.GetValueOrDefault((m.Id, d));
+                var a = acts?.Sum(x => x.Hours) ?? 0m;
+                plannedTotal += p;
+                loggedTotal += a;
+                if (acts is not null)
+                {
+                    unplanned += acts.Where(x => x.IsUnplanned).Sum(x => x.Hours);
+                    plannedLogged += acts.Where(x => !x.IsUnplanned).Sum(x => x.Hours);
+                }
+                if (d <= Today)
+                {
+                    plannedToDate += p;
+                    loggedToDate += a;
+                    var working = !IsWeekend(d) && !_holidaySet.Contains(d) && !_timeOffSet.Contains((m.Id, d));
+                    if (working && m.InRoster)
+                    {
+                        capToDate += m.DailyHours;
+                        if (a <= 0m) daysNoLogs++;
+                    }
+                }
+            }
+            var util = capToDate > 0m ? (double)(loggedToDate / capToDate) * 100 : 0;
+            var adher = loggedTotal > 0m ? (double)(plannedLogged / loggedTotal) * 100 : 0;
+            _kpis[m.Id] = new MemberKpis(plannedTotal, loggedTotal, plannedToDate, loggedToDate,
+                capToDate, util, adher, unplanned, daysNoLogs, _outsideRange.GetValueOrDefault(m.Id));
+        }
+    }
+
+    private static string? ResolveAllocationKey(SprintPlanAllocation a, Dictionary<string, SprintIssue> issueByJiraId)
+    {
+        var key = ExtractJiraKey(a.TaskLabel);
+        if (key is not null) return key;
+        return issueByJiraId.TryGetValue(a.TaskId.ToString(), out var issue) ? issue.Key : null;
+    }
+
+    // ── Small helpers ──────────────────────────────────────────
+    private List<PlannedItem> Planned(Guid memberId, DateOnly d)
+        => _plannedByCell.TryGetValue((memberId, d), out var l) ? l : [];
+
+    private List<ActualItem> Actual(Guid memberId, DateOnly d)
+        => _actualByCell.TryGetValue((memberId, d), out var l) ? l : [];
+
+    // Stable, deterministic Guid from member name+team — must match the planning page
+    // so plan allocations and this page's rows land on the same member id.
+    private static Guid MemberId(string name, string team) =>
+        new Guid(System.Security.Cryptography.MD5.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{name}:{team}")));
+
+    private static bool AuthorMatchesMember(string? author, string memberName)
+    {
+        if (string.IsNullOrWhiteSpace(author) || string.IsNullOrWhiteSpace(memberName)) return false;
+        var words = author.Split(new[] { ' ', '.', ',', '-', '_', '@', '(', ')', '\t' },
+                                 StringSplitOptions.RemoveEmptyEntries);
+        return words.Any(w => string.Equals(w, memberName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex JiraKeyRx =
+        new(@"^[A-Za-z][A-Za-z0-9]*-\d+$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // TaskLabel is "KEY - Summary (Est: …)" for Jira tasks — the key is the first token.
+    private static string? ExtractJiraKey(string label)
+    {
+        if (string.IsNullOrWhiteSpace(label)) return null;
+        var tok = label.Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        return tok is not null && JiraKeyRx.IsMatch(tok) ? tok.ToUpperInvariant() : null;
+    }
+
+    private static bool IsWeekend(DateOnly d)
+        => d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday;
+
+    private string DayHeaderClass(DateOnly d)
+        => d == Today ? "sp-col-today" : _holidaySet.Contains(d) ? "sp-col-holiday" : IsWeekend(d) ? "sp-col-we" : "";
+
+    private static string VarianceClass(decimal p, decimal a, bool elapsed)
+    {
+        if (!elapsed) return "";
+        if (a <= 0m) return p > 0m ? "sp-a-under" : "";
+        if (p <= 0m) return "sp-a-unplanned";
+        var tol = Math.Max(1m, p * 0.25m);
+        if (a >= p - tol && a <= p + tol) return "sp-a-ok";
+        return a < p ? "sp-a-under" : "sp-a-over";
+    }
+
+    private static string BarClass(decimal p, decimal a, bool elapsed) => VarianceClass(p, a, elapsed) switch
+    {
+        "sp-a-ok" => "sp-bar-ok",
+        "sp-a-under" => "sp-bar-under",
+        "sp-a-over" => "sp-bar-over",
+        "sp-a-unplanned" => "sp-bar-unplanned",
+        _ => "sp-bar-neutral"
+    };
+
+    private static string FormatHours(decimal h)
+    {
+        if (h == 0m) return "0h";
+        var abs = Math.Abs(h);
+        var hh = (int)Math.Floor(abs);
+        var mm = (int)Math.Round((abs - hh) * 60);
+        if (mm == 60) { hh++; mm = 0; }
+        var s = mm > 0 ? (hh > 0 ? $"{hh}h {mm}m" : $"{mm}m") : $"{hh}h";
+        return h < 0m ? "-" + s : s;
+    }
+
+    private static string Truncate(string s, int max)
+        => string.IsNullOrEmpty(s) || s.Length <= max ? s : s[..max].TrimEnd() + "…";
+
+    // ── Shared day-detail fragment (drilldown day cards + grid-cell modal) ──
+    private RenderFragment DayDetail(Guid memberId, DateOnly d) => __builder =>
+    {
+        var planned = Planned(memberId, d);
+        var actual = Actual(memberId, d);
+        var p = planned.Sum(x => x.Hours);
+        var a = actual.Sum(x => x.Hours);
+        var isHoliday = _holidaySet.Contains(d);
+        var isOff = _timeOffSet.Contains((memberId, d));
+        var isWe = IsWeekend(d);
+        var elapsed = d <= Today;
+
+        <div class="sp-day-card @(d == Today ? "sp-day-today" : "") @(isHoliday || isOff || isWe ? "sp-day-offday" : "")">
+            <div class="sp-day-head">
+                <span class="sp-day-date">@d.ToString("ddd dd MMM")</span>
+                @if (d == Today)
+                {
+                    <span class="v2-pill v2-pill-brand">Today</span>
+                }
+                @if (isHoliday)
+                {
+                    <span class="v2-pill v2-pill-neutral">Holiday</span>
+                }
+                @if (isOff)
+                {
+                    <span class="v2-pill v2-pill-neutral">Time off</span>
+                }
+                @if (isWe)
+                {
+                    <span class="v2-pill v2-pill-neutral">Weekend</span>
+                }
+                <span class="sp-day-totals">
+                    Planned @FormatHours(p) · Logged <span class="@VarianceClass(p, a, elapsed)">@FormatHours(a)</span>
+                </span>
+            </div>
+            <div class="sp-day-cols">
+                <div class="sp-day-col sp-day-planned">
+                    <div class="sp-col-head">Planned</div>
+                    @if (planned.Count == 0)
+                    {
+                        <div class="sp-empty">Nothing planned</div>
+                    }
+                    else
+                    {
+                        @foreach (var pi in planned)
+                        {
+                            <div class="sp-plan-item">
+                                @if (pi.IsCustom)
+                                {
+                                    <span class="sp-plan-dot" style="background:@pi.Color"></span>
+                                    <span class="sp-plan-label">@pi.Label</span>
+                                }
+                                else if (pi.JiraKey is not null)
+                                {
+                                    <a href="@(JiraBrowse + pi.JiraKey)" target="_blank">@pi.JiraKey</a>
+                                    <span class="sp-plan-label" title="@pi.Label">@Truncate(StripKeyPrefix(pi.Label, pi.JiraKey), 70)</span>
+                                }
+                                else
+                                {
+                                    <span class="sp-plan-label" title="@pi.Label">@Truncate(pi.Label, 70)</span>
+                                }
+                                <span class="sp-plan-hours">@FormatHours(pi.Hours)</span>
+                            </div>
+                        }
+                    }
+                </div>
+                <div class="sp-day-col">
+                    <div class="sp-col-head">Logged</div>
+                    @if (actual.Count == 0)
+                    {
+                        var missing = elapsed && !isHoliday && !isOff && !isWe;
+                        <div class="sp-empty @(missing ? "sp-empty-danger" : "")">No time logged</div>
+                    }
+                    else
+                    {
+                        @foreach (var ai in actual)
+                        {
+                            <div class="sp-log-item">
+                                <div class="sp-log-head">
+                                    <a href="@(JiraBrowse + ai.IssueKey)" target="_blank">@ai.IssueKey</a>
+                                    <span class="sp-log-summary" title="@ai.Summary">@Truncate(ai.Summary, 60)</span>
+                                    <span class="sp-log-hours">@FormatHours(ai.Hours)</span>
+                                    @if (ai.IsUnplanned)
+                                    {
+                                        <span class="v2-pill v2-pill-warn"
+                                              title="@(ai.PlannedForOther ? "Planned for another member" : "Not in the sprint plan")">Unplanned</span>
+                                    }
+                                </div>
+                                @foreach (var log in ai.Logs.Where(l => !string.IsNullOrWhiteSpace(l.Comment)))
+                                {
+                                    <div class="sp-log-comment" title="@log.Comment">@Truncate(log.Comment, 140)</div>
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    };
+
+    // "KEY - Summary (Est: …)" → "Summary (Est: …)" once the key is shown as a link.
+    private static string StripKeyPrefix(string label, string key)
+    {
+        var s = label.StartsWith(key, StringComparison.OrdinalIgnoreCase) ? label[key.Length..] : label;
+        return s.TrimStart(' ', '-');
+    }
+}
+
+<style>
+    .sp-page { display: flex; flex-direction: column; gap: 12px; }
+
+    .sp-title-row { display: flex; align-items: baseline; gap: 12px; }
+    .sp-title-row h3 { margin: 0; }
+    .sp-freshness { font-size: 12px; color: var(--txt-3); }
+
+    /* ── Toolbar ─────────────────────────────────────────── */
+    .sp-toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; padding: 12px 16px; }
+    .sp-field { display: flex; flex-direction: column; gap: 3px; }
+    .sp-field label { font-size: 11px; font-weight: 600; color: var(--txt-3); text-transform: uppercase; letter-spacing: .03em; }
+    .sp-sprint-input { width: 110px; }
+    .sp-check { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--txt-2); margin-bottom: 6px; }
+    .sp-range { font-size: 12.5px; color: var(--txt-3); margin-bottom: 8px; }
+
+    .sp-banner { padding: 10px 14px; border-radius: 8px; font-size: 13.5px; }
+    .sp-banner-error { background: var(--danger-light, #fee2e2); border: 1px solid var(--danger-border, #fecaca); color: var(--danger); }
+    .sp-banner-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; }
+
+    .sp-empty-state { padding: 32px; text-align: center; color: var(--txt-3); }
+
+    /* ── Overview grid ───────────────────────────────────── */
+    .sp-grid-card { padding: 12px; }
+    .sp-legend { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 12px; color: var(--txt-3); margin-bottom: 10px; }
+    .sp-legend-hint { margin-left: auto; }
+    .sp-chip-demo { pointer-events: none; }
+
+    .sp-scroll { overflow: auto; max-height: calc(100vh - 280px); border: 1px solid var(--border); border-radius: 8px; }
+    .sp-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: max-content; min-width: 100%; }
+    .sp-col-member { width: 180px; }
+    .sp-col-date { width: 148px; }
+
+    .sp-corner {
+        position: sticky; left: 0; top: 0; z-index: 5;
+        background: var(--surface-2); border-bottom: 2px solid var(--border); border-right: 1px solid var(--border);
+        font-size: 12px; color: var(--txt-3); text-align: left; padding: 8px 10px;
+    }
+    .sp-date-th {
+        position: sticky; top: 0; z-index: 3;
+        background: var(--surface-2); border-bottom: 2px solid var(--border); border-right: 1px solid var(--border);
+        text-align: center; padding: 6px 4px; font-weight: 500;
+    }
+    .sp-dow { font-size: 11px; color: var(--txt-3); text-transform: uppercase; }
+    .sp-dom { font-size: 16px; font-weight: 700; color: var(--txt-1); line-height: 1.1; }
+    .sp-mon { font-size: 10.5px; color: var(--txt-4); }
+    .sp-hol-tag { font-size: 10px; font-weight: 700; color: var(--danger); }
+    .sp-col-today { background: #fef3c7; }
+    .sp-col-we { background: #f1f5f9; }
+    .sp-col-holiday { background: #fee2e2; }
+
+    .sp-team-row .sp-team-label {
+        position: sticky; left: 0; z-index: 1;
+        background: var(--surface-2); color: var(--txt-2); font-size: 11.5px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: .04em; padding: 5px 10px;
+        border-bottom: 1px solid var(--border); border-top: 1px solid var(--border);
+    }
+    .sp-sticky-col {
+        position: sticky; left: 0; z-index: 2;
+        background: var(--surface); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+        padding: 8px 10px; vertical-align: top;
+    }
+    .sp-member-name { font-size: 13px; font-weight: 600; color: var(--txt-1); }
+    .sp-member-sub { font-size: 11px; color: var(--txt-4); }
+
+    .sp-cell {
+        border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+        vertical-align: top; padding: 5px 6px; cursor: pointer; transition: background .1s;
+    }
+    .sp-cell:hover { background: #f0f7ff; }
+    .sp-cell-today { box-shadow: inset 0 3px 0 var(--warning, #b45309); }
+    .sp-cell-we { background: #f8fafc; }
+    .sp-dayoff {
+        background: repeating-linear-gradient(45deg, #f8fafc, #f8fafc 6px, #eef2f7 6px, #eef2f7 12px);
+    }
+    .sp-off-label { font-size: 11px; color: var(--txt-4); text-align: center; padding: 8px 0; }
+
+    .sp-cell-hours { display: flex; justify-content: space-between; gap: 4px; font-size: 11px; margin-bottom: 3px; white-space: nowrap; }
+    .sp-p { color: var(--txt-3); }
+    .sp-a { font-weight: 600; color: var(--txt-2); }
+    .sp-a-ok { color: var(--success); }
+    .sp-a-under { color: var(--warning); }
+    .sp-a-over { color: var(--danger); }
+    .sp-a-unplanned { color: #b45309; }
+
+    .sp-cell-bars { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
+    .sp-minibar { height: 3px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
+    .sp-minibar-fill { height: 100%; border-radius: 2px; }
+    .sp-bar-p { background: #94a3b8; }
+    .sp-bar-neutral { background: #cbd5e1; }
+    .sp-bar-ok { background: var(--success); }
+    .sp-bar-under { background: var(--warning); }
+    .sp-bar-over { background: var(--danger); }
+    .sp-bar-unplanned { background: #f59e0b; }
+
+    .sp-chips { display: flex; flex-direction: column; gap: 2px; }
+    .sp-chip {
+        display: flex; justify-content: space-between; align-items: baseline; gap: 4px;
+        font-size: 10.5px; line-height: 1.3; padding: 1.5px 5px; border-radius: 4px;
+        background: #dbeafe; border: 1px solid #bfdbfe; color: #1e40af; overflow: hidden;
+    }
+    .sp-chip .k { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sp-chip .h { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .sp-chip-unplanned { background: #fef3c7; border: 1px dashed #f59e0b; color: #92400e; }
+    .sp-chip-ghost { background: transparent; border: 1px dashed #cbd5e1; color: var(--txt-3); }
+    .sp-chip-more { justify-content: center; background: transparent; border: none; color: var(--txt-4); padding: 0; }
+
+    /* ── Drilldown ───────────────────────────────────────── */
+    .sp-member-head { display: flex; align-items: center; gap: 12px; }
+    .sp-member-head h4 { margin: 0; }
+    .sp-member-team { font-size: 12.5px; font-weight: 400; color: var(--txt-3); margin-left: 6px; }
+    .sp-kpis { margin-bottom: 4px; }
+
+    .sp-days { display: flex; flex-direction: column; gap: 10px; }
+    .sp-day-card { border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--sh-xs); overflow: hidden; }
+    .sp-day-today { border-color: var(--warning, #b45309); box-shadow: 0 0 0 1px var(--warning, #b45309); }
+    .sp-day-offday .sp-day-head { background: repeating-linear-gradient(45deg, #f8fafc, #f8fafc 6px, #eef2f7 6px, #eef2f7 12px); }
+    .sp-day-head {
+        display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+        background: var(--surface-2); border-bottom: 1px solid var(--border);
+    }
+    .sp-day-date { font-size: 13px; font-weight: 700; color: var(--txt-1); }
+    .sp-day-totals { margin-left: auto; font-size: 12.5px; color: var(--txt-3); white-space: nowrap; }
+    .sp-day-totals span { font-weight: 600; }
+
+    .sp-day-cols { display: grid; grid-template-columns: 1fr 1fr; }
+    .sp-day-col { padding: 10px 12px; min-width: 0; }
+    .sp-day-planned { border-right: 1px solid var(--border); }
+    .sp-col-head { font-size: 11px; font-weight: 700; color: var(--txt-4); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+    .sp-empty { font-size: 12.5px; color: var(--txt-4); font-style: italic; }
+    .sp-empty-danger { color: var(--danger); font-style: normal; font-weight: 600; }
+
+    .sp-plan-item { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; padding: 3px 0; min-width: 0; }
+    .sp-plan-item a { font-weight: 600; white-space: nowrap; }
+    .sp-plan-dot { width: 9px; height: 9px; border-radius: 3px; flex: none; align-self: center; }
+    .sp-plan-label { color: var(--txt-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .sp-plan-hours { margin-left: auto; font-weight: 600; color: var(--txt-2); white-space: nowrap; }
+
+    .sp-log-item { padding: 4px 0; border-bottom: 1px dashed var(--border); }
+    .sp-log-item:last-child { border-bottom: none; }
+    .sp-log-head { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; min-width: 0; }
+    .sp-log-head a { font-weight: 600; white-space: nowrap; }
+    .sp-log-summary { color: var(--txt-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .sp-log-hours { margin-left: auto; font-weight: 600; color: var(--txt-2); white-space: nowrap; }
+    .sp-log-comment { font-size: 11.5px; color: var(--txt-4); padding: 1px 0 1px 8px; border-left: 2px solid var(--border); margin: 2px 0 2px 2px; }
+
+    /* ── Modal ───────────────────────────────────────────── */
+    .sp-backdrop { position: fixed; inset: 0; background: rgba(15, 23, 42, .45); z-index: 60; }
+    .sp-modal {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        width: min(860px, calc(100vw - 32px)); max-height: 84vh; display: flex; flex-direction: column;
+        background: var(--surface); border-radius: 12px; box-shadow: var(--sh-md); z-index: 61; overflow: hidden;
+    }
+    .sp-modal-head {
+        display: flex; align-items: center; justify-content: space-between; gap: 12px;
+        padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--surface-2);
+    }
+    .sp-modal-actions { display: flex; gap: 8px; }
+    .sp-modal-body { padding: 14px 16px; overflow-y: auto; }
+    .sp-modal-body .sp-day-card { box-shadow: none; }
+</style>

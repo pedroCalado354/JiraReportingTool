@@ -59,11 +59,25 @@ public interface IJiraService
     Task<SprintReport> GetBugsByJqlAsync(string rawJql);
 
     /// <summary>
-    /// Fetches bugs created inside the given window (project JM) with issue links populated
-    /// (SprintIssue.LinkedIssueKeys) so callers can filter by linked issues — e.g. bugs
-    /// relating to JSSUPPORT tickets. Not cached.
+    /// Fetches bugs created OR updated inside the given window (project JM, from 00:00 of the
+    /// start date) with issue links populated (SprintIssue.LinkedIssueKeys) so callers can
+    /// filter by linked issues — e.g. bugs relating to JSSUPPORT tickets. Not cached.
     /// </summary>
     Task<SprintReport> GetBugsWithLinksAsync(DateOnly createdFrom, DateOnly createdTo);
+
+    /// <summary>
+    /// DB-cached variant of GetEpicBugsAsync(epicKey, bugsOnly: false) for Support Trends.
+    /// Closed sprints (sprintEnd more than the hot window ago, and synced after that point)
+    /// are served from the DB forever; otherwise only issues updated inside the hot window
+    /// (default 5 days) are re-fetched and merged over the stored report.
+    /// </summary>
+    Task<SprintReport> GetSupportEpicBugsAsync(string epicKey, DateOnly? sprintEnd, bool forceRefresh = false);
+
+    /// <summary>
+    /// DB-cached variant of GetBugsWithLinksAsync for Support Trends: the stored report is
+    /// incrementally refreshed with bugs updated inside the hot window (default 5 days).
+    /// </summary>
+    Task<SprintReport> GetJsSupportLinkedBugsAsync(DateOnly from, DateOnly to, bool forceRefresh = false);
 
     /// <summary>
     /// Fetches bugs from a raw JQL string, additionally resolving the "JS Project" (Product) radio-button field.

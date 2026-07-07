@@ -855,7 +855,27 @@ public class JiraService : IJiraService
         return report;
     }
 
-    public async Task<SprintReport> GetEpicBugsAsync(string epicKey, bool bugsOnly = true)
+    public Task<SprintReport> GetEpicBugsAsync(string epicKey, bool bugsOnly = true)
+        => GetEpicBugsCoreAsync(epicKey, bugsOnly, updatedSinceDays: null);
+
+    /// <summary>
+    /// Delta variant of GetEpicBugsAsync: only issues under the epic whose `updated` date is
+    /// within the last <paramref name="sinceDays"/> days. Used by the cache layer to refresh
+    /// just the recently-touched slice of a stored epic report (a new worklog or status change
+    /// bumps `updated`, so this catches everything that moved).
+    /// </summary>
+    public Task<SprintReport> GetEpicBugsUpdatedSinceAsync(string epicKey, bool bugsOnly, int sinceDays)
+        => GetEpicBugsCoreAsync(epicKey, bugsOnly, updatedSinceDays: sinceDays);
+
+    // Live (uncached) implementations of the Support Trends cached-fetch interface methods —
+    // caching policy lives in JiraCacheService; here the extra parameters are ignored.
+    public Task<SprintReport> GetSupportEpicBugsAsync(string epicKey, DateOnly? sprintEnd, bool forceRefresh = false)
+        => GetEpicBugsCoreAsync(epicKey, bugsOnly: false, updatedSinceDays: null);
+
+    public Task<SprintReport> GetJsSupportLinkedBugsAsync(DateOnly from, DateOnly to, bool forceRefresh = false)
+        => GetBugsWithLinksAsync(from, to);
+
+    private async Task<SprintReport> GetEpicBugsCoreAsync(string epicKey, bool bugsOnly, int? updatedSinceDays)
     {
         var epicResponse = await _httpClient.GetAsync(
             $"{_baseUrl}/rest/api/3/issue/{epicKey}?fields=summary");
@@ -871,13 +891,16 @@ public class JiraService : IJiraService
         // bugsOnly=false → every issue type under the epic, matching a Jira "parent = EPIC"
         // filter — used for worklog reconciliation so logged-hour totals line up with Jira.
         var typeClause = bugsOnly ? "issueType = Bug" : "issueType != Epic";
+        var updatedClause = updatedSinceDays is int d ? $" AND updated >= -{d}d" : "";
         var jql = Uri.EscapeDataString(
-            $"{typeClause} AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\") ORDER BY created ASC");
+            $"{typeClause} AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\"){updatedClause} ORDER BY created ASC");
         var customerFieldId = await GetCustomerFieldIdAsync();
+        var jsProjectFieldId = await GetJsProjectFieldIdAsync();
         var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10020,parent,created,resolutiondate,duedate,labels"
-            + (customerFieldId != null ? $",{customerFieldId}" : "");
+            + (customerFieldId != null ? $",{customerFieldId}" : "")
+            + (jsProjectFieldId != null ? $",{jsProjectFieldId}" : "");
         var json = await FetchAllPagesAsync(jql, fields);
-        var (report, truncated) = ParseSprintReport(json, "", customerFieldId);
+        var (report, truncated) = ParseSprintReport(json, "", customerFieldId, jsProjectFieldId);
         await FetchMissingWorklogsAsync(report, truncated);
         await FetchLifecycleTransitionsAsync(report.Issues);
 
@@ -977,18 +1000,26 @@ public class JiraService : IJiraService
     }
 
     /// <summary>
-    /// Bugs created inside the given window (project JM), with <see cref="SprintIssue.LinkedIssueKeys"/>
-    /// populated so callers can filter by linked issues (e.g. bugs related to JSSUPPORT tickets). Not cached.
+    /// Bugs created or updated since 00:00 of the start date (project JM), with
+    /// <see cref="SprintIssue.LinkedIssueKeys"/> populated so callers can filter by linked
+    /// issues (e.g. bugs related to JSSUPPORT tickets). No upper bound on `updated`: adding a
+    /// worklog bumps it, so this catches every bug with worklog activity since the start date —
+    /// callers apply their own worklog-date filtering client-side. Not cached.
     /// </summary>
     public async Task<SprintReport> GetBugsWithLinksAsync(DateOnly createdFrom, DateOnly createdTo)
     {
         var customerFieldId = await GetCustomerFieldIdAsync();
-        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,created,duedate,labels,issuelinks"
-            + (customerFieldId != null ? $",{customerFieldId}" : "");
+        var jsProjectFieldId = await GetJsProjectFieldIdAsync();
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,created,resolutiondate,duedate,labels,issuelinks,customfield_10020"
+            + (customerFieldId != null ? $",{customerFieldId}" : "")
+            + (jsProjectFieldId != null ? $",{jsProjectFieldId}" : "");
         var jql = Uri.EscapeDataString(
-            $"project = JM AND issuetype = Bug AND createdDate >= \"{createdFrom:yyyy-MM-dd}\" AND createdDate <= \"{createdTo:yyyy-MM-dd}\" ORDER BY created DESC");
+            $"project = JM AND issuetype = Bug AND (" +
+            $"(createdDate >= \"{createdFrom:yyyy-MM-dd}\" AND createdDate <= \"{createdTo:yyyy-MM-dd}\") OR " +
+            $"updated >= \"{createdFrom:yyyy-MM-dd}\"" +
+            $") ORDER BY created DESC");
         var json = await FetchAllPagesAsync(jql, fields);
-        var (report, truncated) = ParseSprintReport(json, "", customerFieldId);
+        var (report, truncated) = ParseSprintReport(json, "", customerFieldId, jsProjectFieldId);
         await FetchMissingWorklogsAsync(report, truncated);
         return report;
     }

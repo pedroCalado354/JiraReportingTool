@@ -71,6 +71,38 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
                 v => v.Aggregate(0, (h, s) => HashCode.Combine(h, s.GetHashCode())),
                 v => v.ToList()));
 
+        // ── SprintIssue.LinkedIssueKeys → stored as JSON ─────────────────────
+        // Deserialize guards against "" — rows created before this column existed
+        // carry the migration's empty-string default, which is not valid JSON.
+        modelBuilder.Entity<SprintIssue>()
+            .Property(e => e.LinkedIssueKeys)
+            .HasConversion(
+                v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
+                v => string.IsNullOrEmpty(v)
+                    ? new()
+                    : System.Text.Json.JsonSerializer.Deserialize<List<string>>(v, (System.Text.Json.JsonSerializerOptions?)null) ?? new()
+            )
+            .HasColumnType("nvarchar(max)")
+            .Metadata.SetValueComparer(new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<string>>(
+                (a, b) => a != null && b != null && a.SequenceEqual(b),
+                v => v.Aggregate(0, (h, s) => HashCode.Combine(h, s.GetHashCode())),
+                v => v.ToList()));
+
+        // ── SprintIssue.Sprints (full sprint history) → stored as JSON ───────
+        modelBuilder.Entity<SprintIssue>()
+            .Property(e => e.Sprints)
+            .HasConversion(
+                v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions?)null),
+                v => string.IsNullOrEmpty(v)
+                    ? new()
+                    : System.Text.Json.JsonSerializer.Deserialize<List<IssueSprint>>(v, (System.Text.Json.JsonSerializerOptions?)null) ?? new()
+            )
+            .HasColumnType("nvarchar(max)")
+            .Metadata.SetValueComparer(new Microsoft.EntityFrameworkCore.ChangeTracking.ValueComparer<List<IssueSprint>>(
+                (a, b) => a != null && b != null && a.Count == b.Count,
+                v => v.Count,
+                v => v.ToList()));
+
         // ── SprintReport: unique lookup index on ReportIdentifier ────────────
         modelBuilder.Entity<SprintReport>()
             .HasIndex(s => s.ReportIdentifier)

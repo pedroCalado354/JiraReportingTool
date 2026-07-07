@@ -149,7 +149,7 @@ public class SprintReport
 
 /// <summary>
 /// One sprint an issue belongs to, parsed from a single entry of the Jira sprint field
-/// (customfield_10020). Transient — never persisted to the DB.
+/// (customfield_10020). Persisted as part of SprintIssue.Sprints (JSON column).
 /// </summary>
 public class IssueSprint
 {
@@ -193,9 +193,9 @@ public class SprintIssue
     /// Full ordered list of every sprint this issue has belonged to (from customfield_10020).
     /// The order is chronological — index 0 is the first sprint it entered, the last entry is
     /// its most recent sprint. Powers the sprint-over-sprint carry-over analysis on Support
-    /// Trends. Not persisted — only populated on API paths that request customfield_10020.
+    /// Trends. Persisted as a JSON column; only populated on API paths that request customfield_10020.
     /// </summary>
-    [NotMapped] public List<IssueSprint> Sprints { get; set; } = new();
+    public List<IssueSprint> Sprints { get; set; } = new();
     public List<WorklogEntry> Worklogs { get; set; } = new();
     public List<string> Labels { get; set; } = new();
     public DateTime? Created { get; set; }
@@ -205,17 +205,17 @@ public class SprintIssue
     [NotMapped] public bool      IsExpanded      { get; set; }
     public int                   QaRejectedCount { get; set; }
     [NotMapped] public string    JiraId          { get; set; } = "";
-    [NotMapped] public string    Customer        { get; set; } = "";
-    /// <summary>"JS Project[Radio Buttons]" field — Rentway Legacy / Rentway Pro / Integrations. Not persisted.</summary>
-    [NotMapped] public string    Product         { get; set; } = "";
+    public string                Customer        { get; set; } = "";
+    /// <summary>"JS Project[Radio Buttons]" field — Rentway Legacy / Rentway Pro / Integrations.</summary>
+    public string                Product         { get; set; } = "";
     [NotMapped] public DateTime? PrioListDate    { get; set; }
     /// <summary>Keys of all issues linked via issue links (inward + outward, any link type).
-    /// Only populated on API paths that request the "issuelinks" field. Not persisted.</summary>
-    [NotMapped] public List<string> LinkedIssueKeys { get; set; } = new();
-    /// <summary>First time the issue transitioned into the "Dev Ready" status (from changelog). Not persisted.</summary>
-    [NotMapped] public DateTime? DevReadyDate    { get; set; }
-    /// <summary>First time the issue transitioned into the "QA Ready" status (from changelog). Not persisted.</summary>
-    [NotMapped] public DateTime? QaReadyDate     { get; set; }
+    /// Only populated on API paths that request the "issuelinks" field. Persisted as JSON.</summary>
+    public List<string> LinkedIssueKeys { get; set; } = new();
+    /// <summary>First time the issue transitioned into the "Dev Ready" status (from changelog).</summary>
+    public DateTime? DevReadyDate    { get; set; }
+    /// <summary>First time the issue transitioned into the "QA Ready" status (from changelog).</summary>
+    public DateTime? QaReadyDate     { get; set; }
 
     [NotMapped] public int DaysSinceLastWorklog => Worklogs.Any()
         ? Math.Max(0, (int)(DateTime.Today - Worklogs.Max(w => w.Started).Date).TotalDays)

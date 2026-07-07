@@ -12,6 +12,7 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
 {
     private readonly bool _useCache = config.GetValue<bool>("Database:UseCache");
     private readonly int _ttlMinutes = config.GetValue<int>("Database:CacheTtlMinutes", 60);
+    private readonly int _hotWindowDays = config.GetValue<int>("Database:TrendsHotWindowDays", 5);
 
     private bool IsFresh(DateTime? syncedAt)
         => syncedAt.HasValue && (DateTime.UtcNow - syncedAt.Value).TotalMinutes < _ttlMinutes;
@@ -125,6 +126,118 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
         report.ReportIdentifier = key;
         if (_useCache) await repo.UpsertSprintReportAsync(report);
         return report;
+    }
+
+    // ── Support Trends: sprint-aware epic cache ─────────────────────────────
+    // Closed sprints are frozen in the DB; the current sprint only re-fetches the
+    // slice of issues updated inside the hot window (default 5 days) and merges it
+    // over the stored report. NOTE: not thread-safe across parallel calls (shared
+    // scoped DbContext) — callers must invoke sequentially.
+
+    public async Task<SprintReport> GetSupportEpicBugsAsync(string epicKey, DateOnly? sprintEnd, bool forceRefresh = false)
+    {
+        var key = $"epicbugs:{epicKey.ToUpperInvariant()}";
+
+        if (_useCache && !forceRefresh)
+        {
+            var cached = await repo.GetSprintReportAsync(key);
+            if (cached is { SyncedAt: not null } && cached.Issues.Count > 0)
+            {
+                // Frozen: the sprint ended more than a hot-window ago AND the stored copy
+                // was synced after that point — its final state is already captured.
+                if (sprintEnd is DateOnly end &&
+                    cached.SyncedAt.Value >= end.ToDateTime(TimeOnly.MinValue).AddDays(_hotWindowDays) &&
+                    DateTime.UtcNow >= end.ToDateTime(TimeOnly.MinValue).AddDays(_hotWindowDays))
+                    return cached;
+
+                // Hot: fetch only recently-updated issues and merge them over the cache.
+                // The window always covers the gap since the last sync, so nothing is missed
+                // even if the page wasn't opened for a while.
+                var sinceDays = HotSinceDays(cached.SyncedAt.Value);
+                var delta = await api.GetEpicBugsUpdatedSinceAsync(epicKey, bugsOnly: false, sinceDays);
+                var merged = MergeIssuesByKey(cached.Issues, delta.Issues);
+                var toStore = new SprintReport
+                {
+                    ReportIdentifier = key,
+                    ProjectKey  = cached.ProjectKey,
+                    SprintName  = cached.SprintName,
+                    StartDate   = cached.StartDate,
+                    EndDate     = cached.EndDate,
+                    JiraSprintId = cached.JiraSprintId,
+                    Issues      = merged
+                };
+                await repo.UpsertSprintReportAsync(toStore);
+                return toStore;
+            }
+        }
+
+        var report = await api.GetEpicBugsAsync(epicKey, bugsOnly: false);
+        report.ReportIdentifier = key;
+        if (_useCache) await repo.UpsertSprintReportAsync(report);
+        return report;
+    }
+
+    public async Task<SprintReport> GetJsSupportLinkedBugsAsync(DateOnly from, DateOnly to, bool forceRefresh = false)
+    {
+        const string key = "jssupportlinked:JM";
+
+        if (_useCache && !forceRefresh)
+        {
+            var cached = await repo.GetSprintReportAsync(key);
+            // The cached window must cover the requested one (a newly-configured older
+            // sprint widens `from` past the stored StartDate → full refetch).
+            if (cached is { SyncedAt: not null } && cached.Issues.Count > 0 &&
+                cached.StartDate.HasValue && DateOnly.FromDateTime(cached.StartDate.Value) <= from)
+            {
+                var sinceDays = HotSinceDays(cached.SyncedAt.Value);
+                var deltaFrom = DateOnly.FromDateTime(DateTime.Today.AddDays(-sinceDays));
+                var delta = await api.GetBugsWithLinksAsync(deltaFrom, to);
+                var merged = MergeIssuesByKey(cached.Issues, delta.Issues);
+                var toStore = new SprintReport
+                {
+                    ReportIdentifier = key,
+                    StartDate = cached.StartDate,
+                    EndDate   = to.ToDateTime(TimeOnly.MinValue),
+                    Issues    = merged
+                };
+                await repo.UpsertSprintReportAsync(toStore);
+                return toStore;
+            }
+        }
+
+        var report = await api.GetBugsWithLinksAsync(from, to);
+        report.ReportIdentifier = key;
+        report.StartDate = from.ToDateTime(TimeOnly.MinValue);
+        report.EndDate   = to.ToDateTime(TimeOnly.MinValue);
+        if (_useCache) await repo.UpsertSprintReportAsync(report);
+        return report;
+    }
+
+    /// <summary>Delta window in days: at least the hot window, stretched to cover the gap since the last sync.</summary>
+    private int HotSinceDays(DateTime syncedAtUtc)
+        => Math.Max(_hotWindowDays, (int)Math.Ceiling((DateTime.UtcNow - syncedAtUtc).TotalDays) + 1);
+
+    // Replaces cached issues with their fresh delta versions (matched by Key) and appends new
+    // ones. All entity ids are reset so the full-replace upsert re-inserts a clean graph.
+    private static List<SprintIssue> MergeIssuesByKey(List<SprintIssue> cachedIssues, List<SprintIssue> deltaIssues)
+    {
+        var merged = new Dictionary<string, SprintIssue>(StringComparer.OrdinalIgnoreCase);
+        foreach (var i in cachedIssues) merged[i.Key] = i;
+        foreach (var i in deltaIssues)  merged[i.Key] = i;
+
+        var list = merged.Values.ToList();
+        foreach (var issue in list)
+        {
+            issue.Id = 0;
+            issue.SprintReportId = null;
+            issue.JiraEpicReportId = null;
+            foreach (var w in issue.Worklogs)
+            {
+                w.Id = 0;
+                w.SprintIssueId = null;
+            }
+        }
+        return list;
     }
 
     public async Task<List<JiraFilter>> GetMyFiltersAsync()

@@ -283,7 +283,7 @@
                 <div class="v2-kpi-value">@($"{TaskHoursLoggedPerWorkday:F1}h")<span class="v2-kpi-of">/ workday</span></div>
                 @if (TaskDailyBurndownHours.Count > 1)
                 {
-                    @SparklineSvg(TaskDailyBurndownHours, "#6366f1")
+                    @SparklineSvg(TaskDailyBurndownHours, "#0d9488")
                 }
                 <div class="v2-kpi-sub">@($"{TaskTotalLoggedHours:F0}h logged") · projected @TaskProjectedFinishHours.ToString("F0")h by end</div>
             </div>
@@ -453,7 +453,7 @@
                 <div class="v2-kpi-value">@($"{HoursLoggedPerWorkday:F1}h")<span class="v2-kpi-of">/ workday</span></div>
                 @if (DailyBurndownHours.Count > 1)
                 {
-                    @SparklineSvg(DailyBurndownHours, "#6366f1")
+                    @SparklineSvg(DailyBurndownHours, "#0d9488")
                 }
                 <div class="v2-kpi-sub">@($"{TotalLoggedHours:F0}h logged") · projected @ProjectedFinishHours.ToString("F0")h by end</div>
             </div>
@@ -650,7 +650,7 @@
                     <div style="font-size:11px;font-weight:600;color:var(--v2-ink-3);margin-bottom:6px">By Status</div>
                     <div class="v2-bar-stack v2-tall-bar">
                         <span style="width:@(Pct(DoneCount, ActiveIssues.Count))%; background: linear-gradient(90deg,#10b981,#059669)" title="Done @DoneCount"></span>
-                        <span style="width:@(Pct(InProgressCount, ActiveIssues.Count))%; background: linear-gradient(90deg,#6366f1,#4f46e5)" title="In Progress @InProgressCount"></span>
+                        <span style="width:@(Pct(InProgressCount, ActiveIssues.Count))%; background: linear-gradient(90deg,#14b8a6,#0d9488)" title="In Progress @InProgressCount"></span>
                         <span style="width:@(Pct(ToDoCount, ActiveIssues.Count))%; background: linear-gradient(90deg,#94a3b8,#64748b)" title="To Do @ToDoCount"></span>
                     </div>
                     <div style="display:flex;gap:14px;margin:8px 0 18px;font-size:11px;color:var(--v2-ink-3)">
@@ -1728,7 +1728,7 @@
                     {
                         <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
                             <span class="v2-hint" style="min-width:120px">Burn (last 14d)</span>
-                            <div style="flex:1">@SparklineSvg(m.DailyHours, "#6366f1")</div>
+                            <div style="flex:1">@SparklineSvg(m.DailyHours, "#0d9488")</div>
                             <span class="v2-hint">avg @($"{(m.DailyHours.Count > 0 ? m.DailyHours.Average() : 0):F1}h/day")</span>
                         </div>
                     }
@@ -4196,7 +4196,7 @@
             hc.Value = headers[i];
             hc.Style.Font.Bold = true;
             hc.Style.Font.FontColor = XLColor.White;
-            hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#4f46e5");
+            hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#0d9488");
             hc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
             hc.Style.Alignment.Vertical   = XLAlignmentVerticalValues.Center;
         }
@@ -4213,7 +4213,7 @@
             var keyCell = ws.Cell(row, col++);
             keyCell.Value = e.Key;
             keyCell.SetHyperlink(new XLHyperlink($"{JiraBase}/browse/{e.Key}"));
-            keyCell.Style.Font.FontColor = XLColor.FromHtml("#4f46e5");
+            keyCell.Style.Font.FontColor = XLColor.FromHtml("#0d9488");
             keyCell.Style.Font.Underline = XLFontUnderlineValues.Single;
 
             ws.Cell(row, col++).Value = e.Name;
@@ -4247,7 +4247,7 @@
 
         // Totals
         var totRange = ws.Range(row, 1, row, headers.Length);
-        totRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#eef2ff");
+        totRange.Style.Fill.BackgroundColor = XLColor.FromHtml("#f0fdfa");
         totRange.Style.Font.Bold = true;
         ws.Cell(row, 1).Value = "TOTAL";
         ws.Cell(row, 5).Value = rows.Sum(e => e.Total);
@@ -5294,8 +5294,8 @@
         var sb = new System.Text.StringBuilder();
         sb.Append($"<svg viewBox=\"0 0 {w.ToString("F0", Inv)} {h.ToString("F0", Inv)}\" style=\"width:100%;height:220px\" preserveAspectRatio=\"none\">");
         sb.Append("<defs><linearGradient id=\"actualGrad\" x1=\"0\" x2=\"0\" y1=\"0\" y2=\"1\">");
-        sb.Append("<stop offset=\"0\" stop-color=\"#6366f1\" stop-opacity=\"0.18\"/>");
-        sb.Append("<stop offset=\"1\" stop-color=\"#6366f1\" stop-opacity=\"0\"/>");
+        sb.Append("<stop offset=\"0\" stop-color=\"#0d9488\" stop-opacity=\"0.18\"/>");
+        sb.Append("<stop offset=\"1\" stop-color=\"#0d9488\" stop-opacity=\"0\"/>");
         sb.Append("</linearGradient></defs>");
         // Subtle grid
         for (int i = 1; i < 4; i++)
@@ -5307,7 +5307,7 @@
         sb.Append($"<polyline fill=\"none\" stroke=\"#94a3b8\" stroke-width=\"1.5\" stroke-dasharray=\"5,4\" points=\"{idealPath}\"/>");
         if (!string.IsNullOrEmpty(projPath))
             sb.Append($"<polyline fill=\"none\" stroke=\"#10b981\" stroke-width=\"1.5\" stroke-dasharray=\"3,3\" points=\"{projPath}\"/>");
-        sb.Append($"<polyline fill=\"none\" stroke=\"#6366f1\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" points=\"{actPath}\"/>");
+        sb.Append($"<polyline fill=\"none\" stroke=\"#0d9488\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" points=\"{actPath}\"/>");
         sb.Append("</svg>");
         return new MarkupString(sb.ToString());
     }
@@ -5390,8 +5390,8 @@
         var sb2 = new System.Text.StringBuilder();
         sb2.Append($"<svg viewBox=\"0 0 {w.ToString("F0", Inv)} {h.ToString("F0", Inv)}\" style=\"width:100%;height:180px\" preserveAspectRatio=\"none\">");
         sb2.Append("<defs><linearGradient id=\"nbGrad\" x1=\"0\" x2=\"0\" y1=\"0\" y2=\"1\">");
-        sb2.Append("<stop offset=\"0\" stop-color=\"#7c3aed\" stop-opacity=\"0.18\"/>");
-        sb2.Append("<stop offset=\"1\" stop-color=\"#7c3aed\" stop-opacity=\"0\"/>");
+        sb2.Append("<stop offset=\"0\" stop-color=\"#059669\" stop-opacity=\"0.18\"/>");
+        sb2.Append("<stop offset=\"1\" stop-color=\"#059669\" stop-opacity=\"0\"/>");
         sb2.Append("</linearGradient></defs>");
         for (int i = 1; i < 4; i++)
         {
@@ -5402,7 +5402,7 @@
         sb2.Append($"<polyline fill=\"none\" stroke=\"#94a3b8\" stroke-width=\"1.5\" stroke-dasharray=\"5,4\" points=\"{idealPath}\"/>");
         if (!string.IsNullOrEmpty(projPath))
             sb2.Append($"<polyline fill=\"none\" stroke=\"#10b981\" stroke-width=\"1.5\" stroke-dasharray=\"3,3\" points=\"{projPath}\"/>");
-        sb2.Append($"<polyline fill=\"none\" stroke=\"#7c3aed\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" points=\"{actPath}\"/>");
+        sb2.Append($"<polyline fill=\"none\" stroke=\"#059669\" stroke-width=\"2.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\" points=\"{actPath}\"/>");
         sb2.Append("</svg>");
         return new MarkupString(sb2.ToString());
     }
@@ -5610,3 +5610,42 @@
 
     private static int TrkSignalOrder(string s) => s switch { "needs" => 0, "low" => 1, "soon" => 2, _ => 3 };
 }
+
+<style>
+    /* ── Teal / emerald palette — this page only ──
+       Re-tints the shared v2 design system tokens. This style block is only in
+       the DOM while delivery-v3 renders, so the other v2 pages keep the default
+       indigo/violet look from v2-dashboards.css. */
+    .v2-root {
+        --v2-bg-grad: radial-gradient(1200px 600px at 0% -10%, #e3f8f3 0%, transparent 50%),
+                      radial-gradient(900px 500px at 100% -5%, #e7f8ef 0%, transparent 55%),
+                      linear-gradient(180deg, #f5f7fb 0%, #f6faf9 100%);
+
+        --v2-brand:          #0d9488;
+        --v2-brand-2:        #059669;
+        --v2-brand-3:        #14b8a6;
+        --v2-brand-soft:     #f0fdfa;
+        --v2-brand-soft-2:   #ecfdf5;
+        --v2-brand-grad:     linear-gradient(135deg, #14b8a6 0%, #10b981 50%, #34d399 100%);
+        --v2-brand-grad-soft:linear-gradient(135deg, #f0fdfa 0%, #ecfdf5 50%, #f0fdf4 100%);
+
+        --v2-sh-glow: 0 0 0 1px rgba(20,184,166,0.10), 0 8px 28px rgba(20,184,166,0.18);
+    }
+
+    /* Shared v2 rules that hardcode indigo/violet instead of using the tokens */
+    .v2-hero::before {
+        background: radial-gradient(600px 200px at 0% 0%, rgba(20,184,166,0.08), transparent 60%),
+                    radial-gradient(500px 180px at 100% 100%, rgba(16,185,129,0.06), transparent 60%);
+    }
+    .v2-hero-icon { box-shadow: 0 8px 24px rgba(20,184,166,0.30); }
+    .v2-input:focus, .v2-select:focus { box-shadow: 0 0 0 3px rgba(20,184,166,0.16); }
+    .v2-btn-primary { box-shadow: 0 4px 12px rgba(20,184,166,0.30); }
+    .v2-btn-primary:not(:disabled):hover { box-shadow: 0 6px 18px rgba(20,184,166,0.42); }
+    .v2-btn-ghost .v2-spin { border-color: rgba(20,184,166,0.20); border-top-color: var(--v2-brand); }
+    .v2-alert-info { border-color: #99f6e4; }
+    .v2-pill-brand { border-color: #99f6e4; }
+    .v2-avatar:not(.v2-avatar-sm) { box-shadow: 0 2px 6px rgba(20,184,166,0.20); }
+    .v2-gauge::before { background: radial-gradient(400px 200px at 0% 50%, rgba(20,184,166,0.06), transparent 60%); }
+    .v2-cal-badge { border-color: #99f6e4; }
+    .v2-cal-chip-active { background: #ccfbf1; color: #134e4a; }
+</style>

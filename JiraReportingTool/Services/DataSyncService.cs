@@ -41,6 +41,26 @@ public class DataSyncService(JiraService api, JiraDbRepository repo)
             var epicKey = id["epicall:".Length..];
             fresh = await api.GetAllEpicIssuesAsync(epicKey);
         }
+        else if (id.StartsWith("epicbugs:"))
+        {
+            // "epicbugs:KEY-1" — Support Trends epic report (all issue types under the epic)
+            var epicKey = id["epicbugs:".Length..];
+            fresh = await api.GetEpicBugsAsync(epicKey, bugsOnly: false);
+        }
+        else if (id.StartsWith("jssupportlinked:"))
+        {
+            // "jssupportlinked:JM" — Support Trends JSSUPPORT-linked pool; re-fetch over the
+            // stored window (fall back to the last 6 months if the window was never stamped).
+            var from = report.StartDate.HasValue
+                ? DateOnly.FromDateTime(report.StartDate.Value)
+                : DateOnly.FromDateTime(DateTime.Today.AddMonths(-6));
+            var to = report.EndDate.HasValue
+                ? DateOnly.FromDateTime(report.EndDate.Value)
+                : DateOnly.FromDateTime(DateTime.Today);
+            fresh = await api.GetBugsWithLinksAsync(from, to);
+            fresh.StartDate = from.ToDateTime(TimeOnly.MinValue);
+            fresh.EndDate   = to.ToDateTime(TimeOnly.MinValue);
+        }
         else
         {
             throw new InvalidOperationException($"Cannot refresh unknown report identifier: '{id}'");
