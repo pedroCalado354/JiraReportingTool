@@ -2,6 +2,7 @@
 @rendermode InteractiveServer
 @using JiraReportingTool.Models
 @using System.Threading
+@using ClosedXML.Excel
 @inject IJiraService JiraService
 @inject SprintConfigService SprintConfigService
 @inject IConfiguration Config
@@ -174,6 +175,18 @@
                     <button class="st-prod-chip" @onclick="() => ToggleProduct(val)" title="Remove @val">@val ✕</button>
                 }
             </div>
+            <div class="st-tool-group" title="Keep only bugs whose last update falls inside this range">
+                <span class="st-tool-label">Working date</span>
+                <span class="st-date-lbl">From</span>
+                <InputDate TValue="DateOnly?" class="st-input" @bind-Value="_workFrom" @bind-Value:after="OnWorkRangeChanged" />
+                <span class="st-date-lbl">To</span>
+                <InputDate TValue="DateOnly?" class="st-input" @bind-Value="_workTo" @bind-Value:after="OnWorkRangeChanged" />
+                <label class="st-work-chk" title="Show me everything that was being worked between these dates — any worklog, creation, resolution or update inside the range, not just the last update">
+                    <input type="checkbox" checked="@_workAnyActivity" @onchange="ToggleWorkAnyActivity" />
+                    Any activity
+                </label>
+                @if (_workFrom.HasValue || _workTo.HasValue) { <button class="st-link" @onclick="ClearWorkRange">Clear</button> }
+            </div>
             @if (_loading) { <div class="st-tool-group" style="margin-left:auto"><span class="v2-spin" title="Refreshing"></span></div> }
         </div>
 
@@ -337,8 +350,9 @@
                         <th class="v2-table-num" title="Also lived in an earlier sprint (per the Jira sprint field)">Carried In</th>
                         <th class="v2-table-num" title="Done tickets in this sprint's epic (matches Jira parent = epic AND status = Done)">Done</th>
                         <th class="v2-table-num" title="Also appears in a later sprint — work continued past this one">Spilled</th>
+                        <th class="v2-table-num" title="Bugs in no configured sprint with activity (worklog, created, resolved or updated) inside this window">No Sprint</th>
                         <th class="v2-table-num" title="Done ÷ In Sprint">Compl.</th>
-                        <th class="v2-table-num">Logged</th>
+                        <th class="v2-table-num" title="Hours logged in the sprint window — sprint tickets plus no-sprint bugs active in the window">Logged</th>
                         <th class="v2-table-num" title="Hours logged in the sprint window on tickets that are Done">Logged (Done)</th>
                         <th class="v2-table-num">QA Rej.</th>
                     </tr></thead>
@@ -353,8 +367,9 @@
                                 <td class="v2-table-num @(s.CarriedIn > 0 ? "v2-text-warn" : "")">@(s.CarriedIn > 0 ? s.CarriedIn.ToString() : "—")</td>
                                 <td class="v2-table-num v2-text-success">@s.DoneHere</td>
                                 <td class="v2-table-num @(s.SpilledOver > 0 ? "v2-text-danger" : "")">@(s.SpilledOver > 0 ? s.SpilledOver.ToString() : "—")</td>
+                                <td class="v2-table-num">@(s.NoSprintCount > 0 ? s.NoSprintCount.ToString() : "—")</td>
                                 <td class="v2-table-num">@s.CompletionPct.ToString("0")%</td>
-                                <td class="v2-table-num">@FmtHM(s.LoggedSeconds)</td>
+                                <td class="v2-table-num" title="@($"Sprint tickets: {FmtHM(s.LoggedSeconds)} · No sprint: {FmtHM(s.NoSprintLoggedSeconds)}")">@FmtHM(s.LoggedSeconds + s.NoSprintLoggedSeconds)</td>
                                 <td class="v2-table-num v2-text-success">@FmtHM(s.LoggedDoneSeconds)</td>
                                 <td class="v2-table-num @(s.QaRejected > 0 ? "v2-text-danger" : "")">@(s.QaRejected > 0 ? s.QaRejected.ToString() : "—")</td>
                             </tr>
@@ -592,9 +607,45 @@
                 </div>
             </div>
             <div class="st-tool-group">
+                <span class="st-tool-label">Product</span>
+                <div class="st-cust-filter">
+                    <button class="st-cust-btn @(_tblSelectedProducts.Count > 0 ? "active" : "")" @onclick="() => _showTblProductFilter = !_showTblProductFilter">
+                        @(_tblSelectedProducts.Count == 0 ? "All products" : $"{_tblSelectedProducts.Count} selected")
+                        <i class="bi bi-chevron-down"></i>
+                    </button>
+                    @if (_showTblProductFilter)
+                    {
+                        <div class="st-cust-panel">
+                            <div class="st-cust-panel-actions">
+                                <button class="st-link" @onclick="SelectAllTblProducts">All</button>
+                                <span class="st-cust-sep">·</span>
+                                <button class="st-link" @onclick="ClearTblProducts">None</button>
+                            </div>
+                            <div class="st-cust-list">
+                                @foreach (var p in AllBugProducts)
+                                {
+                                    var prod = p;
+                                    <label class="st-cust-item">
+                                        <input type="checkbox" checked="@(_tblSelectedProducts.Contains(prod))"
+                                               @onchange="() => ToggleTblProduct(prod)" />
+                                        <span title="@prod">@prod</span>
+                                    </label>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="st-tool-group">
                 <span class="st-tool-label">Search</span>
                 <input class="st-input st-bug-search" placeholder="Key or summary…" @bind="_bugSearch" @bind:event="oninput" />
                 @if (!string.IsNullOrWhiteSpace(_bugSearch)) { <button class="st-link" @onclick='() => _bugSearch = ""'>Clear</button> }
+            </div>
+            <div class="st-tool-group">
+                <button class="btn small" @onclick="ExportBugsAsync" disabled="@(!DisplayedBugs.Any())"
+                        title="Export the table to Excel — one tab per product and per sprint, using the current filters">
+                    <i class="bi bi-file-earmark-excel"></i> Export
+                </button>
             </div>
             <div class="st-tool-group st-bug-legend">
                 <span class="st-flag st-flag-slow">Slow lifecycle</span>
@@ -603,26 +654,38 @@
             </div>
         </div>
 
-        <!-- Bug analytics charts — reflect the active Show/Customer filters -->
-        <div class="v2-grid-2" style="margin-top:12px">
-            <div class="v2-card">
-                <div class="st-card-title"><i class="bi bi-hourglass-split"></i> Avg phase timing <span class="st-scope">resolved bugs · days</span></div>
-                <div class="st-chart-box"><canvas id="st-chart-bug-phases"></canvas></div>
-            </div>
-            <div class="v2-card">
-                <div class="st-card-title"><i class="bi bi-stopwatch"></i> Logged hours distribution <span class="st-scope">bugs per bucket</span></div>
-                <div class="st-chart-box"><canvas id="st-chart-bug-logged"></canvas></div>
-            </div>
-        </div>
-        <div class="v2-grid-2" style="margin-top:16px">
-            <div class="v2-card">
-                <div class="st-card-title"><i class="bi bi-bar-chart"></i> Avg logged per bug <span class="st-scope">by priority</span></div>
-                <div class="st-chart-box"><canvas id="st-chart-bug-byprio"></canvas></div>
-            </div>
-            <div class="v2-card">
-                <div class="st-card-title"><i class="bi bi-arrow-counterclockwise"></i> QA bounce-backs <span class="st-scope">times rejected</span></div>
-                <div class="st-chart-box"><canvas id="st-chart-bug-qarej"></canvas></div>
-            </div>
+        <!-- Bug analytics charts (collapsible) — reflect the active Show/Customer/Product filters -->
+        <div class="v2-card st-sprint-card" style="margin-top:12px">
+            <button class="st-sprint-head @(_bugChartsExpanded ? "open" : "")" @onclick="ToggleBugCharts">
+                <i class="bi bi-chevron-@(_bugChartsExpanded ? "down" : "right") st-sprint-chev"></i>
+                <span class="st-sprint-name"><i class="bi bi-bar-chart-line"></i> Bug analytics charts</span>
+                <span class="st-scope">reflect the active Show / Customer / Product filters · click to @(_bugChartsExpanded ? "collapse" : "expand")</span>
+            </button>
+            @if (_bugChartsExpanded)
+            {
+                <div class="st-sprint-body">
+                    <div class="v2-grid-2">
+                        <div class="v2-card">
+                            <div class="st-card-title"><i class="bi bi-hourglass-split"></i> Avg phase timing <span class="st-scope">resolved bugs · days</span></div>
+                            <div class="st-chart-box"><canvas id="st-chart-bug-phases"></canvas></div>
+                        </div>
+                        <div class="v2-card">
+                            <div class="st-card-title"><i class="bi bi-stopwatch"></i> Logged hours distribution <span class="st-scope">bugs per bucket</span></div>
+                            <div class="st-chart-box"><canvas id="st-chart-bug-logged"></canvas></div>
+                        </div>
+                    </div>
+                    <div class="v2-grid-2">
+                        <div class="v2-card">
+                            <div class="st-card-title"><i class="bi bi-bar-chart"></i> Avg logged per bug <span class="st-scope">by priority</span></div>
+                            <div class="st-chart-box"><canvas id="st-chart-bug-byprio"></canvas></div>
+                        </div>
+                        <div class="v2-card">
+                            <div class="st-card-title"><i class="bi bi-arrow-counterclockwise"></i> QA bounce-backs <span class="st-scope">times rejected</span></div>
+                            <div class="st-chart-box"><canvas id="st-chart-bug-qarej"></canvas></div>
+                        </div>
+                    </div>
+                </div>
+            }
         </div>
 
         <div class="v2-card" style="margin-top:16px">
@@ -633,6 +696,7 @@
                             <th class="sortable @BugSI("key")" @onclick='() => BugSort("key")'>Key</th>
                             <th class="sortable @BugSI("summary")" @onclick='() => BugSort("summary")'>Summary</th>
                             <th class="sortable @BugSI("customer")" @onclick='() => BugSort("customer")'>Customer</th>
+                            <th class="sortable @BugSI("product")" @onclick='() => BugSort("product")'>Product</th>
                             <th class="sortable @BugSI("priority")" @onclick='() => BugSort("priority")'>Priority</th>
                             <th class="sortable @BugSI("status")" @onclick='() => BugSort("status")'>Status</th>
                             <th class="v2-table-num sortable @BugSI("devqa")" @onclick='() => BugSort("devqa")' title="Hours logged between first Dev Ready and first QA Ready">Dev→QA</th>
@@ -656,6 +720,7 @@
                                     @foreach (var f in flags) { <span class="st-flag-dot @f.Cls" title="@f.Label"></span> }
                                 </td>
                                 <td class="st-trunc" style="max-width:160px" title="@b.Customer">@(string.IsNullOrWhiteSpace(b.Customer) ? "—" : b.Customer)</td>
+                                <td class="st-trunc" style="max-width:140px" title="@ProductOf(b)">@ProductOf(b)</td>
                                 <td><span class="v2-pill @PriorityPill(b.Priority)">@b.Priority</span></td>
                                 <td><span class="st-status @(IsDone(b) ? "st-status-done" : "st-status-open")">@b.Status</span></td>
                                 <td class="v2-table-num @PhaseHrsCls(devQa, 8)">@PhaseHrsLabel(devQa)</td>
@@ -665,7 +730,7 @@
                                 <td class="v2-table-num">@(b.TimeSpentSeconds > 0 ? FmtHM(b.TimeSpentSeconds) : "—")</td>
                             </tr>
                         }
-                        @if (!DisplayedBugs.Any()) { <tr><td colspan="10" class="st-muted-cell">No bugs match this filter.</td></tr> }
+                        @if (!DisplayedBugs.Any()) { <tr><td colspan="11" class="st-muted-cell">No bugs match this filter.</td></tr> }
                     </tbody>
                 </table>
             </div>
@@ -713,12 +778,15 @@
     // A bug belongs to a selected sprint if it's a child of that sprint's planning
     // epic, or its Jira sprint history touches that sprint (covers JSSUPPORT-linked
     // tickets that were pulled into a sprint without living under its epic).
+    // "No Sprint" selects bugs that match none of the configured sprints.
     private HashSet<string> _selectedSprints = new();
     private bool _sprintDdOpen;
+    private const string NoSprintLabel = "No Sprint";
 
     private List<(string Name, int Count)> AllSprintOptions => _configs
         .OrderByDescending(c => c.StartDate)
         .Select(c => (Name: ConfigName(c), Count: _allBugsPool.Count(b => BugInConfigSprint(b, c))))
+        .Append((Name: NoSprintLabel, Count: _allBugsPool.Count(b => !InAnyConfigSprint(b))))
         .ToList();
 
     private bool BugInConfigSprint(SprintIssue b, SprintConfig c) =>
@@ -726,9 +794,12 @@
          string.Equals(b.EpicKey?.Trim(), c.EpicKey.Trim(), StringComparison.OrdinalIgnoreCase))
         || b.Sprints.Any(js => SprintMatches(js, c));
 
+    private bool InAnyConfigSprint(SprintIssue b) => _configs.Any(c => BugInConfigSprint(b, c));
+
     private bool MatchesSprintFilter(SprintIssue b) =>
         _selectedSprints.Count == 0
-        || _configs.Any(c => _selectedSprints.Contains(ConfigName(c)) && BugInConfigSprint(b, c));
+        || _configs.Any(c => _selectedSprints.Contains(ConfigName(c)) && BugInConfigSprint(b, c))
+        || (_selectedSprints.Contains(NoSprintLabel) && !InAnyConfigSprint(b));
 
     private void ToggleSprintFilter(string s)
     {
@@ -742,16 +813,69 @@
         ApplyPoolFilters();
     }
 
-    private bool HasPoolFilter => _selectedProducts.Count > 0 || _selectedSprints.Count > 0;
+    private bool HasPoolFilter => _selectedProducts.Count > 0 || _selectedSprints.Count > 0
+        || _workFrom.HasValue || _workTo.HasValue;
 
     private void ApplyPoolFilters()
     {
         _bugs = HasPoolFilter
             ? _allBugsPool.Where(b =>
                 (_selectedProducts.Count == 0 || _selectedProducts.Contains(ProductOf(b))) &&
-                MatchesSprintFilter(b)).ToList()
+                MatchesSprintFilter(b) &&
+                MatchesWorkRange(b)).ToList()
             : _allBugsPool;
         _chartsNeedRender = true;
+    }
+
+    // ── Working-date filter — applies to the entire page ─────────────────────
+    // Default: keeps only bugs whose LAST update falls inside [_workFrom, _workTo].
+    // "Any activity" mode: keeps bugs with ANY activity (worklog, created, resolved
+    // or updated) inside the range, even if they were touched again afterwards.
+    private DateOnly? _workFrom;
+    private DateOnly? _workTo;
+    private bool _workAnyActivity;
+
+    private void ToggleWorkAnyActivity()
+    {
+        _workAnyActivity = !_workAnyActivity;
+        ApplyPoolFilters();
+    }
+
+    // Jira "updated" when available; falls back to the latest known activity for
+    // DB-cached issues stored before the Updated field was captured.
+    private static DateTime? LastUpdatedOf(SprintIssue b)
+    {
+        if (b.Updated.HasValue) return b.Updated;
+        DateTime? d = b.Worklogs.Count > 0 ? b.Worklogs.Max(w => w.Started) : null;
+        if (b.ResolutionDate.HasValue && (!d.HasValue || b.ResolutionDate > d)) d = b.ResolutionDate;
+        if (b.Created.HasValue        && (!d.HasValue || b.Created > d))        d = b.Created;
+        return d;
+    }
+
+    private bool MatchesWorkRange(SprintIssue b)
+    {
+        if (!_workFrom.HasValue && !_workTo.HasValue) return true;
+        var from = _workFrom ?? DateOnly.MinValue;
+        var to   = _workTo   ?? DateOnly.MaxValue;
+        if (_workAnyActivity) return HasActivityInWin(b, from, to);
+        var d = LastUpdatedOf(b);
+        if (!d.HasValue) return false;
+        var day = DateOnly.FromDateTime(d.Value);
+        return day >= from && day <= to;
+    }
+
+    private void OnWorkRangeChanged()
+    {
+        if (_workFrom.HasValue && _workTo.HasValue && _workTo < _workFrom)
+            (_workFrom, _workTo) = (_workTo, _workFrom);
+        ApplyPoolFilters();
+    }
+
+    private void ClearWorkRange()
+    {
+        _workFrom = null;
+        _workTo = null;
+        ApplyPoolFilters();
     }
 
     private DateOnly _fullStart = DateOnly.FromDateTime(DateTime.Today.AddMonths(-6));
@@ -786,6 +910,15 @@
 
     private void SetBugFilter(string f) { _bugFilter = f; _chartsNeedRender = true; }
 
+    // Bugs-tab analytics charts are collapsed by default; their canvases only exist
+    // in the DOM while expanded, so re-render is requested on expand.
+    private bool _bugChartsExpanded;
+    private void ToggleBugCharts()
+    {
+        _bugChartsExpanded = !_bugChartsExpanded;
+        if (_bugChartsExpanded) _chartsNeedRender = true;
+    }
+
     // ── Bug explorer: customer filter + column sorting ───────────────────────
     private const string NoCustomerLabel = "(none)";
     private HashSet<string> _selectedCustomers = new();
@@ -807,6 +940,25 @@
     }
     private void SelectAllCustomers() { _selectedCustomers = new HashSet<string>(AllBugCustomers); _chartsNeedRender = true; }
     private void ClearCustomers() { _selectedCustomers.Clear(); _chartsNeedRender = true; }
+
+    // Table-scoped Product filter — independent of the page-level Product filter,
+    // so options come from the (already pool-filtered) _bugs set.
+    private HashSet<string> _tblSelectedProducts = new();
+    private bool _showTblProductFilter;
+
+    private IEnumerable<string> AllBugProducts =>
+        _bugs.Select(ProductOf)
+             .Distinct()
+             .OrderBy(p => p == NoProductLabel ? 1 : 0)
+             .ThenBy(p => p);
+
+    private void ToggleTblProduct(string p)
+    {
+        if (!_tblSelectedProducts.Remove(p)) _tblSelectedProducts.Add(p);
+        _chartsNeedRender = true;
+    }
+    private void SelectAllTblProducts() { _tblSelectedProducts = new HashSet<string>(AllBugProducts); _chartsNeedRender = true; }
+    private void ClearTblProducts() { _tblSelectedProducts.Clear(); _chartsNeedRender = true; }
 
     private void BugSort(string col)
     {
@@ -873,7 +1025,8 @@
 
             // JSSUPPORT-linked bugs outside the configured epics — same set as the Support
             // Bugs page's "JSSUPPORT Linked" tab: linked to a JSSUPPORT ticket, with worklog
-            // activity since the full window start.
+            // activity since the full window start OR resolved within the window (bugs can
+            // be closed without anyone logging time on them).
             _linkedFetchFailed = false;
             try
             {
@@ -881,10 +1034,12 @@
                 TrackSync(linked.SyncedAt);
                 var known = pool.Select(b => b.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var startAt = _fullStart.ToDateTime(TimeOnly.MinValue);
+                var endAt = _fullEnd.AddDays(1).ToDateTime(TimeOnly.MinValue);
                 var extra = (linked.Issues ?? new())
                     .Where(b => !known.Contains(b.Key))
                     .Where(b => b.LinkedIssueKeys.Any(k => k.StartsWith("JSSUPPORT", StringComparison.OrdinalIgnoreCase)))
-                    .Where(b => b.Worklogs.Any(w => w.TimeSpentSeconds > 0 && w.Started >= startAt))
+                    .Where(b => b.Worklogs.Any(w => w.TimeSpentSeconds > 0 && w.Started >= startAt)
+                             || (b.ResolutionDate >= startAt && b.ResolutionDate < endAt))
                     .ToList();
                 foreach (var b in extra) b.EpicName = "JSSUPPORT Linked";   // origin marker
                 pool.AddRange(extra);
@@ -1133,6 +1288,8 @@
             IEnumerable<SprintIssue> src = _bugFilter == "critical" ? CriticalBugs : _bugs;
             if (_selectedCustomers.Count > 0)
                 src = src.Where(b => _selectedCustomers.Contains(string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer));
+            if (_tblSelectedProducts.Count > 0)
+                src = src.Where(b => _tblSelectedProducts.Contains(ProductOf(b)));
 
             if (!string.IsNullOrWhiteSpace(_bugSearch))
             {
@@ -1160,6 +1317,7 @@
             "key"      => asc ? src.OrderBy(b => b.Key)                  : src.OrderByDescending(b => b.Key),
             "summary"  => asc ? src.OrderBy(b => b.Summary)              : src.OrderByDescending(b => b.Summary),
             "customer" => asc ? src.OrderBy(b => CustomerKey(b))         : src.OrderByDescending(b => CustomerKey(b)),
+            "product"  => asc ? src.OrderBy(b => ProductOf(b))           : src.OrderByDescending(b => ProductOf(b)),
             "priority" => asc ? src.OrderBy(b => PriOrder(b))            : src.OrderByDescending(b => PriOrder(b)),
             "status"   => asc ? src.OrderBy(b => b.Status)               : src.OrderByDescending(b => b.Status),
             "devqa"    => asc ? src.OrderBy(b => PhaseLoggedSeconds(b, b.DevReadyDate, b.QaReadyDate)    ?? int.MaxValue) : src.OrderByDescending(b => PhaseLoggedSeconds(b, b.DevReadyDate, b.QaReadyDate)    ?? int.MinValue),
@@ -1179,6 +1337,96 @@
 
     private static string CustomerKey(SprintIssue b) =>
         string.IsNullOrWhiteSpace(b.Customer) ? NoCustomerLabel : b.Customer;
+
+    // ── Excel export: the explorer rows as currently filtered/sorted, plus one
+    //    tab per product and one tab per sprint (built from the same filtered set) ──
+    private async Task ExportBugsAsync()
+    {
+        var rows = DisplayedBugs.ToList();
+        if (rows.Count == 0) return;
+
+        using var wb = new XLWorkbook();
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddBugSheet(wb, usedNames, "All Bugs", rows);
+
+        foreach (var g in rows.GroupBy(ProductOf)
+                              .OrderBy(g => g.Key == NoProductLabel ? 1 : 0)
+                              .ThenBy(g => g.Key))
+            AddBugSheet(wb, usedNames, $"P - {(g.Key == NoProductLabel ? "No product" : g.Key)}", g.ToList());
+
+        var noSprint = rows.ToHashSet();
+        foreach (var c in _configs.OrderBy(c => c.StartDate))
+        {
+            var inSprint = rows.Where(b => BugInConfigSprint(b, c)).ToList();
+            if (inSprint.Count == 0) continue;
+            noSprint.ExceptWith(inSprint);
+            AddBugSheet(wb, usedNames, $"S - {ConfigName(c)}", inSprint);
+        }
+        if (noSprint.Count > 0)
+            AddBugSheet(wb, usedNames, "S - No sprint", rows.Where(noSprint.Contains).ToList());
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        await JS.InvokeVoidAsync("downloadBase64File",
+            Convert.ToBase64String(ms.ToArray()),
+            $"support-trends-bugs-{DateTime.Today:yyyy-MM-dd}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    }
+
+    private static void AddBugSheet(XLWorkbook wb, HashSet<string> usedNames, string name, List<SprintIssue> rows)
+    {
+        var ws = wb.Worksheets.Add(SheetName(usedNames, name));
+        var headers = new[] { "Key", "Summary", "Customer", "Product", "Priority", "Status",
+                              "Dev→QA (h)", "QA→Done (h)", "Dev→Done (h)", "QA Rej.", "Logged (h)" };
+        for (var c = 0; c < headers.Length; c++)
+        {
+            ws.Cell(1, c + 1).Value = headers[c];
+            ws.Cell(1, c + 1).Style.Font.Bold = true;
+        }
+
+        var r = 2;
+        foreach (var b in rows)
+        {
+            ws.Cell(r, 1).Value = b.Key;
+            ws.Cell(r, 2).Value = b.Summary;
+            ws.Cell(r, 3).Value = b.Customer ?? "";
+            ws.Cell(r, 4).Value = string.IsNullOrWhiteSpace(b.Product) ? "" : b.Product;
+            ws.Cell(r, 5).Value = b.Priority ?? "";
+            ws.Cell(r, 6).Value = b.Status ?? "";
+            SetHoursCell(ws.Cell(r, 7),  PhaseLoggedSeconds(b, b.DevReadyDate, b.QaReadyDate));
+            SetHoursCell(ws.Cell(r, 8),  PhaseLoggedSeconds(b, b.QaReadyDate, b.ResolutionDate));
+            SetHoursCell(ws.Cell(r, 9),  PhaseLoggedSeconds(b, b.DevReadyDate, b.ResolutionDate));
+            if (b.QaRejectedCount > 0) ws.Cell(r, 10).Value = b.QaRejectedCount;
+            SetHoursCell(ws.Cell(r, 11), b.TimeSpentSeconds > 0 ? b.TimeSpentSeconds : null);
+            r++;
+        }
+        ws.SheetView.FreezeRows(1);
+        ws.Columns().AdjustToContents();
+        if (ws.Column(2).Width > 60) ws.Column(2).Width = 60;   // Summary can get very wide
+    }
+
+    private static void SetHoursCell(IXLCell cell, int? seconds)
+    {
+        if (seconds.HasValue) cell.Value = Math.Round(seconds.Value / 3600.0, 2);
+    }
+
+    // Excel sheet names: max 31 chars, no []:*?/\ — and must be unique per workbook.
+    private static string SheetName(HashSet<string> used, string raw)
+    {
+        foreach (var ch in new[] { '[', ']', ':', '*', '?', '/', '\\' })
+            raw = raw.Replace(ch, ' ');
+        raw = raw.Trim();
+        if (raw.Length == 0) raw = "Sheet";
+        if (raw.Length > 31) raw = raw.Substring(0, 31).TrimEnd();
+        var name = raw;
+        var n = 2;
+        while (!used.Add(name))
+        {
+            var suffix = $" ({n++})";
+            name = raw.Substring(0, Math.Min(raw.Length, 31 - suffix.Length)).TrimEnd() + suffix;
+        }
+        return name;
+    }
 
     // Calendar days between two lifecycle markers; null if either is missing or out of order.
     private static double? PhaseDays(DateTime? from, DateTime? to)
@@ -1361,13 +1609,23 @@
 
     private record SprintStat(string Name, DateOnly Start, DateOnly End,
         int InSprint, int New, int CarriedIn, int DoneHere, int SpilledOver,
-        int LoggedSeconds, int LoggedDoneSeconds, double CompletionPct, int QaRejected);
+        int LoggedSeconds, int LoggedDoneSeconds, double CompletionPct, int QaRejected,
+        int NoSprintCount, int NoSprintLoggedSeconds);
+
+    // A bug shows activity inside a sprint window if any worklog, its creation,
+    // resolution or last Jira update falls between the window dates.
+    private static bool HasActivityInWin(SprintIssue b, DateOnly s, DateOnly e) =>
+        b.Worklogs.Any(w => InWin(w.Started, s, e))
+        || InWin(b.Created, s, e)
+        || InWin(b.ResolutionDate, s, e)
+        || InWin(b.Updated, s, e);
 
     private IEnumerable<SprintStat> SprintStats
     {
         get
         {
             var ordered = _configs.OrderBy(c => c.StartDate).ToList();
+            var noSprintBugs = _bugs.Where(b => !InAnyConfigSprint(b)).ToList();
             return ordered.Select((c, ord) =>
             {
                 var s = c.StartDate; var e = c.EndDate;
@@ -1387,7 +1645,10 @@
                 var logged = epicBugs.Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds));
                 var loggedDone = epicBugs.Where(IsDone).Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds));
                 var pct = inSprint == 0 ? 0 : done * 100.0 / inSprint;
-                return new SprintStat(ConfigName(c), s, e, inSprint, isNew, carriedIn, done, spilled, logged, loggedDone, pct, qa);
+                var noSprintActive = noSprintBugs.Where(b => HasActivityInWin(b, s, e)).ToList();
+                var noSprintLogged = noSprintActive.Sum(b => b.Worklogs.Where(w => InWin(w.Started, s, e)).Sum(w => w.TimeSpentSeconds));
+                return new SprintStat(ConfigName(c), s, e, inSprint, isNew, carriedIn, done, spilled, logged, loggedDone, pct, qa,
+                    noSprintActive.Count, noSprintLogged);
             }).ToList();
         }
     }
@@ -1443,6 +1704,21 @@
              .OrderByDescending(g => g.LoggedSeconds)
              .ToList();
 
+    // ── Chart palette ────────────────────────────────────────────────────────
+    // One color per JOB, fixed across every chart on the page: bug counts are
+    // blue, logged hours are teal, Done is green. All sets validated for CVD
+    // separation and contrast against the white card surface (the old blue/violet
+    // pair was indistinguishable under deuteranopia, ΔE 1.7).
+    private const string ClrCount = "#2563eb";   // bug counts (brand blue)
+    private const string ClrHours = "#0d9488";   // logged hours (teal)
+    private const string ClrDone  = "#16a34a";   // done / success
+    // Sequential blue ramp (ordinal, light→dark) for ordered effort buckets.
+    private static readonly string[] ClrBucketRamp = { "#86b6ef", "#5598e7", "#2f7ddb", "#1f60b3", "#15498c", "#0d3366" };
+    // Lifecycle phases, light→dark as the pipeline progresses (Dev→QA, QA→Done, Dev→Done).
+    private static readonly string[] ClrPhaseRamp = { "#5598e7", "#2f7ddb", "#1c5cab" };
+    // QA bounce-backs: neutral for "never bounced", then an escalating red ramp.
+    private static readonly string[] ClrQaRamp = { "#94a3b8", "#f87171", "#dc2626", "#991b1b" };
+
     // ── Charts ──────────────────────────────────────────────────────────────
     private async Task RenderChartsAsync()
     {
@@ -1495,7 +1771,7 @@
                 {
                     label = "Hours",
                     data = auth.Select(g => Math.Round(g.TotalHours, 1)).ToArray(),
-                    backgroundColor = "#2563eb",
+                    backgroundColor = ClrHours,
                     borderRadius = 4
                 }}
             },
@@ -1519,8 +1795,8 @@
                 labels = cust.Select(c => c.Name).ToArray(),
                 datasets = new object[]
                 {
-                    new { label = "Bugs",  data = cust.Select(c => c.Total).ToArray(), backgroundColor = "#2563eb", borderRadius = 3, yAxisID = "y" },
-                    new { label = "Hours", data = cust.Select(c => Math.Round(c.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = "#7c3aed", borderRadius = 3, yAxisID = "y1" }
+                    new { label = "Bugs",  data = cust.Select(c => c.Total).ToArray(), backgroundColor = ClrCount, borderRadius = 3, yAxisID = "y" },
+                    new { label = "Hours", data = cust.Select(c => Math.Round(c.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = ClrHours, borderRadius = 3, yAxisID = "y1" }
                 }
             },
             options = DualAxisOpts()
@@ -1536,8 +1812,8 @@
                 labels = lab.Select(l => l.Name).ToArray(),
                 datasets = new object[]
                 {
-                    new { label = "Bugs",  data = lab.Select(l => l.Total).ToArray(), backgroundColor = "#16a34a", borderRadius = 3, yAxisID = "y" },
-                    new { label = "Hours", data = lab.Select(l => Math.Round(l.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = "#b45309", borderRadius = 3, yAxisID = "y1" }
+                    new { label = "Bugs",  data = lab.Select(l => l.Total).ToArray(), backgroundColor = ClrCount, borderRadius = 3, yAxisID = "y" },
+                    new { label = "Hours", data = lab.Select(l => Math.Round(l.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = ClrHours, borderRadius = 3, yAxisID = "y1" }
                 }
             },
             options = DualAxisOpts()
@@ -1572,8 +1848,8 @@
                 labels = sLabels,
                 datasets = new object[]
                 {
-                    new { label = "In Sprint", data = sprints.Select(s => s.InSprint).ToArray(), backgroundColor = "#94a3b8", borderRadius = 3 },
-                    new { label = "Done",      data = sprints.Select(s => s.DoneHere).ToArray(), backgroundColor = "#16a34a", borderRadius = 3 }
+                    new { label = "In Sprint", data = sprints.Select(s => s.InSprint).ToArray(), backgroundColor = ClrCount, borderRadius = 3 },
+                    new { label = "Done",      data = sprints.Select(s => s.DoneHere).ToArray(), backgroundColor = ClrDone, borderRadius = 3 }
                 }
             },
             options = ChartOpts(true)
@@ -1587,7 +1863,7 @@
                 labels = sLabels,
                 datasets = new object[]
                 {
-                    new { label = "Hours", data = sprints.Select(s => Math.Round(s.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = "#2563eb", borderRadius = 3 }
+                    new { label = "Hours", data = sprints.Select(s => Math.Round(s.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = ClrHours, borderRadius = 3 }
                 }
             },
             options = ChartOpts(false)
@@ -1597,6 +1873,8 @@
     // Bug-tab analytics — all driven by the explorer's current Show/Customer filter (DisplayedBugs).
     private async Task RenderBugChartsAsync()
     {
+        if (!_bugChartsExpanded) return;   // canvases are not in the DOM while collapsed
+
         foreach (var id in new[] { "st-chart-bug-phases", "st-chart-bug-logged", "st-chart-bug-byprio", "st-chart-bug-qarej" })
             await JS.InvokeVoidAsync("destroyChart", id);
 
@@ -1623,7 +1901,7 @@
                         AvgPhase(b => PhaseDays(b.QaReadyDate, b.ResolutionDate)),
                         AvgPhase(b => PhaseDays(b.DevReadyDate, b.ResolutionDate))
                     },
-                    backgroundColor = new[] { "#2563eb", "#7c3aed", "#b45309" },
+                    backgroundColor = ClrPhaseRamp,
                     borderRadius = 4
                 }}
             },
@@ -1651,7 +1929,7 @@
                 {
                     label = "Bugs",
                     data = hrBuckets.Select(x => hours.Count(x.Test)).ToArray(),
-                    backgroundColor = "#2563eb",
+                    backgroundColor = ClrBucketRamp,
                     borderRadius = 4
                 }}
             },
@@ -1703,7 +1981,7 @@
                 {
                     label = "Bugs",
                     data = qaBuckets.Select(x => bugs.Count(x.Test)).ToArray(),
-                    backgroundColor = new[] { "#16a34a", "#b45309", "#dc2626", "#991b1b" },
+                    backgroundColor = ClrQaRamp,
                     borderRadius = 4
                 }}
             },
@@ -1738,10 +2016,12 @@
         _                       => "v2-pill-neutral"
     };
 
+    // Severity mapping (matches the priority pills); chart-grade steps validated
+    // for CVD adjacency — gray is the deliberate neutral for "no priority".
     private static string PriorityColor(string? p) => p?.ToLowerInvariant() switch
     {
-        "critical" or "highest" => "#b91c1c",
-        "high"                  => "#b45309",
+        "critical" or "highest" => "#dc2626",
+        "high"                  => "#d97706",
         "medium"                => "#2563eb",
         "low"                   => "#16a34a",
         _                       => "#94a3b8"
@@ -1913,6 +2193,8 @@
     .st-tool-group { display: flex; align-items: center; gap: 8px; }
     .st-tool-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--v2-ink-3); }
     .st-date-lbl { font-size: 11px; color: var(--v2-ink-3); }
+    .st-work-chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--v2-ink-2); cursor: pointer; white-space: nowrap; user-select: none; }
+    .st-work-chk input { cursor: pointer; margin: 0; }
     .st-input {
         font-size: 13px; font-weight: 600; padding: 6px 9px; border-radius: 8px;
         border: 1px solid var(--v2-border); background: var(--v2-elevated); color: var(--v2-ink-1); cursor: pointer;

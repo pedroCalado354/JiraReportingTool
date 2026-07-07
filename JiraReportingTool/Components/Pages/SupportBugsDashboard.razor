@@ -1130,7 +1130,7 @@
             <div class="sb-section sb-lk-section">
                 <div class="sb-section-header" style="cursor:default">
                     <span class="sb-section-title">Bugs linked to JSSUPPORT</span>
-                    <span class="sb-section-sub">type Bug · created or updated @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM") · linked to a JSSUPPORT ticket · time logged since @_sprintStart.ToString("dd MMM") 00h · excluding @(_loadedEpicKey)'s issues</span>
+                    <span class="sb-section-sub">type Bug · created or updated @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM") · linked to a JSSUPPORT ticket · time logged since @_sprintStart.ToString("dd MMM") 00h or resolved in the window · excluding @(_loadedEpicKey)'s issues</span>
                     <button class="sb-btn sb-btn-ghost" style="margin-left:auto;padding:3px 12px;font-size:12px" @onclick="LoadLinkedBugsAsync" disabled="@_linkedBugsLoading" title="Re-fetch using the current sprint dates">
                         ⟳ Refresh
                     </button>
@@ -1334,7 +1334,7 @@
                                 }
                                 @if (!LinkedSupportBugs.Any())
                                 {
-                                    <tr><td colspan="10" class="sb-empty">No JSSUPPORT-linked bugs outside the epic have time logged since @_sprintStart.ToString("dd MMM") 00h.</td></tr>
+                                    <tr><td colspan="10" class="sb-empty">No JSSUPPORT-linked bugs outside the epic have time logged since @_sprintStart.ToString("dd MMM") 00h or were resolved in the window.</td></tr>
                                 }
                             </tbody>
                         </table>
@@ -2501,8 +2501,9 @@
         .OrderBy(k => k)
         .ToList();
 
-    // JSSUPPORT-linked + outside the epic + has a worklog logged on/after 00:00 of the
-    // sprint start date, before the tab's own author/status filters — the base set the
+    // JSSUPPORT-linked + outside the epic + either has a worklog logged on/after 00:00 of
+    // the sprint start date or was resolved within the sprint window (bugs can be closed
+    // without logged time), before the tab's own author/status filters — the base set the
     // dropdown options/counts are built from.
     private List<SprintIssue> LinkedBaseBugs
     {
@@ -2510,9 +2511,11 @@
         {
             var epicKeys = _bugs.Select(b => b.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var sprintStartAt = _sprintStart.ToDateTime(TimeOnly.MinValue);
+            var sprintEndAt = _sprintEnd.AddDays(1).ToDateTime(TimeOnly.MinValue);
             return _linkedBugsRaw
                 .Where(b => JsSupportLinksOf(b).Count > 0 && !epicKeys.Contains(b.Key))
-                .Where(b => b.Worklogs.Any(w => w.TimeSpentSeconds > 0 && w.Started >= sprintStartAt))
+                .Where(b => b.Worklogs.Any(w => w.TimeSpentSeconds > 0 && w.Started >= sprintStartAt)
+                         || (b.ResolutionDate >= sprintStartAt && b.ResolutionDate < sprintEndAt))
                 .ToList();
         }
     }

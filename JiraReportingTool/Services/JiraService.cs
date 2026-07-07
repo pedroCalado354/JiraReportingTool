@@ -463,6 +463,10 @@ public class JiraService : IJiraService
                 fields.TryGetProperty("resolutiondate", out var resEl) && resEl.ValueKind == JsonValueKind.String &&
                 DateTime.TryParse(resEl.GetString(), out var rd) ? rd : null;
 
+            issue.Updated =
+                fields.TryGetProperty("updated", out var updEl) && updEl.ValueKind == JsonValueKind.String &&
+                DateTime.TryParse(updEl.GetString(), out var ud) ? ud : null;
+
             if (fields.TryGetProperty("timetracking", out var tt) && tt.ValueKind == JsonValueKind.Object)
             {
                 issue.OriginalEstimateSeconds  = tt.TryGetProperty("originalEstimateSeconds",  out var oes) ? oes.GetInt32() : 0;
@@ -579,6 +583,11 @@ public class JiraService : IJiraService
             if (fields.TryGetProperty("resolutiondate", out var resProp) && resProp.ValueKind != JsonValueKind.Null &&
                 DateTime.TryParse(resProp.GetString(), out var resolvedDt))
                 issue.ResolutionDate = resolvedDt;
+
+            // Updated date
+            if (fields.TryGetProperty("updated", out var updProp) && updProp.ValueKind != JsonValueKind.Null &&
+                DateTime.TryParse(updProp.GetString(), out var updatedDt))
+                issue.Updated = updatedDt;
 
             // Due date
             if (fields.TryGetProperty("duedate", out var dueProp) && dueProp.ValueKind != JsonValueKind.Null &&
@@ -896,7 +905,7 @@ public class JiraService : IJiraService
             $"{typeClause} AND (\"Epic Link\" = \"{epicKey}\" OR parent = \"{epicKey}\"){updatedClause} ORDER BY created ASC");
         var customerFieldId = await GetCustomerFieldIdAsync();
         var jsProjectFieldId = await GetJsProjectFieldIdAsync();
-        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10020,parent,created,resolutiondate,duedate,labels"
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10020,parent,created,resolutiondate,duedate,updated,labels"
             + (customerFieldId != null ? $",{customerFieldId}" : "")
             + (jsProjectFieldId != null ? $",{jsProjectFieldId}" : "");
         var json = await FetchAllPagesAsync(jql, fields);
@@ -1010,7 +1019,7 @@ public class JiraService : IJiraService
     {
         var customerFieldId = await GetCustomerFieldIdAsync();
         var jsProjectFieldId = await GetJsProjectFieldIdAsync();
-        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,created,resolutiondate,duedate,labels,issuelinks,customfield_10020"
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,created,resolutiondate,duedate,updated,labels,issuelinks,customfield_10020"
             + (customerFieldId != null ? $",{customerFieldId}" : "")
             + (jsProjectFieldId != null ? $",{jsProjectFieldId}" : "");
         var jql = Uri.EscapeDataString(

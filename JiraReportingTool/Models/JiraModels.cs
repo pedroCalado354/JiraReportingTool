@@ -201,6 +201,9 @@ public class SprintIssue
     public DateTime? Created { get; set; }
     public DateTime? ResolutionDate { get; set; }
     public DateTime? DueDate        { get; set; }
+    /// <summary>Jira "updated" timestamp — last time anything changed on the issue.
+    /// Only populated on API paths that request the "updated" field.</summary>
+    public DateTime? Updated        { get; set; }
 
     [NotMapped] public bool      IsExpanded      { get; set; }
     public int                   QaRejectedCount { get; set; }
