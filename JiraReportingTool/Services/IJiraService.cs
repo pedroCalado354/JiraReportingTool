@@ -19,6 +19,14 @@ public interface IJiraService
     Task<List<EpicSummary>> GetEpicsInSprintAsync(int sprintId);
     Task<SprintReport> GetEpicSprintForecastAsync(string epicKey, int sprintId);
     Task<SprintReport> GetDeliveryDataByFilterAsync(string filterJql);
+
+    /// <summary>
+    /// Fetches every issue for a single Product ("JS Project[Radio Buttons]") value with a
+    /// worklog inside the given date window — scoped by product + worklog date, not by Jira
+    /// "Sprint" field membership (some products log work continuously without every ticket
+    /// being added to the same sprint). Used by Delivery Reports' Product filter. Not cached.
+    /// </summary>
+    Task<SprintReport> GetIssuesByProductInRangeAsync(string product, DateTime start, DateTime end);
     Task<List<JiraFilter>> GetMyFiltersAsync();
     Task<SprintReport> GetAllEpicIssuesAsync(string epicKey);
 

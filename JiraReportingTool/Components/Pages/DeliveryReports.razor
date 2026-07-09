@@ -75,7 +75,7 @@
     @if (Report is not null && AllProducts.Count > 0)
     {
         <div class="v2-card" style="margin-top:16px">
-            <div class="v2-section-title"><i class="bi bi-grid-fill"></i>Product <span class="v2-section-note">filter, or leave all selected to view every product merged</span></div>
+            <div class="v2-section-title"><i class="bi bi-grid-fill"></i>Product <span class="v2-section-note">by worklog date within @(Report.StartDate?.ToString("MMM d")) – @(Report.EndDate?.ToString("MMM d")), not Jira sprint membership — filter, or leave all selected to view every product merged</span></div>
             <div class="dr-chip-row">
                 @foreach (var (name, count) in AllProducts)
                 {
@@ -92,6 +92,21 @@
                 <span class="dr-dot-sep">·</span>
                 <button type="button" class="dr-link-btn" @onclick="ClearProducts">None</button>
             </div>
+
+            @if (AvailableSprints.Count > 0)
+            {
+                <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--v2-divider);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                    <label class="v2-label" style="margin:0">Sprint</label>
+                    <select class="v2-select v2-input-sm" style="max-width:320px" @onchange="OnSprintFilterChanged">
+                        <option value="">All sprints in this window</option>
+                        @foreach (var s in AvailableSprints)
+                        {
+                            <option value="@s.Id" selected="@(SelectedSprintId == s.Id)">@s.Name@(s.StartDate.HasValue ? $" ({s.StartDate:MMM d}–{s.EndDate:MMM d})" : "")</option>
+                        }
+                    </select>
+                    <span class="v2-hint">real Jira sprints found on the selected product(s)' issues — narrows further within the window above</span>
+                </div>
+            }
         </div>
     }
 
@@ -165,13 +180,34 @@
     // (same convention as Working Hours' product filter), so clearing chips shows everything merged.
     private HashSet<string> SelectedProducts = [];
 
+    // Each product's true issue set for the loaded sprint's date window, fetched independently
+    // by product + worklog date rather than by Jira "Sprint" field membership — some products
+    // (e.g. Integrations) log work continuously without every ticket being added to this
+    // sprint, so relying on sprint membership undercounts them. Keyed by product name (or
+    // DeliveryHealthCalculator.NoProductLabel), populated by LoadProductIssuesAsync.
+    private Dictionary<string, List<SprintIssue>> _productIssues = [];
+
+    // Narrows the current product selection down to one real Jira sprint (from the issues'
+    // own sprint history) — null means "every issue in the sprint's date window".
+    private int? SelectedSprintId;
+
     private static string ProductOf(SprintIssue i) => DeliveryHealthCalculator.ProductOf(i);
 
-    private List<(string Name, int Count)> AllProducts => Report is null ? [] : DeliveryHealthCalculator.ActiveIssues(Report)
-        .GroupBy(ProductOf)
-        .Select(g => (Name: g.Key, Count: g.Count()))
+    private List<(string Name, int Count)> AllProducts => _productIssues
+        .Select(kv => (Name: kv.Key, Count: kv.Value.Count))
         .OrderBy(g => g.Name == DeliveryHealthCalculator.NoProductLabel ? 1 : 0)
         .ThenByDescending(g => g.Count)
+        .ToList();
+
+    // Real Jira sprints found across the currently-selected product(s)' issues — populates the
+    // Sprint dropdown so the merged, date-scoped view can be narrowed to one specific sprint.
+    private List<IssueSprint> AvailableSprints => _productIssues
+        .Where(kv => SelectedProducts.Count == 0 || SelectedProducts.Contains(kv.Key))
+        .SelectMany(kv => kv.Value)
+        .SelectMany(i => i.Sprints)
+        .Where(s => s.Id != 0)
+        .DistinctBy(s => s.Id)
+        .OrderByDescending(s => s.StartDate)
         .ToList();
 
     protected override async Task OnInitializedAsync()
@@ -204,12 +240,16 @@
         if (!int.TryParse(SprintId.Trim(), out var sprintId)) return;
 
         IsLoading = true; ErrorMessage = null; Report = null;
+        _productIssues.Clear();
+        SelectedSprintId = null;
         StateHasChanged();
 
         try
         {
             var report = await JiraService.GetDeliveryDataAsync(sprintId);
             Report = report;
+
+            await LoadProductIssuesAsync();
             SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
 
             RecomputeMetrics();
@@ -219,16 +259,55 @@
         finally { IsLoading = false; }
     }
 
+    private async Task LoadProductIssuesAsync()
+    {
+        if (Report is null || Report.StartDate is null || Report.EndDate is null) return;
+        var start = Report.StartDate.Value;
+        var end = Report.EndDate.Value;
+
+        // Native sprint-membership issues (this sprint's own "sprint = X" fetch), grouped by
+        // product — the correct population for whichever product this sprint actually belongs
+        // to, since it includes backlog/To Do items that haven't logged any time yet (the
+        // worklog-date fetch below would drop those, since it requires at least one worklog
+        // in the window).
+        var nativeByProduct = DeliveryHealthCalculator.ActiveIssues(Report)
+            .GroupBy(ProductOf)
+            .ToDictionary(g => g.Key, g => g.ToList());
+
+        var byProduct = new Dictionary<string, List<SprintIssue>>();
+        foreach (var product in nativeByProduct.Keys)
+        {
+            // Union with a worklog-date + product fetch so cross-sprint work is still counted
+            // for products that aren't this sprint's own (e.g. Integrations logs continuously
+            // without every ticket being added to this sprint) — sprint membership alone
+            // drastically undercounts those, while worklog-date alone drops zero-worklog
+            // backlog items for the sprint's own product. Neither alone is complete; union is.
+            var fetched = await JiraService.GetIssuesByProductInRangeAsync(product, start, end);
+            var worklogScoped = DeliveryHealthCalculator.FilterActive(fetched.Issues);
+
+            byProduct[product] = worklogScoped
+                .Concat(nativeByProduct[product])
+                .DistinctBy(i => i.Key)
+                .ToList();
+        }
+        _productIssues = byProduct;
+    }
+
     private void RecomputeMetrics()
     {
         if (Report is null) return;
         var report = Report;
         var effectiveDaysRemaining = report.DaysRemaining;
 
-        bool ProductMatch(SprintIssue i) => SelectedProducts.Count == 0 || SelectedProducts.Contains(ProductOf(i));
+        var combined = _productIssues
+            .Where(kv => SelectedProducts.Count == 0 || SelectedProducts.Contains(kv.Key))
+            .SelectMany(kv => kv.Value)
+            .Where(i => SelectedSprintId is null || i.Sprints.Any(s => s.Id == SelectedSprintId))
+            .DistinctBy(i => i.Key)
+            .ToList();
 
-        var taskIssues = DeliveryHealthCalculator.ActiveIssues(report).Where(DeliveryHealthCalculator.IsDeliveryType).Where(ProductMatch).ToList();
-        var allIssues  = DeliveryHealthCalculator.ActiveIssues(report).Where(ProductMatch).ToList();
+        var taskIssues = combined.Where(DeliveryHealthCalculator.IsDeliveryType).ToList();
+        var allIssues  = combined;
 
         TaskMetrics = DeliveryHealthCalculator.ComputeForIssues(report, taskIssues, effectiveDaysRemaining, isTaskOnly: true, _roster, _vacations);
         AllMetrics  = DeliveryHealthCalculator.ComputeForIssues(report, allIssues, effectiveDaysRemaining, isTaskOnly: false, _roster, _vacations);
@@ -247,6 +326,7 @@
     private void ToggleProduct(string name)
     {
         if (!SelectedProducts.Remove(name)) SelectedProducts.Add(name);
+        SelectedSprintId = null; // available sprints depend on the product selection
         RecomputeMetrics();
         _renderCharts = true;
     }
@@ -254,6 +334,7 @@
     private void SelectAllProducts()
     {
         SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
+        SelectedSprintId = null;
         RecomputeMetrics();
         _renderCharts = true;
     }
@@ -261,6 +342,15 @@
     private void ClearProducts()
     {
         SelectedProducts.Clear();
+        SelectedSprintId = null;
+        RecomputeMetrics();
+        _renderCharts = true;
+    }
+
+    private void OnSprintFilterChanged(ChangeEventArgs e)
+    {
+        var val = e.Value?.ToString();
+        SelectedSprintId = string.IsNullOrEmpty(val) ? null : int.Parse(val);
         RecomputeMetrics();
         _renderCharts = true;
     }

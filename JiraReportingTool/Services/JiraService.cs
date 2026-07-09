@@ -382,6 +382,22 @@ public class JiraService : IJiraService
         return FetchDeliveryReportAsync(jql);
     }
 
+    // Fetches every issue for a single Product ("JS Project[Radio Buttons]") value with a
+    // worklog inside [start, end] — deliberately NOT scoped by the Jira "Sprint" field. Some
+    // products (e.g. Integrations) log work continuously and only loosely tie tickets to any
+    // one sprint, so filtering by sprint membership undercounts them; a product + worklog-date
+    // window matches what Jira itself reports for that window. Not cached — always live, same
+    // as GetDeliveryDataByFilterAsync.
+    public Task<SprintReport> GetIssuesByProductInRangeAsync(string product, DateTime start, DateTime end)
+    {
+        var productClause = product == DeliveryHealthCalculator.NoProductLabel
+            ? "\"JS Project[Radio Buttons]\" is EMPTY"
+            : $"\"JS Project[Radio Buttons]\" = \"{product.Replace("\"", "\\\"")}\"";
+        var jql = Uri.EscapeDataString(
+            $"{productClause} AND worklogDate >= \"{start:yyyy-MM-dd}\" AND worklogDate <= \"{end:yyyy-MM-dd}\" ORDER BY status ASC, priority DESC");
+        return FetchDeliveryReportAsync(jql);
+    }
+
     // Returns the current user's saved Jira filters
     public async Task<List<JiraFilter>> GetMyFiltersAsync()
     {

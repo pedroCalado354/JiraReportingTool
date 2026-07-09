@@ -66,12 +66,16 @@ public static class DeliveryHealthCalculator
         string.Equals(i.Status,    "Discovery",     StringComparison.OrdinalIgnoreCase);
 
     // Same population as TeamDeliveryV3's ActiveIssues: excludes Epics, support tickets,
-    // and the exclusions above.
-    public static List<SprintIssue> ActiveIssues(SprintReport report) => report.Issues
+    // and the exclusions above. Exposed on a raw issue list too (not just a SprintReport's
+    // Issues) so callers that fetch issues outside of a single sprint's report — e.g. a
+    // per-product, date-ranged fetch — can apply the same delivery-scoping rule.
+    public static List<SprintIssue> FilterActive(IEnumerable<SprintIssue> issues) => issues
         .Where(i => !string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase)
                  && !i.Key.Contains("JSSUPPORT", StringComparison.OrdinalIgnoreCase)
                  && !IsExcludedFromMetrics(i))
         .ToList();
+
+    public static List<SprintIssue> ActiveIssues(SprintReport report) => FilterActive(report.Issues);
 
     public static bool IsDeliveryType(SprintIssue i) =>
         string.IsNullOrWhiteSpace(i.IssueType) || string.Equals(i.IssueType, "Task", StringComparison.OrdinalIgnoreCase);
@@ -109,12 +113,19 @@ public static class DeliveryHealthCalculator
               .Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
 
     // ── Bug vs Feature split: signals firefighting (bugs) vs building (everything else) ──
+    // "Bug" here means Bug or Redesign work (a Redesign is corrective/rework, not new build);
+    // "Feature / Task" is Task issue type only — anything else (e.g. Story) counts in neither
+    // bucket rather than being folded into "Feature".
     public sealed record BugFeatureSplit(int BugCount, int FeatureCount, double BugHours, double FeatureHours, double BugPct);
+
+    public static bool IsBugLike(SprintIssue i) =>
+        string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase);
 
     public static BugFeatureSplit ComputeBugFeatureSplit(SprintReport report, List<SprintIssue> issues)
     {
-        var bugs = issues.Where(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
-        var features = issues.Where(i => !string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
+        var bugs = issues.Where(IsBugLike).ToList();
+        var features = issues.Where(IsDeliveryType).ToList();
         var bugHours = SprintWindowHours(bugs, report.StartDate, report.EndDate);
         var featureHours = SprintWindowHours(features, report.StartDate, report.EndDate);
         var totalHours = bugHours + featureHours;
@@ -139,7 +150,7 @@ public static class DeliveryHealthCalculator
 
     public static BugOriginSplit ComputeBugOriginSplit(SprintReport report, List<SprintIssue> issues)
     {
-        var bugs = issues.Where(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList();
+        var bugs = issues.Where(IsBugLike).ToList();
         var supportLinked = bugs.Where(IsSupportLinkedBug).ToList();
         var featureFound = bugs.Where(i => !IsSupportLinkedBug(i)).ToList();
         var supportHours = SprintWindowHours(supportLinked, report.StartDate, report.EndDate);
