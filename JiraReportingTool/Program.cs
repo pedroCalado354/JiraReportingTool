@@ -18,6 +18,7 @@ builder.Services.AddScoped<IJiraService, JiraCacheService>();
 builder.Services.AddScoped<DataSyncService>();
 builder.Services.AddScoped<SprintConfigService>();
 builder.Services.AddScoped<TeamRosterService>();
+builder.Services.AddScoped<WorkingHoursSnapshotService>();
 builder.Services.AddScoped<ISprintPlanService, SprintPlanService>();
 builder.Services.AddHttpClient<GitHubService>();
 

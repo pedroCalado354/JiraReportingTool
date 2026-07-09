@@ -220,6 +220,24 @@ public class SharedHoliday
     public string Name { get; set; } = "";
 }
 
+/// <summary>
+/// A vacation/time-off range for a roster member, managed on the Team Vacations page.
+/// Reduces that member's contribution to the sprint capacity shown on the Team Delivery
+/// dashboards for whatever weekdays overlap the current sprint window.
+/// </summary>
+public class RosterVacation
+{
+    public int Id { get; set; }
+
+    public int RosterMemberId { get; set; }
+
+    public DateOnly StartDate { get; set; }
+    public DateOnly EndDate { get; set; }
+
+    [MaxLength(200)]
+    public string? Note { get; set; }
+}
+
 /// <summary>Audit log entry created each time a task assignment is removed from the calendar during a sprint.</summary>
 public class SprintPlanRemovalLog
 {

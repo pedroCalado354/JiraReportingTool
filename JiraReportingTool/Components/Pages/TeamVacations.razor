@@ -1,0 +1,298 @@
+@page "/team-vacations"
+@rendermode InteractiveServer
+@using JiraReportingTool.Models
+@inject TeamRosterService RosterService
+
+<div class="tv-root">
+    <div class="tv-header">
+        <div>
+            <h2 class="tv-title">Team Vacations</h2>
+            <p class="tv-sub">Time off booked here reduces that member's share of the sprint capacity shown on the Team Delivery dashboards for whatever weekdays overlap the current sprint.</p>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(_message))
+    {
+        <div class="tv-info">@_message</div>
+    }
+
+    <div class="tv-card">
+        <div class="tv-card-head">
+            <span class="tv-card-title">Book Time Off</span>
+        </div>
+
+        <div class="tv-add-row">
+            <select class="tv-input" @bind="_newMemberId">
+                <option value="0">Select member…</option>
+                @foreach (var grp in _members.Where(m => m.Active).GroupBy(m => m.Team).OrderBy(g => g.Key))
+                {
+                    <optgroup label="@(string.IsNullOrWhiteSpace(grp.Key) ? "— No team —" : grp.Key)">
+                        @foreach (var m in grp.OrderBy(m => m.Name))
+                        {
+                            <option value="@m.Id">@m.Name</option>
+                        }
+                    </optgroup>
+                }
+            </select>
+            <input class="tv-input" type="date" @bind="_newStartDate" />
+            <span class="tv-arrow">→</span>
+            <input class="tv-input" type="date" @bind="_newEndDate" />
+            <input class="tv-input tv-note" placeholder="Note (optional)" @bind="_newNote" />
+            <button class="btn primary small" @onclick="AddVacationAsync" disabled="@_isSaving">+ Add</button>
+        </div>
+    </div>
+
+    <div class="tv-card">
+        <div class="tv-card-head">
+            <span class="tv-card-title">Calendar</span>
+            <div class="tv-cal-nav">
+                <button class="btn small" @onclick="PrevMonth" title="Previous month">‹</button>
+                <span class="tv-cal-month">@_calendarMonth.ToString("MMMM yyyy")</span>
+                <button class="btn small" @onclick="NextMonth" title="Next month">›</button>
+                <button class="btn small" @onclick="GoToCurrentMonth">Today</button>
+            </div>
+        </div>
+
+        <div class="tv-cal-grid">
+            @foreach (var dow in DayOfWeekLabels)
+            {
+                <div class="tv-cal-dow">@dow</div>
+            }
+            @foreach (var day in CalendarDays)
+            {
+                var shown = day.Vacationers.Take(4).ToList();
+                var extra = day.Vacationers.Count - shown.Count;
+                <div class="tv-cal-day @(day.InMonth ? "" : "tv-cal-out") @(day.IsWeekend ? "tv-cal-weekend" : "") @(day.IsToday ? "tv-cal-today" : "")">
+                    <div class="tv-cal-daynum">@day.Date.Day</div>
+                    @if (shown.Count > 0)
+                    {
+                        <div class="tv-cal-chips">
+                            @foreach (var v in shown)
+                            {
+                                var c = ColorForTeam(v.Team);
+                                <span class="tv-cal-chip" style="background:@c.Bg;color:@c.Fg;" title="@v.Name (@v.Team)">@v.Name</span>
+                            }
+                            @if (extra > 0)
+                            {
+                                <span class="tv-cal-chip tv-cal-more" title="@string.Join(", ", day.Vacationers.Skip(4).Select(x => x.Name))">+@extra</span>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="tv-card">
+        <div class="tv-card-head">
+            <span class="tv-card-title">Booked Time Off <span class="tv-count">@_vacations.Count</span></span>
+        </div>
+
+        @if (_vacations.Count == 0)
+        {
+            <p class="tv-empty">No time off booked yet. Sprint capacity is currently based purely on roster hours/day.</p>
+        }
+        else
+        {
+            <table class="tv-table">
+                <thead>
+                    <tr>
+                        <th>Member</th>
+                        <th>Team</th>
+                        <th style="width:140px;">Start</th>
+                        <th style="width:140px;">End</th>
+                        <th style="width:100px;">Workdays</th>
+                        <th style="width:100px;">Hours</th>
+                        <th>Note</th>
+                        <th style="width:80px;"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var v in _vacations)
+                    {
+                        var member = _members.FirstOrDefault(m => m.Id == v.RosterMemberId);
+                        var workdays = CountWeekdays(v.StartDate, v.EndDate);
+                        var hours = workdays * (double)(member?.HoursPerDay ?? 0);
+                        <tr>
+                            <td>@(member?.Name ?? $"#{v.RosterMemberId} (removed)")</td>
+                            <td>@(member?.Team ?? "—")</td>
+                            <td>@v.StartDate.ToString("ddd, dd MMM yyyy")</td>
+                            <td>@v.EndDate.ToString("ddd, dd MMM yyyy")</td>
+                            <td>@workdays</td>
+                            <td>@hours.ToString("F0")h</td>
+                            <td>@(string.IsNullOrWhiteSpace(v.Note) ? "—" : v.Note)</td>
+                            <td><button class="btn danger small" @onclick="() => DeleteVacationAsync(v.Id)" disabled="@_isSaving">Delete</button></td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+</div>
+
+@code {
+    private List<RosterMember>   _members   = new();
+    private List<RosterVacation> _vacations = new();
+    private bool _isSaving = false;
+    private string? _message;
+
+    private int _newMemberId = 0;
+    private DateTime? _newStartDate = DateTime.Today;
+    private DateTime? _newEndDate   = DateTime.Today;
+    private string _newNote = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await ReloadAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _members   = await RosterService.GetAllAsync();
+        _vacations = await RosterService.GetVacationsAsync();
+    }
+
+    private async Task AddVacationAsync()
+    {
+        if (_newMemberId == 0) { _message = "Pick a member first."; return; }
+        if (_newStartDate is null || _newEndDate is null) { _message = "Pick both dates first."; return; }
+
+        _isSaving = true;
+        _message = null;
+        try
+        {
+            await RosterService.AddVacationAsync(
+                _newMemberId,
+                DateOnly.FromDateTime(_newStartDate.Value),
+                DateOnly.FromDateTime(_newEndDate.Value),
+                string.IsNullOrWhiteSpace(_newNote) ? null : _newNote.Trim());
+            _newMemberId = 0;
+            _newNote = "";
+            await ReloadAsync();
+            _message = "Time off added.";
+        }
+        catch (Exception ex) { _message = $"Could not add: {ex.Message}"; }
+        finally { _isSaving = false; }
+    }
+
+    private async Task DeleteVacationAsync(int id)
+    {
+        _isSaving = true;
+        try
+        {
+            await RosterService.DeleteVacationAsync(id);
+            await ReloadAsync();
+            _message = "Time off removed.";
+        }
+        finally { _isSaving = false; }
+    }
+
+    private static int CountWeekdays(DateOnly from, DateOnly to)
+    {
+        int count = 0;
+        for (var d = from; d <= to; d = d.AddDays(1))
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday)
+                count++;
+        return count;
+    }
+
+    // ── Calendar view ────────────────────────────────────────────────────────
+    private static readonly string[] DayOfWeekLabels = { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+
+    private DateTime _calendarMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+
+    private void PrevMonth() => _calendarMonth = _calendarMonth.AddMonths(-1);
+    private void NextMonth() => _calendarMonth = _calendarMonth.AddMonths(1);
+    private void GoToCurrentMonth() => _calendarMonth = new DateTime(DateTime.Today.Year, DateTime.Today.Month, 1);
+
+    private record CalendarDay(DateTime Date, bool InMonth, bool IsWeekend, bool IsToday, List<(string Name, string Team)> Vacationers);
+
+    private List<CalendarDay> CalendarDays
+    {
+        get
+        {
+            var firstOfMonth = _calendarMonth;
+            var offsetFromMonday = ((int)firstOfMonth.DayOfWeek + 6) % 7;
+            var gridStart = firstOfMonth.AddDays(-offsetFromMonday);
+
+            var days = new List<CalendarDay>();
+            for (int i = 0; i < 42; i++)
+            {
+                var d = gridStart.AddDays(i);
+                var dOnly = DateOnly.FromDateTime(d);
+                var vacationers = _vacations
+                    .Where(v => v.StartDate <= dOnly && v.EndDate >= dOnly)
+                    .Select(v => _members.FirstOrDefault(m => m.Id == v.RosterMemberId))
+                    .Where(m => m != null)
+                    .Select(m => (m!.Name, m.Team ?? ""))
+                    .Distinct()
+                    .OrderBy(x => x.Name)
+                    .ToList();
+
+                days.Add(new CalendarDay(
+                    Date: d,
+                    InMonth: d.Month == firstOfMonth.Month,
+                    IsWeekend: d.DayOfWeek == DayOfWeek.Saturday || d.DayOfWeek == DayOfWeek.Sunday,
+                    IsToday: d.Date == DateTime.Today,
+                    Vacationers: vacationers));
+            }
+            return days;
+        }
+    }
+
+    private static readonly (string Bg, string Fg)[] TeamPalette =
+    {
+        ("#dbeafe", "#1d4ed8"), ("#dcfce7", "#15803d"), ("#fef3c7", "#92400e"),
+        ("#ede9fe", "#6d28d9"), ("#cffafe", "#0e7490"), ("#fce7f3", "#be185d"),
+    };
+    private static readonly (string Bg, string Fg) NoTeamColor = ("#f3f4f6", "#374151");
+
+    private static (string Bg, string Fg) ColorForTeam(string team) =>
+        string.IsNullOrWhiteSpace(team) ? NoTeamColor : TeamPalette[Math.Abs(team.GetHashCode()) % TeamPalette.Length];
+}
+
+<style>
+    .tv-root { display:flex; flex-direction:column; gap:16px; max-width:1100px; }
+    .tv-root * { box-sizing:border-box; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',Roboto,sans-serif; }
+    .tv-title { font-size:22px; font-weight:700; color:#111827; margin:0; }
+    .tv-sub { font-size:13px; color:#6b7280; margin:4px 0 0; max-width:680px; }
+    .tv-info { padding:10px 16px; border-radius:8px; font-size:13px; background:#eff6ff; color:#1d4ed8; border:1px solid #bfdbfe; }
+
+    .tv-card { background:#fff; border:1px solid #e5e7eb; border-radius:12px; padding:16px 18px; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
+    .tv-card-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+    .tv-card-title { font-size:15px; font-weight:700; color:#111827; }
+    .tv-count { display:inline-block; margin-left:6px; background:#f3f4f6; color:#6b7280; border-radius:20px; padding:1px 9px; font-size:12px; font-weight:600; }
+
+    .tv-add-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+    .tv-input { padding:6px 9px; border:1px solid #d1d5db; border-radius:7px; background:#f9fafb; font-size:13px; color:#111827; }
+    .tv-input:focus { outline:none; border-color:#2563eb; background:#fff; box-shadow:0 0 0 3px rgba(37,99,235,0.12); }
+    .tv-note { flex:1; min-width:160px; }
+    .tv-arrow { color:#9ca3af; font-size:13px; }
+
+    .tv-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .tv-table th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#6b7280; font-weight:600; padding:6px 8px; border-bottom:1px solid #e5e7eb; }
+    .tv-table td { padding:7px 8px; border-bottom:1px solid #f3f4f6; }
+    .tv-empty { font-size:13px; color:#9ca3af; margin:4px 0 0; }
+
+    .tv-cal-nav { display:flex; align-items:center; gap:8px; }
+    .tv-cal-month { font-size:13px; font-weight:600; color:#374151; min-width:120px; text-align:center; }
+    .tv-cal-grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:6px; }
+    .tv-cal-dow { font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#9ca3af; font-weight:600; text-align:center; padding:2px 0 6px; }
+    .tv-cal-day { min-height:78px; border:1px solid #e5e7eb; border-radius:8px; padding:6px; background:#fff; display:flex; flex-direction:column; gap:4px; overflow:hidden; }
+    .tv-cal-day.tv-cal-out { background:#f9fafb; opacity:0.5; }
+    .tv-cal-day.tv-cal-weekend { background:#f8fafc; }
+    .tv-cal-day.tv-cal-today { border-color:#2563eb; box-shadow:0 0 0 1px #2563eb inset; }
+    .tv-cal-daynum { font-size:12px; font-weight:600; color:#374151; }
+    .tv-cal-chips { display:flex; flex-wrap:wrap; gap:3px; }
+    .tv-cal-chip { font-size:10.5px; font-weight:600; padding:1px 6px; border-radius:10px; white-space:nowrap; max-width:100%; overflow:hidden; text-overflow:ellipsis; }
+    .tv-cal-more { background:#f3f4f6; color:#6b7280; }
+
+    .btn { padding:8px 15px; border-radius:8px; border:1px solid #d1d5db; background:#f9fafb; color:#374151; font-size:13px; font-weight:600; cursor:pointer; }
+    .btn:hover:not(:disabled) { background:#f3f4f6; }
+    .btn.primary { background:#2563eb; border-color:#2563eb; color:#fff; }
+    .btn.primary:hover:not(:disabled) { background:#1d4ed8; }
+    .btn.danger { background:#fef2f2; border-color:#fca5a5; color:#b91c1c; }
+    .btn.danger:hover:not(:disabled) { background:#fee2e2; }
+    .btn.small { padding:5px 10px; font-size:12px; border-radius:6px; }
+    .btn:disabled { opacity:0.45; cursor:not-allowed; }
+</style>

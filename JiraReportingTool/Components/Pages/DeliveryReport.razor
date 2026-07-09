@@ -1,0 +1,342 @@
+@page "/delivery-report"
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+@inject SprintConfigService SprintConfigService
+@inject TeamRosterService RosterService
+@inject IJSRuntime JS
+@using JiraReportingTool.Models
+
+<PageTitle>Delivery Report</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ═════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon"><i class="bi bi-bar-chart-steps"></i></div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Sprint &amp; Delivery</span>
+                <h1 class="v2-hero-title">Delivery Report</h1>
+                <span class="v2-hero-sub">Compare estimated hours burndown and engineering-roster hours spent across sprints</span>
+            </div>
+            <div class="v2-hero-spacer"></div>
+            @if (_results.Count > 0)
+            {
+                <div class="v2-hero-actions">
+                    <span class="v2-pill v2-pill-neutral"><i class="bi bi-collection"></i> @_results.Count sprint@(_results.Count == 1 ? "" : "s") compared</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ SPRINT PICKER ════════════════════════════════════════════════════ -->
+    <div class="v2-control-bar" style="flex-wrap:wrap;align-items:flex-start;gap:14px">
+        <div class="v2-field" style="min-width:100%;">
+            <label class="v2-label">Sprints (from Dashboard Config)</label>
+            @if (_knownSprints.Count == 0)
+            {
+                <p class="v2-hint">No sprints configured yet — add them on the Dashboard Config page.</p>
+            }
+            else
+            {
+                <div class="dr-chip-row">
+                    @foreach (var s in _knownSprints)
+                    {
+                        <label class="dr-chip @(_selected.Contains(s.SprintId) ? "dr-chip-on" : "")">
+                            <input type="checkbox" checked="@_selected.Contains(s.SprintId)"
+                                   @onchange="e => ToggleSprint(s.SprintId, e)" />
+                            @SprintLabel(s)
+                        </label>
+                    }
+                </div>
+            }
+        </div>
+
+        <button class="v2-btn v2-btn-primary" @onclick="CompareAsync" disabled="@(IsLoading || _selected.Count == 0)">
+            @if (IsLoading) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-lightning-charge-fill"></i> }
+            <span>Compare</span>
+        </button>
+    </div>
+
+    @if (ErrorMessage != null)
+    {
+        <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle-fill"></i> @ErrorMessage</div>
+    }
+
+    @if (_results.Count > 0)
+    {
+        <!-- ═══ CHARTS ══════════════════════════════════════════════════════ -->
+        <div class="v2-card">
+            <div class="v2-section-title"><i class="bi bi-graph-down-arrow" style="color:var(--v2-brand)"></i>Estimated Hours Burndown <span class="v2-section-note">· remaining estimate by sprint day</span></div>
+            <div style="height:340px;position:relative">
+                <canvas id="dr-chart-burndown"></canvas>
+            </div>
+        </div>
+
+        <div class="v2-card">
+            <div class="v2-section-title"><i class="bi bi-people-fill" style="color:var(--v2-brand-3)"></i>Engineering-Roster Hours Spent <span class="v2-section-note">· active roster members only, within each sprint's window</span></div>
+            <div style="height:300px;position:relative">
+                <canvas id="dr-chart-roster-hours"></canvas>
+            </div>
+        </div>
+
+        <!-- ═══ SUMMARY TABLE ═══════════════════════════════════════════════ -->
+        <div class="v2-card">
+            <div class="v2-section-title"><i class="bi bi-table" style="color:var(--v2-brand-2)"></i>Summary</div>
+            <table class="dr-table">
+                <thead>
+                    <tr>
+                        <th>Sprint</th>
+                        <th style="width:120px">Days</th>
+                        <th style="width:140px">Estimated hours</th>
+                        <th style="width:160px">Roster hours spent</th>
+                        <th style="width:140px">Avg roster h/day</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var r in _results)
+                    {
+                        <tr>
+                            <td>@r.Name</td>
+                            <td>@r.TotalSprintDays</td>
+                            <td>@r.EstimatedHours.ToString("F0")h</td>
+                            <td>@r.RosterHours.ToString("F0")h</td>
+                            <td>@(r.TotalSprintDays > 0 ? (r.RosterHours / r.TotalSprintDays).ToString("F1") : "0")h</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@code {
+    private List<SprintConfig> _knownSprints = [];
+    private HashSet<int> _selected = [];
+    private List<RosterMember> _roster = [];
+    private bool IsLoading;
+    private string? ErrorMessage;
+    private bool _renderCharts;
+
+    private record SprintResult(int SprintId, string Name, int TotalSprintDays, double EstimatedHours, double RosterHours, List<double> Burndown);
+    private List<SprintResult> _results = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        _knownSprints = (await SprintConfigService.GetAllAsync())
+            .OrderByDescending(c => c.StartDate)
+            .ToList();
+    }
+
+    private string SprintLabel(SprintConfig s)
+    {
+        var name = string.IsNullOrEmpty(s.Name) ? $"Sprint {s.SprintId}" : s.Name;
+        return $"{name} ({s.StartDate:MMM d} – {s.EndDate:MMM d})";
+    }
+
+    private void ToggleSprint(int sprintId, ChangeEventArgs e)
+    {
+        var on = e.Value is bool b && b;
+        if (on) _selected.Add(sprintId); else _selected.Remove(sprintId);
+    }
+
+    // Mirrors Team Delivery's exclusion rule so numbers line up with that dashboard:
+    // epics, support tickets, and the Product / Documentation / Discovery workflow don't count as delivery work.
+    private static bool IsExcludedFromMetrics(SprintIssue i) =>
+        string.Equals(i.IssueType, "Epic", StringComparison.OrdinalIgnoreCase) ||
+        i.Key.Contains("JSSUPPORT", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(i.IssueType, "Product", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(i.Status, "Documentation", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(i.Status, "Discovery", StringComparison.OrdinalIgnoreCase);
+
+    private static bool WorklogByMember(WorklogEntry w, RosterMember m)
+    {
+        if (!string.IsNullOrWhiteSpace(m.JiraAccountId) && !string.IsNullOrWhiteSpace(w.AuthorAccountId))
+            return string.Equals(w.AuthorAccountId, m.JiraAccountId, StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(m.JiraEmail) && !string.IsNullOrWhiteSpace(w.AuthorEmail))
+            return string.Equals(w.AuthorEmail, m.JiraEmail, StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrWhiteSpace(m.Name) && string.Equals(w.Author, m.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<double> ComputeBurndown(SprintReport report, List<SprintIssue> activeIssues)
+    {
+        var start = report.StartDate?.Date;
+        var end = report.EndDate?.Date;
+        if (start is null || end is null) return [];
+
+        var totalHours = activeIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
+        if (totalHours == 0) totalHours = activeIssues.Count;
+
+        var loggedByDay = new Dictionary<DateTime, double>();
+        foreach (var w in activeIssues.SelectMany(i => i.Worklogs))
+        {
+            var d = w.Started.Date;
+            loggedByDay[d] = loggedByDay.GetValueOrDefault(d) + w.TimeSpentSeconds / 3600.0;
+        }
+
+        var cap = end.Value < DateTime.Today ? end.Value : DateTime.Today;
+        var points = new List<double>();
+        var remaining = totalHours;
+        for (var d = start.Value; d <= end.Value; d = d.AddDays(1))
+        {
+            if (loggedByDay.TryGetValue(d, out var logged)) remaining -= logged;
+            if (d <= cap) points.Add(Math.Max(0, remaining));
+        }
+        return points;
+    }
+
+    private double ComputeRosterHours(SprintReport report)
+    {
+        var start = report.StartDate?.Date;
+        var end = report.EndDate?.Date;
+        bool InWindow(DateTime d) => (start is null || d.Date >= start) && (end is null || d.Date <= end);
+
+        var active = _roster.Where(m => m.Active).ToList();
+        if (active.Count == 0) return 0;
+
+        return report.Issues.SelectMany(i => i.Worklogs)
+            .Where(w => InWindow(w.Started) && active.Any(m => WorklogByMember(w, m)))
+            .Sum(w => w.TimeSpentSeconds) / 3600.0;
+    }
+
+    private async Task CompareAsync()
+    {
+        if (_selected.Count == 0) return;
+
+        IsLoading = true; ErrorMessage = null;
+        _results.Clear();
+        StateHasChanged();
+
+        try
+        {
+            _roster = await RosterService.GetActiveAsync();
+
+            var results = new List<SprintResult>();
+            foreach (var sprintId in _selected)
+            {
+                var report = await JiraService.GetDeliveryDataAsync(sprintId);
+                var activeIssues = report.Issues.Where(i => !IsExcludedFromMetrics(i)).ToList();
+
+                var config = _knownSprints.FirstOrDefault(s => s.SprintId == sprintId);
+                var name = !string.IsNullOrEmpty(config?.Name) ? config!.Name
+                         : !string.IsNullOrEmpty(report.SprintName) ? report.SprintName
+                         : $"Sprint {sprintId}";
+
+                results.Add(new SprintResult(
+                    SprintId:        sprintId,
+                    Name:            name,
+                    TotalSprintDays: report.TotalSprintDays,
+                    EstimatedHours:  activeIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0,
+                    RosterHours:     ComputeRosterHours(report),
+                    Burndown:        ComputeBurndown(report, activeIssues)));
+            }
+
+            _results = results.OrderBy(r => r.Name).ToList();
+            _renderCharts = true;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_renderCharts && _results.Count > 0)
+        {
+            _renderCharts = false;
+            await RenderBurndownChart();
+            await RenderRosterHoursChart();
+        }
+    }
+
+    private static readonly string[] SeriesColors =
+    [
+        "#4f46e5", "#059669", "#d97706", "#dc2626", "#0891b2", "#7c3aed", "#db2777", "#65a30d"
+    ];
+
+    private async Task RenderBurndownChart()
+    {
+        var maxDays = _results.Count == 0 ? 0 : _results.Max(r => r.Burndown.Count);
+        if (maxDays == 0) return;
+
+        var labels = Enumerable.Range(1, maxDays).Select(d => $"Day {d}").ToArray();
+        var datasets = _results.Select((r, idx) => new
+        {
+            label = r.Name,
+            data = r.Burndown.Cast<double?>().ToArray(),
+            borderColor = SeriesColors[idx % SeriesColors.Length],
+            backgroundColor = SeriesColors[idx % SeriesColors.Length],
+            borderWidth = 2,
+            pointRadius = 2,
+            fill = false,
+            tension = 0.15
+        }).ToArray();
+
+        await JS.InvokeVoidAsync("renderChart", "dr-chart-burndown", new
+        {
+            type = "line",
+            data = new { labels, datasets },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = true, position = "top", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 10 } } },
+                scales = new
+                {
+                    x = new { grid = new { display = false } },
+                    y = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" }, title = new { display = true, text = "Remaining estimate (h)" } }
+                }
+            }
+        });
+    }
+
+    private async Task RenderRosterHoursChart()
+    {
+        await JS.InvokeVoidAsync("renderChart", "dr-chart-roster-hours", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels = _results.Select(r => r.Name).ToArray(),
+                datasets = new object[]
+                {
+                    new
+                    {
+                        label = "Roster hours spent",
+                        data = _results.Select(r => Math.Round(r.RosterHours, 1)).ToArray(),
+                        backgroundColor = _results.Select((_, idx) => SeriesColors[idx % SeriesColors.Length] + "cc").ToArray(),
+                        borderColor = _results.Select((_, idx) => SeriesColors[idx % SeriesColors.Length]).ToArray(),
+                        borderWidth = 1, borderRadius = 4
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales = new
+                {
+                    x = new { grid = new { display = false } },
+                    y = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } }
+                }
+            }
+        });
+    }
+}
+
+<style>
+    .dr-chip-row { display:flex; flex-wrap:wrap; gap:8px; }
+    .dr-chip {
+        display:flex; align-items:center; gap:6px;
+        padding:7px 12px; border-radius:20px;
+        border:1px solid var(--v2-border); background:var(--v2-surface-2);
+        font-size:12.5px; color:var(--v2-ink-3); cursor:pointer; user-select:none;
+        transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .dr-chip:hover { border-color:var(--v2-border-strong); }
+    .dr-chip input { accent-color:var(--v2-brand); }
+    .dr-chip-on { background:var(--v2-brand-soft); border-color:var(--v2-brand); color:var(--v2-brand); font-weight:600; }
+
+    .dr-table { width:100%; border-collapse:collapse; font-size:13px; }
+    .dr-table th { text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:var(--v2-ink-4); font-weight:600; padding:8px 10px; border-bottom:1px solid var(--v2-border); }
+    .dr-table td { padding:8px 10px; border-bottom:1px solid var(--v2-divider); color:var(--v2-ink-2); }
+</style>

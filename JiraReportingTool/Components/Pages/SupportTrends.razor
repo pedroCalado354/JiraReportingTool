@@ -103,6 +103,7 @@
         <div class="st-toolbar">
             <div class="st-tool-group">
                 <span class="st-tool-label">Window</span>
+                <i class="bi bi-info-circle st-tool-hint" title="Measurement period, not a filter. Doesn't remove any bugs from the page — it decides whether an event (a bug's created date, resolved date, or a worklog date) counts toward the Created / Closed / Worked On / Net Flow / hours-logged stats for this period. A bug can still appear elsewhere (Open Backlog, Bugs tab) even if its event falls outside the Window."></i>
                 <span class="st-date-lbl">From</span>
                 <InputDate class="st-input" @bind-Value="_rangeStart" @bind-Value:after="OnRangeChanged" />
                 <span class="st-date-lbl">To</span>
@@ -175,8 +176,9 @@
                     <button class="st-prod-chip" @onclick="() => ToggleProduct(val)" title="Remove @val">@val ✕</button>
                 }
             </div>
-            <div class="st-tool-group" title="Keep only bugs whose last update falls inside this range">
+            <div class="st-tool-group">
                 <span class="st-tool-label">Working date</span>
+                <i class="bi bi-info-circle st-tool-hint" title="A real filter, unlike Window. Bugs whose last update falls outside this range are removed from the ENTIRE page — every tab, every KPI, every chart, and the total bug count in the header. Tick 'Any activity' to keep a bug if any event (created, worklog, resolved, updated) falls in range, not just its last update."></i>
                 <span class="st-date-lbl">From</span>
                 <InputDate TValue="DateOnly?" class="st-input" @bind-Value="_workFrom" @bind-Value:after="OnWorkRangeChanged" />
                 <span class="st-date-lbl">To</span>
@@ -697,6 +699,7 @@
                             <th class="sortable @BugSI("summary")" @onclick='() => BugSort("summary")'>Summary</th>
                             <th class="sortable @BugSI("customer")" @onclick='() => BugSort("customer")'>Customer</th>
                             <th class="sortable @BugSI("product")" @onclick='() => BugSort("product")'>Product</th>
+                            <th class="sortable @BugSI("sprint")" @onclick='() => BugSort("sprint")'>Sprint</th>
                             <th class="sortable @BugSI("priority")" @onclick='() => BugSort("priority")'>Priority</th>
                             <th class="sortable @BugSI("status")" @onclick='() => BugSort("status")'>Status</th>
                             <th class="v2-table-num sortable @BugSI("devqa")" @onclick='() => BugSort("devqa")' title="Hours logged between first Dev Ready and first QA Ready">Dev→QA</th>
@@ -721,6 +724,7 @@
                                 </td>
                                 <td class="st-trunc" style="max-width:160px" title="@b.Customer">@(string.IsNullOrWhiteSpace(b.Customer) ? "—" : b.Customer)</td>
                                 <td class="st-trunc" style="max-width:140px" title="@ProductOf(b)">@ProductOf(b)</td>
+                                <td class="st-trunc" style="max-width:100px" title="@SprintNameFor(b)">@SprintNameFor(b)</td>
                                 <td><span class="v2-pill @PriorityPill(b.Priority)">@b.Priority</span></td>
                                 <td><span class="st-status @(IsDone(b) ? "st-status-done" : "st-status-open")">@b.Status</span></td>
                                 <td class="v2-table-num @PhaseHrsCls(devQa, 8)">@PhaseHrsLabel(devQa)</td>
@@ -730,7 +734,7 @@
                                 <td class="v2-table-num">@(b.TimeSpentSeconds > 0 ? FmtHM(b.TimeSpentSeconds) : "—")</td>
                             </tr>
                         }
-                        @if (!DisplayedBugs.Any()) { <tr><td colspan="11" class="st-muted-cell">No bugs match this filter.</td></tr> }
+                        @if (!DisplayedBugs.Any()) { <tr><td colspan="12" class="st-muted-cell">No bugs match this filter.</td></tr> }
                     </tbody>
                 </table>
             </div>
@@ -783,11 +787,34 @@
     private bool _sprintDdOpen;
     private const string NoSprintLabel = "No Sprint";
 
-    private List<(string Name, int Count)> AllSprintOptions => _configs
-        .OrderByDescending(c => c.StartDate)
-        .Select(c => (Name: ConfigName(c), Count: _allBugsPool.Count(b => BugInConfigSprint(b, c))))
-        .Append((Name: NoSprintLabel, Count: _allBugsPool.Count(b => !InAnyConfigSprint(b))))
-        .ToList();
+    // Sprints outside the configured Pro epics (e.g. an "Integrations" board sprint) still carry
+    // real Jira sprint data (customfield_10020) — surface those too instead of lumping every
+    // unconfigured bug under "No Sprint". SprintName already prefers the issue's active sprint.
+    private static string FallbackSprintName(SprintIssue b) =>
+        string.IsNullOrWhiteSpace(b.SprintName) ? NoSprintLabel : b.SprintName;
+
+    private List<(string Name, int Count)> AllSprintOptions
+    {
+        get
+        {
+            var configOptions = _configs
+                .OrderByDescending(c => c.StartDate)
+                .Select(c => (Name: ConfigName(c), Count: _allBugsPool.Count(b => BugInConfigSprint(b, c))));
+
+            var unconfigured = _allBugsPool.Where(b => !InAnyConfigSprint(b)).ToList();
+            var extraOptions = unconfigured
+                .Select(FallbackSprintName)
+                .Where(n => n != NoSprintLabel)
+                .Distinct()
+                .Select(n => (Name: n, Count: unconfigured.Count(b => FallbackSprintName(b) == n)))
+                .OrderByDescending(g => g.Count);
+
+            return configOptions
+                .Concat(extraOptions)
+                .Append((Name: NoSprintLabel, Count: unconfigured.Count(b => FallbackSprintName(b) == NoSprintLabel)))
+                .ToList();
+        }
+    }
 
     private bool BugInConfigSprint(SprintIssue b, SprintConfig c) =>
         (!string.IsNullOrWhiteSpace(c.EpicKey) &&
@@ -796,20 +823,47 @@
 
     private bool InAnyConfigSprint(SprintIssue b) => _configs.Any(c => BugInConfigSprint(b, c));
 
+    // Bug Explorer "Sprint" column — resolves each bug to its owning config sprint (epic-scoped)
+    // first, then falls back to its real Jira sprint name when it isn't under a configured epic.
+    private string SprintNameFor(SprintIssue b)
+    {
+        var cfg = _configs.FirstOrDefault(c => BugInConfigSprint(b, c));
+        return cfg is not null ? ConfigName(cfg) : FallbackSprintName(b);
+    }
+
     private bool MatchesSprintFilter(SprintIssue b) =>
         _selectedSprints.Count == 0
         || _configs.Any(c => _selectedSprints.Contains(ConfigName(c)) && BugInConfigSprint(b, c))
-        || (_selectedSprints.Contains(NoSprintLabel) && !InAnyConfigSprint(b));
+        || (!InAnyConfigSprint(b) && _selectedSprints.Contains(FallbackSprintName(b)));
 
     private void ToggleSprintFilter(string s)
     {
         if (!_selectedSprints.Remove(s)) _selectedSprints.Add(s);
+        SyncRangesToSelectedSprints();
         ApplyPoolFilters();
     }
 
     private void ClearSprintFilters()
     {
         _selectedSprints.Clear();
+        ResetRange();
+        ClearWorkRange();
+    }
+
+    // Driving the Sprint filter also drives the Window and Working Date pickers to that
+    // sprint's configured dates, so the user doesn't have to re-enter them by hand. Spans
+    // the min start / max end when multiple sprints are selected. "No Sprint" has no dates,
+    // so it's excluded and leaves whatever range is already set untouched.
+    private void SyncRangesToSelectedSprints()
+    {
+        var dated = _configs.Where(c => _selectedSprints.Contains(ConfigName(c))).ToList();
+        if (dated.Count == 0) return;
+
+        _rangeStart = dated.Min(c => c.StartDate);
+        _rangeEnd   = dated.Max(c => c.EndDate);
+        _workFrom   = _rangeStart;
+        _workTo     = _rangeEnd;
+        _chartsNeedRender = true;
         ApplyPoolFilters();
     }
 
@@ -1318,6 +1372,7 @@
             "summary"  => asc ? src.OrderBy(b => b.Summary)              : src.OrderByDescending(b => b.Summary),
             "customer" => asc ? src.OrderBy(b => CustomerKey(b))         : src.OrderByDescending(b => CustomerKey(b)),
             "product"  => asc ? src.OrderBy(b => ProductOf(b))           : src.OrderByDescending(b => ProductOf(b)),
+            "sprint"   => asc ? src.OrderBy(b => SprintNameFor(b))       : src.OrderByDescending(b => SprintNameFor(b)),
             "priority" => asc ? src.OrderBy(b => PriOrder(b))            : src.OrderByDescending(b => PriOrder(b)),
             "status"   => asc ? src.OrderBy(b => b.Status)               : src.OrderByDescending(b => b.Status),
             "devqa"    => asc ? src.OrderBy(b => PhaseLoggedSeconds(b, b.DevReadyDate, b.QaReadyDate)    ?? int.MaxValue) : src.OrderByDescending(b => PhaseLoggedSeconds(b, b.DevReadyDate, b.QaReadyDate)    ?? int.MinValue),
@@ -1361,6 +1416,15 @@
             if (inSprint.Count == 0) continue;
             noSprint.ExceptWith(inSprint);
             AddBugSheet(wb, usedNames, $"S - {ConfigName(c)}", inSprint);
+        }
+        // Bugs outside every configured epic — split out by their real Jira sprint name
+        // (e.g. an "Integrations" board sprint) instead of dumping them all in "No sprint".
+        foreach (var g in rows.Where(noSprint.Contains).GroupBy(FallbackSprintName)
+                              .Where(g => g.Key != NoSprintLabel)
+                              .OrderBy(g => g.Key))
+        {
+            noSprint.ExceptWith(g);
+            AddBugSheet(wb, usedNames, $"S - {g.Key}", g.ToList());
         }
         if (noSprint.Count > 0)
             AddBugSheet(wb, usedNames, "S - No sprint", rows.Where(noSprint.Contains).ToList());
@@ -2192,6 +2256,8 @@
     }
     .st-tool-group { display: flex; align-items: center; gap: 8px; }
     .st-tool-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--v2-ink-3); }
+    .st-tool-hint { color: var(--v2-ink-4); cursor: help; font-size: 12px; margin-left: -2px; }
+    .st-tool-hint:hover { color: var(--v2-brand); }
     .st-date-lbl { font-size: 11px; color: var(--v2-ink-3); }
     .st-work-chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--v2-ink-2); cursor: pointer; white-space: nowrap; user-select: none; }
     .st-work-chk input { cursor: pointer; margin: 0; }

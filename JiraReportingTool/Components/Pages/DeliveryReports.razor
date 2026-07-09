@@ -1,0 +1,569 @@
+@page "/delivery-reports"
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+@inject SprintConfigService SprintConfigService
+@inject TeamRosterService RosterService
+@inject IJSRuntime JS
+@using JiraReportingTool.Models
+
+<PageTitle>Delivery Reports</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ═════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon"><i class="bi bi-file-earmark-bar-graph"></i></div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Executive Summary</span>
+                <h1 class="v2-hero-title">Delivery Reports</h1>
+                <span class="v2-hero-sub">
+                    @if (Report is not null)
+                    {
+                        <strong>@(Report.SprintName is { Length: > 0 } sn ? sn : "Sprint")</strong>
+                        @if (Report.StartDate.HasValue && Report.EndDate.HasValue)
+                        {
+                            <span> · @Report.StartDate.Value.ToString("MMM d") – @Report.EndDate.Value.ToString("MMM d, yyyy")</span>
+                        }
+                    }
+                    else
+                    {
+                        <span>Sprint status, delivery, hours, velocity and scope — at a glance</span>
+                    }
+                </span>
+            </div>
+            <div class="v2-hero-spacer"></div>
+            @if (Report is not null)
+            {
+                <span class="v2-pill v2-pill-neutral"><i class="bi bi-calendar3"></i> @Report.DaysRemaining d left</span>
+            }
+        </div>
+    </div>
+
+    <!-- ═══ SPRINT PICKER ═══════════════════════════════════════════════════ -->
+    <div class="v2-control-bar">
+        <div class="v2-field" style="min-width:280px">
+            <label class="v2-label">Sprint</label>
+            <select class="v2-select" @bind="SprintId" @bind:after="OnSprintPicked">
+                <option value="">— pick a sprint —</option>
+                @foreach (var s in _knownSprints)
+                {
+                    <option value="@s.SprintId">@SprintLabel(s)</option>
+                }
+            </select>
+        </div>
+        @if (IsLoading)
+        {
+            <span class="v2-hint"><span class="v2-spin"></span> Loading…</span>
+        }
+    </div>
+
+    @if (ErrorMessage != null)
+    {
+        <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle-fill"></i> @ErrorMessage</div>
+    }
+
+    @if (Report is null && !IsLoading)
+    {
+        <div class="v2-empty">
+            <div class="v2-empty-icon"><i class="bi bi-file-earmark-bar-graph"></i></div>
+            <div class="v2-empty-title">Pick a sprint to build the report</div>
+            <div>A director-facing summary of sprint status, delivery, logged hours, velocity and scope change — for Delivery Work and All Issue Types.</div>
+        </div>
+    }
+
+    @if (Report is not null && AllProducts.Count > 0)
+    {
+        <div class="v2-card" style="margin-top:16px">
+            <div class="v2-section-title"><i class="bi bi-grid-fill"></i>Product <span class="v2-section-note">filter, or leave all selected to view every product merged</span></div>
+            <div class="dr-chip-row">
+                @foreach (var (name, count) in AllProducts)
+                {
+                    var n = name;
+                    <button type="button" class="dr-chip @(SelectedProducts.Contains(n) ? "dr-chip-on" : "")" @onclick="() => ToggleProduct(n)">
+                        @if (SelectedProducts.Contains(n)) { <i class="bi bi-check2"></i> }
+                        @n <span class="dr-chip-n">@count</span>
+                    </button>
+                }
+            </div>
+            <div class="v2-hint" style="margin-top:8px;display:flex;align-items:center;gap:10px">
+                <span>@SelectedProducts.Count of @AllProducts.Count selected@(SelectedProducts.Count == AllProducts.Count ? " — all products merged" : "")</span>
+                <button type="button" class="dr-link-btn" @onclick="SelectAllProducts">All</button>
+                <span class="dr-dot-sep">·</span>
+                <button type="button" class="dr-link-btn" @onclick="ClearProducts">None</button>
+            </div>
+        </div>
+    }
+
+    @if (Report is not null && AllBugSplit is not null)
+    {
+        <div class="v2-card" style="margin-top:16px">
+            <div class="v2-section-title"><i class="bi bi-bug-fill" style="color:var(--v2-danger)"></i>Bug vs Feature Split <span class="v2-section-note">firefighting vs building — All Issue Types, current product filter</span></div>
+            <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
+                <div class="v2-donut v2-donut-lg" style="--p:@(AllBugSplit.BugPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
+                    <span>@AllBugSplit.BugPct.ToString("F0")%</span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:8px">
+                    <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@AllBugSplit.BugCount issues &middot; @AllBugSplit.BugHours.ToString("F0")h logged</span></div>
+                    <div class="v2-row"><span class="v2-chip v2-chip-story">Feature / Task</span><span class="v2-row-value">@AllBugSplit.FeatureCount issues &middot; @AllBugSplit.FeatureHours.ToString("F0")h logged</span></div>
+                </div>
+                <div class="v2-hint" style="max-width:260px">@(AllBugSplit.BugPct >= 40 ? "A large share of logged time is going to bugs — the team may be firefighting more than building." : "Most logged time is going toward feature/task work.")</div>
+            </div>
+
+            @if (AllBugOriginSplit is not null && (AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) > 0)
+            {
+                <div class="v2-divider"></div>
+                <div class="v2-section-title" style="margin-top:4px">
+                    <i class="bi bi-pie-chart-fill" style="color:var(--v2-info)"></i>Bug Origin
+                    <span class="v2-section-note">JSSUPPORT-linked vs feature-found, of the @(AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) bugs above</span>
+                </div>
+                <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
+                    <div class="v2-donut v2-donut-lg" style="--p:@(AllBugOriginSplit.SupportLinkedPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
+                        <span>@AllBugOriginSplit.SupportLinkedPct.ToString("F0")%</span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                        <div class="v2-row"><span class="v2-chip v2-chip-bug">JSSUPPORT-linked</span><span class="v2-row-value">@AllBugOriginSplit.SupportLinkedCount bugs &middot; @AllBugOriginSplit.SupportLinkedHours.ToString("F0")h logged</span></div>
+                        <div class="v2-row"><span class="v2-chip v2-chip-task">Feature-found</span><span class="v2-row-value">@AllBugOriginSplit.FeatureFoundCount bugs &middot; @AllBugOriginSplit.FeatureFoundHours.ToString("F0")h logged</span></div>
+                    </div>
+                    <div class="v2-hint" style="max-width:260px">@AllBugOriginSplit.SupportLinkedPct.ToString("F0")% of bugs trace back to a customer-reported JSSUPPORT ticket rather than being found during feature work.</div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (Report is not null && TaskMetrics is not null && AllMetrics is not null)
+    {
+        @RenderSection("Delivery Work", "Task issue type only", TaskMetrics, TaskScope, "task")
+        @RenderSection("All Issue Types", "Every issue in the sprint", AllMetrics, AllScope, "all")
+    }
+</div>
+
+@code {
+    private SprintReport? Report;
+    private List<SprintConfig> _knownSprints = [];
+    private List<RosterMember> _roster = [];
+    private List<RosterVacation> _vacations = [];
+    private string SprintId = "";
+    private bool IsLoading;
+    private string? ErrorMessage;
+    private bool _renderCharts;
+
+    private DeliveryHealthMetrics? TaskMetrics;
+    private DeliveryHealthMetrics? AllMetrics;
+    private DeliveryHealthCalculator.ScopeComparison? TaskScope;
+    private DeliveryHealthCalculator.ScopeComparison? AllScope;
+    private List<(DateTime Date, double RemainingHours)> TaskBurndown = [];
+    private List<(DateTime Date, double RemainingHours)> AllBurndown = [];
+    private List<(DateTime Date, double IdealRemainingHours)> TaskIdealBurndown = [];
+    private List<(DateTime Date, double IdealRemainingHours)> AllIdealBurndown = [];
+    private List<(DateTime Date, double Hours)> TaskHoursPerDay = [];
+    private List<(DateTime Date, double Hours)> AllHoursPerDay = [];
+    private DeliveryHealthCalculator.BugFeatureSplit? AllBugSplit;
+    private DeliveryHealthCalculator.BugOriginSplit? AllBugOriginSplit;
+
+    // ── Product filter ── "JS Project[Radio Buttons]" field; empty selection means "no filter"
+    // (same convention as Working Hours' product filter), so clearing chips shows everything merged.
+    private HashSet<string> SelectedProducts = [];
+
+    private static string ProductOf(SprintIssue i) => DeliveryHealthCalculator.ProductOf(i);
+
+    private List<(string Name, int Count)> AllProducts => Report is null ? [] : DeliveryHealthCalculator.ActiveIssues(Report)
+        .GroupBy(ProductOf)
+        .Select(g => (Name: g.Key, Count: g.Count()))
+        .OrderBy(g => g.Name == DeliveryHealthCalculator.NoProductLabel ? 1 : 0)
+        .ThenByDescending(g => g.Count)
+        .ToList();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _roster = await RosterService.GetActiveAsync(); } catch { _roster = []; }
+        try { _vacations = await RosterService.GetVacationsAsync(); } catch { _vacations = []; }
+
+        _knownSprints = (await SprintConfigService.GetAllAsync())
+            .OrderByDescending(c => c.StartDate)
+            .ToList();
+
+        var current = await SprintConfigService.GetCurrentAsync();
+        if (current is not null && string.IsNullOrEmpty(SprintId))
+            SprintId = current.SprintId.ToString();
+    }
+
+    private string SprintLabel(SprintConfig s)
+    {
+        var name = string.IsNullOrEmpty(s.Name) ? $"Sprint {s.SprintId}" : s.Name;
+        return $"{name} ({s.StartDate:MMM d} – {s.EndDate:MMM d})";
+    }
+
+    private async Task OnSprintPicked()
+    {
+        if (!string.IsNullOrEmpty(SprintId)) await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        if (!int.TryParse(SprintId.Trim(), out var sprintId)) return;
+
+        IsLoading = true; ErrorMessage = null; Report = null;
+        StateHasChanged();
+
+        try
+        {
+            var report = await JiraService.GetDeliveryDataAsync(sprintId);
+            Report = report;
+            SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
+
+            RecomputeMetrics();
+            _renderCharts = true;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    private void RecomputeMetrics()
+    {
+        if (Report is null) return;
+        var report = Report;
+        var effectiveDaysRemaining = report.DaysRemaining;
+
+        bool ProductMatch(SprintIssue i) => SelectedProducts.Count == 0 || SelectedProducts.Contains(ProductOf(i));
+
+        var taskIssues = DeliveryHealthCalculator.ActiveIssues(report).Where(DeliveryHealthCalculator.IsDeliveryType).Where(ProductMatch).ToList();
+        var allIssues  = DeliveryHealthCalculator.ActiveIssues(report).Where(ProductMatch).ToList();
+
+        TaskMetrics = DeliveryHealthCalculator.ComputeForIssues(report, taskIssues, effectiveDaysRemaining, isTaskOnly: true, _roster, _vacations);
+        AllMetrics  = DeliveryHealthCalculator.ComputeForIssues(report, allIssues, effectiveDaysRemaining, isTaskOnly: false, _roster, _vacations);
+        TaskScope   = DeliveryHealthCalculator.ComputeScopeComparison(report, taskIssues);
+        AllScope    = DeliveryHealthCalculator.ComputeScopeComparison(report, allIssues);
+        TaskBurndown      = DeliveryHealthCalculator.ComputeBurndown(report, taskIssues);
+        AllBurndown       = DeliveryHealthCalculator.ComputeBurndown(report, allIssues);
+        TaskIdealBurndown = DeliveryHealthCalculator.ComputeIdealBurndown(report, taskIssues);
+        AllIdealBurndown  = DeliveryHealthCalculator.ComputeIdealBurndown(report, allIssues);
+        TaskHoursPerDay   = DeliveryHealthCalculator.ComputeHoursPerDay(report, taskIssues);
+        AllHoursPerDay    = DeliveryHealthCalculator.ComputeHoursPerDay(report, allIssues);
+        AllBugSplit       = DeliveryHealthCalculator.ComputeBugFeatureSplit(report, allIssues);
+        AllBugOriginSplit = DeliveryHealthCalculator.ComputeBugOriginSplit(report, allIssues);
+    }
+
+    private void ToggleProduct(string name)
+    {
+        if (!SelectedProducts.Remove(name)) SelectedProducts.Add(name);
+        RecomputeMetrics();
+        _renderCharts = true;
+    }
+
+    private void SelectAllProducts()
+    {
+        SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
+        RecomputeMetrics();
+        _renderCharts = true;
+    }
+
+    private void ClearProducts()
+    {
+        SelectedProducts.Clear();
+        RecomputeMetrics();
+        _renderCharts = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_renderCharts && Report is not null && TaskMetrics is not null && AllMetrics is not null)
+        {
+            _renderCharts = false;
+            await RenderStatusDonut("chart-status-task", TaskMetrics);
+            await RenderStatusDonut("chart-status-all", AllMetrics);
+            await RenderBurndownChart("chart-burndown-task", TaskBurndown, TaskIdealBurndown);
+            await RenderBurndownChart("chart-burndown-all", AllBurndown, AllIdealBurndown);
+            await RenderHoursPerDayChart("chart-hours-task", TaskHoursPerDay);
+            await RenderHoursPerDayChart("chart-hours-all", AllHoursPerDay);
+            if (TaskScope is not null) await RenderScopeChart("chart-scope-task", TaskScope);
+            if (AllScope is not null) await RenderScopeChart("chart-scope-all", AllScope);
+        }
+    }
+
+    private async Task RenderStatusDonut(string canvasId, DeliveryHealthMetrics m)
+    {
+        await JS.InvokeVoidAsync("renderChart", canvasId, new
+        {
+            type = "doughnut",
+            data = new
+            {
+                labels = new[] { "Done", "In Progress", "To Do" },
+                datasets = new object[]
+                {
+                    new
+                    {
+                        data = new[] { m.DoneCount, m.InProgressCount, m.ToDoCount },
+                        backgroundColor = new[] { "rgba(22,163,74,0.85)", "rgba(37,99,235,0.85)", "rgba(148,163,184,0.6)" },
+                        borderColor     = new[] { "rgba(21,128,61,1)", "rgba(29,78,216,1)", "rgba(100,116,139,1)" },
+                        borderWidth = 1
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = true, position = "bottom", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 8 } } }
+            }
+        });
+    }
+
+    private async Task RenderBurndownChart(string canvasId, List<(DateTime Date, double RemainingHours)> actual,
+        List<(DateTime Date, double IdealRemainingHours)> ideal)
+    {
+        if (actual.Count == 0 && ideal.Count == 0) return;
+
+        // Ideal always spans the full sprint (start..end); actual is capped at "today". Use the
+        // ideal series for the x-axis so the reference line renders even for days still to come.
+        var labelDates = (ideal.Count > 0 ? ideal.Select(p => p.Date) : actual.Select(p => p.Date)).ToArray();
+        var actualByDate = actual.ToDictionary(p => p.Date, p => (double?)Math.Round(p.RemainingHours, 1));
+        var idealByDate  = ideal.ToDictionary(p => p.Date, p => (double?)Math.Round(p.IdealRemainingHours, 1));
+
+        await JS.InvokeVoidAsync("renderChart", canvasId, new
+        {
+            type = "line",
+            data = new
+            {
+                labels   = labelDates.Select(d => d.ToString("MMM d")).ToArray(),
+                datasets = new object[]
+                {
+                    new
+                    {
+                        label = "Actual remaining",
+                        data = labelDates.Select(d => actualByDate.TryGetValue(d, out var v) ? v : null).ToArray(),
+                        borderColor = "rgba(37,99,235,0.9)",
+                        backgroundColor = "rgba(37,99,235,0.12)",
+                        borderWidth = 2, pointRadius = 2, fill = true, tension = 0.15
+                    },
+                    new
+                    {
+                        label = "Ideal",
+                        data = labelDates.Select(d => idealByDate.TryGetValue(d, out var v) ? v : null).ToArray(),
+                        borderColor = "rgba(148,163,184,0.9)",
+                        backgroundColor = "transparent",
+                        borderDash = new[] { 6, 4 },
+                        borderWidth = 2, pointRadius = 0, fill = false, tension = (double)0
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = true, position = "top", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 8 } } },
+                scales  = new
+                {
+                    x = new { grid = new { display = false } },
+                    y = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } }
+                }
+            }
+        });
+    }
+
+    private async Task RenderHoursPerDayChart(string canvasId, List<(DateTime Date, double Hours)> series)
+    {
+        if (series.Count == 0) return;
+        await JS.InvokeVoidAsync("renderChart", canvasId, new
+        {
+            type = "bar",
+            data = new
+            {
+                labels   = series.Select(p => p.Date.ToString("MMM d")).ToArray(),
+                datasets = new object[]
+                {
+                    new
+                    {
+                        label = "Hours logged",
+                        data  = series.Select(p => Math.Round(p.Hours, 1)).ToArray(),
+                        backgroundColor = series.Select(p => p.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+                                            ? "rgba(217,119,6,0.55)" : "rgba(99,102,241,0.82)").ToArray(),
+                        borderColor     = series.Select(p => p.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+                                            ? "rgba(217,119,6,1)" : "rgba(79,70,229,1)").ToArray(),
+                        borderWidth = 1, borderRadius = 4
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales  = new
+                {
+                    x = new { grid = new { display = false } },
+                    y = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } }
+                }
+            }
+        });
+    }
+
+    private async Task RenderScopeChart(string canvasId, DeliveryHealthCalculator.ScopeComparison scope)
+    {
+        await JS.InvokeVoidAsync("renderChart", canvasId, new
+        {
+            type = "bar",
+            data = new
+            {
+                labels   = new[] { "Initial Scope", "Added During Sprint" },
+                datasets = new object[]
+                {
+                    new { label = "Done",   data = new[] { scope.Initial.Done,   scope.Added.Done   }, backgroundColor = "rgba(22,163,74,0.85)",  borderRadius = 4 },
+                    new { label = "Active", data = new[] { scope.Initial.Active, scope.Added.Active }, backgroundColor = "rgba(37,99,235,0.85)",  borderRadius = 4 },
+                    new { label = "To Do",  data = new[] { scope.Initial.ToDo,   scope.Added.ToDo   }, backgroundColor = "rgba(148,163,184,0.6)", borderRadius = 4 }
+                }
+            },
+            options = new
+            {
+                indexAxis = "y", responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = true, position = "top", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 8 } } },
+                scales  = new
+                {
+                    x = new { stacked = true, beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } },
+                    y = new { stacked = true, grid = new { display = false } }
+                }
+            }
+        });
+    }
+
+    private RenderFragment RenderSection(string title, string note, DeliveryHealthMetrics m, DeliveryHealthCalculator.ScopeComparison? scope, string idSuffix) =>
+    @<text>
+        <div class="v2-section-title" style="margin-top:20px"><i class="bi bi-collection"></i>@title <span class="v2-section-note">@note</span></div>
+
+        <div class="v2-gauge">
+            <div class="v2-gauge-score @($"v2-gauge-score-{m.Band}")">@m.Score</div>
+            <div class="v2-gauge-mid">
+                <div class="v2-gauge-label">Sprint Health Score</div>
+                <div class="v2-gauge-track">
+                    <div class="v2-gauge-marker" style="left:@m.Score%;"></div>
+                </div>
+                <div class="v2-gauge-desc">@m.Message</div>
+            </div>
+            <div class="v2-gauge-side">
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@((int)m.TimeElapsedPct)%</div>
+                    <div class="v2-gauge-side-lbl">Time elapsed</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(m.CompletionBehind ? "v2-text-danger" : "v2-text-success")">@((int)m.CompletionPct)%</div>
+                    <div class="v2-gauge-side-lbl">Work done</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(m.PlanOverCommit ? "v2-text-danger" : "")">@($"{m.PlannedHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Planned</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val @(m.OverCapacity ? "v2-text-danger" : "")">@($"{m.RemainingHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Remaining</div>
+                </div>
+                <div class="v2-gauge-side-stat">
+                    <div class="v2-gauge-side-val">@($"{m.CapacityHours:F0}h")</div>
+                    <div class="v2-gauge-side-lbl">Capacity</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="v2-kpi-grid">
+            <div class="v2-kpi @(m.CompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Completion</div>
+                <div class="v2-kpi-value">@((int)m.CompletionPct)%</div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(m.CompletionBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")" style="width:@Math.Min((int)m.CompletionPct, 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@m.DoneCount of @m.TotalCount done · @m.InProgressCount active · @m.ToDoCount pending</div>
+            </div>
+
+            <div class="v2-kpi @(m.PlanOverCommit ? "v2-kpi-danger" : "")">
+                <div class="v2-kpi-head"><i class="bi bi-clipboard-data"></i>Planned vs Capacity</div>
+                <div class="v2-kpi-value">@($"{m.PlannedHours:F0}h")<span class="v2-kpi-of">of @($"{m.FullSprintCapacityHours:F0}h")</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(m.PlanOverCommit ? "v2-bar-fill-danger" : "v2-bar-fill-success")" style="width:@(m.FullSprintCapacityHours > 0 ? Math.Min((int)(m.PlannedHours / m.FullSprintCapacityHours * 100), 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@(m.PlanOverCommit ? $"⚠ over full-sprint capacity by {(m.PlannedHours - m.FullSprintCapacityHours):F0}h" : "within full-sprint capacity")</div>
+            </div>
+
+            <div class="v2-kpi @(m.OverCapacity ? "v2-kpi-danger" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Capacity</div>
+                <div class="v2-kpi-value @(m.OverCapacity ? "v2-text-danger" : "")">@($"{m.CapacityHours:F0}h")<span class="v2-kpi-of">vs @($"{m.RemainingHours:F0}h")</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(m.OverCapacity ? "v2-bar-fill-danger" : "v2-bar-fill-success")" style="width:@(m.CapacityHours > 0 ? Math.Min((int)(m.RemainingHours / m.CapacityHours * 100), 100) : 0)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@(m.OverCapacity ? $"⚠ {(m.RemainingHours - m.CapacityHours):F0}h over capacity" : $"+{(m.CapacityHours - m.RemainingHours):F0}h buffer")</div>
+            </div>
+
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Logged Hours</div>
+                <div class="v2-kpi-value">@($"{m.SprintWindowLoggedHours:F0}h")<span class="v2-kpi-of">logged this sprint</span></div>
+                <div class="v2-kpi-sub">@($"{m.HoursLoggedPerWorkday:F1}h") / workday · projected @($"{m.ProjectedFinishHours:F0}h") by end</div>
+            </div>
+
+            <div class="v2-kpi @(m.IdleActiveCount == 0 ? "v2-kpi-success" : m.IdleActiveCount > m.InProgressCount * 0.5 ? "v2-kpi-danger" : "v2-kpi-warn")">
+                <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Idle Tasks</div>
+                <div class="v2-kpi-value">@m.IdleActiveCount<span class="v2-kpi-of">of @m.InProgressCount active</span></div>
+                <div class="v2-kpi-sub">@m.StaleCount stuck 2d+ without a worklog</div>
+            </div>
+
+            <div class="v2-kpi @(m.ThroughputBehind ? "v2-kpi-warn" : "v2-kpi-success")">
+                <div class="v2-kpi-head"><i class="bi bi-speedometer2"></i>Velocity</div>
+                <div class="v2-kpi-value">@m.ThroughputPerDay.ToString("F1")<span class="v2-kpi-of">of @m.NeededThroughputPerDay.ToString("F1") needed / day</span></div>
+                <div class="v2-bar" style="margin-top:8px">
+                    <div class="v2-bar-fill @(m.ThroughputBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")" style="width:@(m.NeededThroughputPerDay > 0 ? Math.Min((int)(m.ThroughputPerDay / m.NeededThroughputPerDay * 100), 100) : 100)%"></div>
+                </div>
+                <div class="v2-kpi-sub">@(m.ThroughputBehind ? "behind the pace needed to finish" : "on pace to finish")</div>
+            </div>
+        </div>
+
+        <div class="v2-grid-2" style="margin-top:16px">
+            <div class="v2-card">
+                <div class="v2-section-title"><i class="bi bi-pie-chart" style="color:var(--v2-brand)"></i>Sprint Status</div>
+                <div style="height:240px;position:relative">
+                    <canvas id="chart-status-@idSuffix"></canvas>
+                </div>
+            </div>
+            <div class="v2-card">
+                <div class="v2-section-title"><i class="bi bi-arrows-collapse" style="color:#0ea5e9"></i>Scope Change <span class="v2-section-note">initial vs added during sprint</span></div>
+                <div style="height:240px;position:relative">
+                    <canvas id="chart-scope-@idSuffix"></canvas>
+                </div>
+                @if (scope is not null)
+                {
+                    <div class="v2-kpi-sub" style="margin-top:8px">
+                        Initial @scope.Initial.CompletionPct.ToString("F0")% done (@scope.Initial.Total) ·
+                        Added @scope.Added.CompletionPct.ToString("F0")% done (@scope.Added.Total)
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="v2-grid-2" style="margin-top:12px">
+            <div class="v2-card">
+                <div class="v2-section-title"><i class="bi bi-graph-down-arrow" style="color:var(--v2-brand-3)"></i>Delivery Burndown <span class="v2-section-note">remaining estimate — actual vs ideal</span></div>
+                <div style="height:240px;position:relative">
+                    <canvas id="chart-burndown-@idSuffix"></canvas>
+                </div>
+            </div>
+            <div class="v2-card">
+                <div class="v2-section-title"><i class="bi bi-calendar-event" style="color:var(--v2-brand-2)"></i>Hours Logged per Day</div>
+                <div style="height:240px;position:relative">
+                    <canvas id="chart-hours-@idSuffix"></canvas>
+                </div>
+            </div>
+        </div>
+    </text>;
+}
+
+<style>
+    .dr-chip-row { display:flex; flex-wrap:wrap; gap:8px; }
+    .dr-chip {
+        display:inline-flex; align-items:center; gap:6px;
+        padding:7px 12px; border-radius:20px;
+        border:1px solid var(--v2-border); background:var(--v2-surface-2);
+        font-size:12.5px; color:var(--v2-ink-3); cursor:pointer; user-select:none;
+        transition: background 0.12s, border-color 0.12s, color 0.12s;
+    }
+    .dr-chip:hover { border-color:var(--v2-border-strong); }
+    .dr-chip-on { background:var(--v2-brand-soft); border-color:var(--v2-brand); color:var(--v2-brand); font-weight:600; }
+    .dr-chip-n  { font-size:11px; font-weight:700; color:var(--v2-ink-4); }
+    .dr-chip-on .dr-chip-n { color:var(--v2-brand); }
+
+    .dr-link-btn  { background:none; border:none; cursor:pointer; font-size:11px; font-weight:600; color:var(--v2-brand); padding:0; }
+    .dr-link-btn:hover { text-decoration:underline; }
+    .dr-dot-sep   { font-size:10px; color:var(--v2-ink-4); }
+</style>

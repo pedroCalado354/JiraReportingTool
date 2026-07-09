@@ -228,7 +228,11 @@ public class JiraService : IJiraService
         // Fetch the epic itself
         var epicResponse = await _httpClient.GetAsync(
             $"{_baseUrl}/rest/api/3/issue/{epicKey}?fields=summary,status,assignee");
-        epicResponse.EnsureSuccessStatusCode();
+        if (!epicResponse.IsSuccessStatusCode)
+            throw new InvalidOperationException(
+                epicResponse.StatusCode == System.Net.HttpStatusCode.NotFound
+                    ? $"Epic '{epicKey}' was not found in Jira — check the key and try again."
+                    : $"Jira returned {(int)epicResponse.StatusCode} ({epicResponse.StatusCode}) for epic '{epicKey}'.");
         var epicJson = await epicResponse.Content.ReadAsStringAsync();
         var report = ParseEpic(epicJson);
 
@@ -294,7 +298,16 @@ public class JiraService : IJiraService
     public Task<SprintReport> GetDeliveryDataAsync(int sprintId, bool bypassCache = false)
     {
         var jql = Uri.EscapeDataString($"sprint = {sprintId} ORDER BY status ASC, priority DESC");
-        return FetchDeliveryReportAsync(jql);
+        return FetchDeliveryReportAsync(jql, sprintId);
+    }
+
+    // Delta fetch for the sprint-aware DB cache (JiraCacheService): only issues updated in the
+    // last N days, merged by the caller over the previously stored full snapshot. Keeps an
+    // active sprint's cached copy warm without re-fetching every issue on every page load.
+    public Task<SprintReport> GetDeliveryDataUpdatedSinceAsync(int sprintId, int sinceDays)
+    {
+        var jql = Uri.EscapeDataString($"sprint = {sprintId} AND updated >= -{sinceDays}d ORDER BY status ASC, priority DESC");
+        return FetchDeliveryReportAsync(jql, sprintId);
     }
 
     // Returns the distinct epics that have issues in a given sprint
@@ -393,12 +406,14 @@ public class JiraService : IJiraService
     }
 
     // Shared delivery fetch: paginate → parse → enrich epic names
-    private async Task<SprintReport> FetchDeliveryReportAsync(string encodedJql)
+    private async Task<SprintReport> FetchDeliveryReportAsync(string encodedJql, int? targetSprintId = null)
     {
-        const string fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent,created,resolutiondate,labels,duedate";
+        var jsProjectFieldId = await GetJsProjectFieldIdAsync();
+        var fields = "summary,status,assignee,issuetype,priority,timetracking,worklog,customfield_10014,customfield_10016,customfield_10020,parent,created,resolutiondate,labels,duedate,issuelinks"
+            + (jsProjectFieldId != null ? $",{jsProjectFieldId}" : "");
 
         var json = await FetchAllPagesAsync(encodedJql, fields);
-        var (report, truncated) = ParseSprintReport(json, "");
+        var (report, truncated) = ParseSprintReport(json, "", productFieldId: jsProjectFieldId, targetSprintId: targetSprintId);
         await FetchMissingWorklogsAsync(report, truncated);
         await ReconcileLiveFieldsAsync(report);
 
@@ -503,7 +518,7 @@ public class JiraService : IJiraService
         return map;
     }
 
-    private (SprintReport Report, List<string> TruncatedKeys) ParseSprintReport(string json, string projectKey, string? customerFieldId = null, string? productFieldId = null)
+    private (SprintReport Report, List<string> TruncatedKeys) ParseSprintReport(string json, string projectKey, string? customerFieldId = null, string? productFieldId = null, int? targetSprintId = null)
     {
         using var doc = JsonDocument.Parse(json);
         var report = new SprintReport { ProjectKey = projectKey.ToUpper() };
@@ -641,6 +656,7 @@ public class JiraService : IJiraService
                 sprints.ValueKind == JsonValueKind.Array)
             {
                 string? activeSprintName = null;
+                IssueSprint? targetMatch = null;
                 foreach (var s in sprints.EnumerateArray())
                 {
                     if (s.ValueKind != JsonValueKind.Object) continue;
@@ -651,28 +667,48 @@ public class JiraService : IJiraService
                     int sprintId          = s.TryGetProperty("id", out var idEl) && idEl.TryGetInt32(out var idV) ? idV : 0;
 
                     // Full ordered history — powers carry-over analysis on Support Trends.
-                    issue.Sprints.Add(new IssueSprint
+                    var issueSprint = new IssueSprint
                     {
                         Id = sprintId, Name = sprintNameVal, State = sprintState,
                         StartDate = sprintStart, EndDate = sprintEnd
-                    });
+                    };
+                    issue.Sprints.Add(issueSprint);
 
                     // Per-issue single name: prefer the active sprint, else first in the list.
                     if (string.IsNullOrEmpty(issue.SprintName))
                         issue.SprintName = sprintNameVal;
                     if (sprintState == "active" && activeSprintName == null)
-                    {
                         activeSprintName = sprintNameVal;
-                        // Report-level: populate start/end from the first active sprint found
-                        if (report.SprintName == "")
-                        {
-                            report.SprintName = sprintNameVal;
-                            if (sprintStart.HasValue) report.StartDate = sprintStart.Value;
-                            if (sprintEnd.HasValue)   report.EndDate   = sprintEnd.Value;
-                        }
-                    }
+
+                    // When the caller is asking about one specific sprint (e.g. loading it by
+                    // ID), that sprint's own state/dates are authoritative — active OR closed —
+                    // rather than guessing from whichever sprint happens to be "active" today.
+                    if (targetSprintId.HasValue && sprintId == targetSprintId.Value)
+                        targetMatch = issueSprint;
                 }
                 if (activeSprintName != null) issue.SprintName = activeSprintName;
+                if (targetMatch != null) issue.SprintName = targetMatch.Name;
+
+                if (report.SprintName == "")
+                {
+                    // Report-level metadata: prefer the explicitly targeted sprint (any state);
+                    // fall back to the first active sprint found when no target was given.
+                    if (targetMatch != null)
+                    {
+                        report.SprintName  = targetMatch.Name;
+                        report.SprintState = targetMatch.State;
+                        if (targetMatch.StartDate.HasValue) report.StartDate = targetMatch.StartDate;
+                        if (targetMatch.EndDate.HasValue)   report.EndDate   = targetMatch.EndDate;
+                    }
+                    else if (!targetSprintId.HasValue && activeSprintName != null)
+                    {
+                        var active = issue.Sprints.First(sp => sp.Name == activeSprintName && sp.State == "active");
+                        report.SprintName  = active.Name;
+                        report.SprintState = active.State;
+                        if (active.StartDate.HasValue) report.StartDate = active.StartDate;
+                        if (active.EndDate.HasValue)   report.EndDate   = active.EndDate;
+                    }
+                }
             }
 
             if (fields.TryGetProperty("worklog", out var worklog) &&

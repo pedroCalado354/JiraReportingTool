@@ -3,9 +3,11 @@
 @inject IJiraService JiraService
 @inject TeamRosterService Roster
 @inject SprintConfigService SprintConfig
+@inject WorkingHoursSnapshotService Snapshots
 @inject IJSRuntime JS
 @using JiraReportingTool.Models
 @using ClosedXML.Excel
+@using ClosedXML.Excel.Drawings
 
 <PageTitle>Working Hours</PageTitle>
 
@@ -43,6 +45,19 @@
 
     <!-- ═══ CONTROL BAR ════════════════════════════════════════════════════════ -->
     <div class="v2-control-bar">
+        <div class="v2-field" style="min-width:260px">
+            <label class="v2-label">Previous sprints</label>
+            <select class="v2-select" @onchange="OnKnownSprintPicked">
+                <option value="">— pick a sprint —</option>
+                @foreach (var s in _knownSprints)
+                {
+                    <option value="@s.SprintId">@SprintLabel(s)</option>
+                }
+            </select>
+        </div>
+
+        <div class="v2-or">or</div>
+
         <div class="v2-field" style="min-width:400px">
             <label class="v2-label">Sprint ID(s)</label>
             <input class="v2-input" placeholder="e.g. 6690  or  6690, 6691, 6692"
@@ -54,10 +69,35 @@
             else { <i class="bi bi-lightning-charge-fill"></i> }
             <span>Load</span>
         </button>
+        @if (_snapshotSprintIds.Count > 0)
+        {
+            <span class="v2-pill v2-pill-info" title="Loaded from a frozen historical snapshot — never re-fetched from Jira">
+                <i class="bi bi-box-seam-fill"></i> @_snapshotSprintIds.Count historical
+            </span>
+        }
         @if (SprintReports.Count > 0)
         {
             <span class="v2-hint" style="margin-left:auto">@FilteredEntryCount log entries · @TotalHours.ToString("F1") h logged · @WorkingDayCount working day@(WorkingDayCount == 1 ? "" : "s")</span>
         }
+    </div>
+
+    <!-- ═══ DATE RANGE (independent of sprint selection) ══════════════════════ -->
+    <div class="v2-control-bar">
+        <div class="v2-field">
+            <label class="v2-label">Date range <span class="v2-section-note">· all team members, regardless of sprint</span></label>
+            <div style="display:flex;align-items:center;gap:8px">
+                <input type="date" class="v2-input" @bind="_rangeFrom" />
+                <span class="v2-hint">to</span>
+                <input type="date" class="v2-input" @bind="_rangeTo" />
+                <button class="btn small" @onclick="ResetDateRange"
+                        disabled="@(_rangeFrom == _fullSpanStart && _rangeTo == _fullSpanEnd)">Full span</button>
+            </div>
+        </div>
+        <button class="v2-btn v2-btn-primary" @onclick="LoadByDateRangeAsync" disabled="@IsLoading">
+            @if (IsLoading) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-calendar-range"></i> }
+            <span>Load range</span>
+        </button>
     </div>
 
     @if (ErrorMessage != null)
@@ -85,8 +125,8 @@
     {
         <div class="v2-empty">
             <div class="v2-empty-icon"><i class="bi bi-clock"></i></div>
-            <div class="v2-empty-title">Enter one or more sprint IDs to begin</div>
-            <div>Load worklog data to see hours by member, day and epic — with capacity utilisation against the team roster.</div>
+            <div class="v2-empty-title">Pick a sprint or a date range to begin</div>
+            <div>Load worklog data to see hours by member, day and epic — with capacity utilisation against the team roster. Use the date range to see every team member's logged hours across a period, regardless of sprint.</div>
         </div>
     }
 
@@ -125,6 +165,11 @@
                 <div class="wh2-kpi-label"><i class="bi bi-calendar-day"></i> Avg / Day</div>
                 <div class="wh2-kpi-val">@AvgHoursPerDay.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
                 <div class="wh2-kpi-sub">mean per workday</div>
+            </div>
+            <div class="wh2-kpi" style="--kpi-accent:linear-gradient(180deg,#0891b2,#0e7490)">
+                <div class="wh2-kpi-label"><i class="bi bi-person-workspace"></i> Avg / Member / Day</div>
+                <div class="wh2-kpi-val">@AvgHoursPerMemberPerDay.ToString("F1")<span class="wh2-kpi-unit">h</span></div>
+                <div class="wh2-kpi-sub">mean per contributor per workday</div>
             </div>
             <div class="wh2-kpi" style="--kpi-accent:linear-gradient(180deg,#7c3aed,#a855f7)">
                 <div class="wh2-kpi-label"><i class="bi bi-graph-up"></i> Peak Day</div>
@@ -236,6 +281,30 @@
                     <div class="wh2-filter-count">@SelectedEpics.Count of @AllEpics.Count selected</div>
                 </div>
 
+                <!-- Product -->
+                <div class="wh2-filter-col">
+                    <div class="wh2-filter-head">
+                        <span class="wh2-filter-title"><i class="bi bi-grid-fill"></i> Product</span>
+                        <div class="wh2-filter-actions">
+                            <button class="wh2-link-btn" @onclick="SelectAllProducts">All</button>
+                            <span class="wh2-dot-sep">·</span>
+                            <button class="wh2-link-btn" @onclick="ClearProductsFilter">None</button>
+                        </div>
+                    </div>
+                    <div class="wh2-chip-list">
+                        @foreach (var (name, count) in AllProducts)
+                        {
+                            var n = name;
+                            <button class="wh2-chip @(SelectedProducts.Contains(n) ? "is-on" : "")"
+                                    @onclick="() => ToggleProduct(n, !SelectedProducts.Contains(n))">
+                                @if (SelectedProducts.Contains(n)) { <i class="bi bi-check2"></i> }
+                                @n <span class="wh2-chip-n">@count</span>
+                            </button>
+                        }
+                    </div>
+                    <div class="wh2-filter-count">@SelectedProducts.Count of @AllProducts.Count selected</div>
+                </div>
+
                 <!-- Date range -->
                 <div class="wh2-filter-col wh2-filter-col-sm">
                     <div class="wh2-filter-head">
@@ -277,6 +346,14 @@
                 <div style="height:300px;position:relative">
                     <canvas id="chart-hours-epic"></canvas>
                 </div>
+            </div>
+        </div>
+
+        <!-- ═══ AVG HOURS PER MEMBER PER DAY ═══════════════════════════════════ -->
+        <div class="v2-card" style="margin-top:12px">
+            <div class="v2-section-title"><i class="bi bi-bar-chart-steps" style="color:#0891b2"></i>Avg Hours per Member per Day <span class="v2-section-note">· team total ÷ contributor count, per day · dashed line = overall average</span></div>
+            <div style="height:260px;position:relative">
+                <canvas id="chart-avg-member-day"></canvas>
             </div>
         </div>
 
@@ -643,7 +720,8 @@
 
     /* ── Filter card ───────────────────────────────────────────────────── */
     .wh2-filter-card    { padding: 16px 20px; margin-top: 16px; }
-    .wh2-filter-grid    { display: grid; grid-template-columns: 1fr 1fr 200px; gap: 24px; align-items: start; }
+    .wh2-filter-grid    { display: grid; grid-template-columns: 1fr 1fr 1fr 200px; gap: 24px; align-items: start; }
+    @@media (max-width: 1200px) { .wh2-filter-grid { grid-template-columns: 1fr 1fr; } }
     .wh2-filter-col-sm  { min-width: 0; }
     .wh2-filter-head    { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
     .wh2-filter-title   { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--v2-ink-2); display: flex; align-items: center; gap: 5px; }
@@ -675,6 +753,8 @@
     .wh2-chip:hover             { border-color: #c7d2fe; background: var(--v2-brand-soft); color: var(--v2-brand); }
     .wh2-chip.is-on             { background: var(--v2-brand-soft); border-color: #c7d2fe; color: #4338ca; font-weight: 600; }
     .wh2-chip.wh2-chip-mono     { font-family: monospace; font-size: 10.5px; }
+    .wh2-chip-n                 { font-size: 10px; font-weight: 700; color: var(--v2-ink-4); }
+    .wh2-chip.is-on .wh2-chip-n { color: #4338ca; }
 
     /* ── Chart grid ────────────────────────────────────────────────────── */
     .wh2-chart-grid { display: grid; grid-template-columns: 1fr 1fr 320px; gap: 12px; margin-top: 16px; }
@@ -806,6 +886,75 @@
 
     private List<int> ParsedSprintIds = [];
     private List<SprintReport> SprintReports = [];
+    private List<SprintConfig> _knownSprints = [];
+    private HashSet<int> _snapshotSprintIds = [];
+
+    private string SprintLabel(SprintConfig s)
+    {
+        var name = string.IsNullOrEmpty(s.Name) ? $"Sprint {s.SprintId}" : s.Name;
+        return $"{name} ({s.StartDate:MMM d} – {s.EndDate:MMM d})";
+    }
+
+    private async Task OnKnownSprintPicked(ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        if (string.IsNullOrEmpty(raw)) return;
+        SprintIdsInput = raw;
+        await LoadData();
+    }
+
+    // ── Date range (independent of sprint selection) ────────────────────────────
+    // Pulls every issue with worklog activity in the window, across the whole
+    // project — not scoped to a specific sprint's cached report. Mirrors the
+    // Support Trends "Window" filter's From/To + Full span pattern.
+    private DateOnly _fullSpanStart;
+    private DateOnly _fullSpanEnd;
+    private DateOnly _rangeFrom;
+    private DateOnly _rangeTo;
+
+    private void ResetDateRange()
+    {
+        _rangeFrom = _fullSpanStart;
+        _rangeTo   = _fullSpanEnd;
+    }
+
+    private async Task LoadByDateRangeAsync()
+    {
+        if (_rangeTo < _rangeFrom) { ErrorMessage = "End date must be on or after the start date."; return; }
+
+        IsLoading = true; ErrorMessage = null;
+        SprintReports.Clear(); SelectedMembers.Clear();
+        DateFrom = null; DateTo = null;
+        _memberSearch = ""; _epicSearch = "";
+        StateHasChanged();
+
+        try
+        {
+            _roster   = await Roster.GetAllAsync();
+            _holidays = await Roster.GetHolidaysAsync();
+
+            var jql = $"project = JM AND worklogDate >= \"{_rangeFrom:yyyy-MM-dd}\" AND worklogDate <= \"{_rangeTo:yyyy-MM-dd}\" ORDER BY key ASC";
+            var report = await JiraService.GetDeliveryDataByFilterAsync(jql);
+            report.SprintName = $"{_rangeFrom:MMM d, yyyy} – {_rangeTo:MMM d, yyyy}";
+            report.StartDate  = _rangeFrom.ToDateTime(TimeOnly.MinValue);
+            report.EndDate    = _rangeTo.ToDateTime(TimeOnly.MinValue);
+
+            ParsedSprintIds = [];
+            SprintReports   = [report];
+            _snapshotSprintIds.Clear();
+            _rosterAuthorCache = null;
+
+            DateFrom = report.StartDate;
+            DateTo   = report.EndDate;
+
+            SelectedMembers  = new HashSet<string>(AllAuthors);
+            SelectedEpics    = new HashSet<string>(AllEpics.Select(e => e.Key));
+            SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
+            _renderCharts    = true;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
 
     // ── Roster (capacity source) ─────────────────────────────────────────────────
     private List<RosterMember> _roster = [];
@@ -877,10 +1026,34 @@
     }
 
     // ── Filters ────────────────────────────────────────────────────────────────
-    private HashSet<string> SelectedMembers = [];
-    private HashSet<string> SelectedEpics   = [];
+    private HashSet<string> SelectedMembers  = [];
+    private HashSet<string> SelectedEpics    = [];
+    private HashSet<string> SelectedProducts = [];
     private DateTime? DateFrom;
     private DateTime? DateTo;
+
+    // ── Product (JS Project field) ───────────────────────────────────────────────
+    private const string NoProductLabel = "—";
+
+    private static string ProductOf(SprintIssue i) =>
+        string.IsNullOrWhiteSpace(i.Product) ? NoProductLabel : i.Product;
+
+    private List<(string Name, int Count)> AllProducts => SprintReports
+        .SelectMany(r => r.Issues)
+        .GroupBy(ProductOf)
+        .Select(g => (Name: g.Key, Count: g.Count()))
+        .OrderBy(g => g.Name == NoProductLabel ? 1 : 0)
+        .ThenBy(g => g.Name)
+        .ToList();
+
+    private void SelectAllProducts()    { SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name)); OnFilterChanged(); }
+    private void ClearProductsFilter()  { SelectedProducts.Clear(); OnFilterChanged(); }
+
+    private void ToggleProduct(string name, bool selected)
+    {
+        if (selected) SelectedProducts.Add(name); else SelectedProducts.Remove(name);
+        OnFilterChanged();
+    }
 
     // ── Derived: source lists ──────────────────────────────────────────────────
     private List<string> AllAuthors => SprintReports
@@ -902,7 +1075,7 @@
     private sealed record WorklogRow(
         DateTime Date, string Author, int TimeSpentSeconds,
         string IssueKey, string IssueSummary, string IssueType,
-        string EpicKey, string EpicName);
+        string EpicKey, string EpicName, string Product);
 
     private static bool IsFeatureIssue(SprintIssue i) =>
         !i.IssueType.Contains("Bug",    StringComparison.OrdinalIgnoreCase) &&
@@ -922,7 +1095,7 @@
         .SelectMany(r => r.Issues)
         .SelectMany(i => i.Worklogs.Select(w => new WorklogRow(
             w.Started.Date, w.Author, w.TimeSpentSeconds,
-            i.Key, i.Summary, i.IssueType, i.EpicKey, i.EpicName)))
+            i.Key, i.Summary, i.IssueType, i.EpicKey, i.EpicName, ProductOf(i))))
         .OrderByDescending(w => w.Date).ThenBy(w => w.Author)
         .ToList();
 
@@ -930,8 +1103,9 @@
         AllWorklogs.Where(w =>
             !string.IsNullOrEmpty(w.Author) &&
             (!_rosterOnly || RosterAuthorSet.Contains(w.Author)) &&
-            (SelectedMembers.Count == 0 || SelectedMembers.Contains(w.Author)) &&
-            (SelectedEpics.Count == 0   || SelectedEpics.Contains(w.EpicKey)) &&
+            (SelectedMembers.Count == 0  || SelectedMembers.Contains(w.Author)) &&
+            (SelectedEpics.Count == 0    || SelectedEpics.Contains(w.EpicKey)) &&
+            (SelectedProducts.Count == 0 || SelectedProducts.Contains(w.Product)) &&
             (!DateFrom.HasValue || w.Date >= DateFrom.Value.Date) &&
             (!DateTo.HasValue   || w.Date <= DateTo.Value.Date))
         .OrderByDescending(w => w.Date).ThenBy(w => w.Author)
@@ -945,6 +1119,7 @@
                 .SelectMany(r => r.Issues.Select(i => (Issue: i, SprintName: r.SprintName)))
                 .Where(x => x.Issue.StatusCategoryKey == "done" && IsFeatureIssue(x.Issue))
                 .Where(x => SelectedEpics.Count == 0 || SelectedEpics.Contains(x.Issue.EpicKey))
+                .Where(x => SelectedProducts.Count == 0 || SelectedProducts.Contains(ProductOf(x.Issue)))
                 .Where(x => !_rosterOnly || IsRosterPerson(x.Issue.Assignee))
                 .Where(x => SelectedMembers.Count == 0 || SelectedMembers.Contains(x.Issue.Assignee))
                 .DistinctBy(x => x.Issue.Key)
@@ -1037,6 +1212,9 @@
     private double AvgHoursPerDay => FilteredWorklogs.Select(w => w.Date).Distinct().Any()
         ? TotalHours / FilteredWorklogs.Select(w => w.Date).Distinct().Count()
         : 0;
+
+    // How many hours a typical member logs on a typical working day of the loaded span.
+    private double AvgHoursPerMemberPerDay => WorkingDayCount > 0 ? AvgHoursPerMember / WorkingDayCount : 0;
 
     private double MaxDayHours => FilteredWorklogs
         .GroupBy(w => w.Date)
@@ -1161,10 +1339,20 @@
     // ── Load ────────────────────────────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
     {
+        _knownSprints = (await SprintConfig.GetAllAsync())
+            .OrderByDescending(c => c.StartDate)
+            .ToList();
+
         // Default the sprint input to the dashboard-config sprint that contains today.
         var current = await SprintConfig.GetCurrentAsync();
         if (current is not null && string.IsNullOrWhiteSpace(SprintIdsInput))
             SprintIdsInput = current.SprintId.ToString();
+
+        // Date range defaults to the widest span covered by Dashboard Config's sprints.
+        _fullSpanStart = _knownSprints.Count > 0 ? _knownSprints.Min(c => c.StartDate) : DateOnly.FromDateTime(DateTime.Today.AddDays(-30));
+        _fullSpanEnd   = _knownSprints.Count > 0 ? _knownSprints.Max(c => c.EndDate)   : DateOnly.FromDateTime(DateTime.Today);
+        _rangeFrom = _fullSpanStart;
+        _rangeTo   = _fullSpanEnd;
     }
 
     private async Task HandleKeyUp(KeyboardEventArgs e)
@@ -1195,11 +1383,27 @@
             _holidays = await Roster.GetHolidaysAsync();
 
             var reports = new List<SprintReport>();
+            var snapshotIds = new HashSet<int>();
             foreach (var id in ids)
-                reports.Add(await JiraService.GetDeliveryDataAsync(id));
+            {
+                // A frozen snapshot (sprint ended 3+ days ago) is a permanent, read-only
+                // record — serve it straight from the DB and skip Jira entirely.
+                var snapshot = await Snapshots.GetSnapshotAsync(id);
+                if (snapshot is not null)
+                {
+                    reports.Add(snapshot);
+                    snapshotIds.Add(id);
+                    continue;
+                }
+
+                var report = await JiraService.GetDeliveryDataAsync(id);
+                reports.Add(report);
+                await Snapshots.SaveIfSettledAsync(report);
+            }
 
             ParsedSprintIds = ids;
             SprintReports   = reports;
+            _snapshotSprintIds = snapshotIds;
             _rosterAuthorCache = null; // roster + worklogs changed — rebuild the match set lazily
 
             // Bound the view to the sprint window so capacity/heatmap aren't skewed by
@@ -1209,9 +1413,10 @@
             if (starts.Count > 0) DateFrom = starts.Min();
             if (ends.Count > 0)   DateTo   = ends.Max();
 
-            SelectedMembers = new HashSet<string>(AllAuthors);
-            SelectedEpics   = new HashSet<string>(AllEpics.Select(e => e.Key));
-            _renderCharts   = true;
+            SelectedMembers  = new HashSet<string>(AllAuthors);
+            SelectedEpics    = new HashSet<string>(AllEpics.Select(e => e.Key));
+            SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
+            _renderCharts    = true;
         }
         catch (Exception ex) { ErrorMessage = $"Failed to load sprint data: {ex.Message}"; }
         finally { IsLoading = false; }
@@ -1250,6 +1455,7 @@
             var filtered = FilteredWorklogs;
             await RenderMemberChart(filtered);
             await RenderDayChart(filtered);
+            await RenderAvgMemberDayChart(filtered);
             await RenderEpicChart(filtered);
         }
     }
@@ -1370,6 +1576,63 @@
         });
     }
 
+    private async Task RenderAvgMemberDayChart(List<WorklogRow> filtered)
+    {
+        var members = Math.Max(1, ActiveMemberCount);
+        var byDay = filtered
+            .GroupBy(w => w.Date)
+            .Select(g => new { Date = g.Key, AvgPerMember = Math.Round(g.Sum(w => w.TimeSpentSeconds) / 3600.0 / members, 2) })
+            .OrderBy(d => d.Date).ToList();
+        if (byDay.Count == 0) return;
+
+        var overallAvg = Math.Round(AvgHoursPerMemberPerDay, 2);
+
+        await JS.InvokeVoidAsync("renderChart", "chart-avg-member-day", new
+        {
+            type = "bar",
+            data = new
+            {
+                labels   = byDay.Select(d => d.Date.ToString("MMM d")).ToArray(),
+                datasets = new object[]
+                {
+                    new
+                    {
+                        type            = "line",
+                        label           = "Overall avg / member / day",
+                        data            = byDay.Select(_ => overallAvg).ToArray(),
+                        borderColor     = "rgba(8,145,178,0.9)",
+                        borderWidth     = 2,
+                        borderDash      = new[] { 6, 4 },
+                        pointRadius     = 0,
+                        fill            = false,
+                        tension         = 0
+                    },
+                    new
+                    {
+                        type            = "bar",
+                        label           = "Avg hours / member",
+                        data            = byDay.Select(d => d.AvgPerMember).ToArray(),
+                        backgroundColor = byDay.Select(d => d.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+                                            ? "rgba(217,119,6,0.55)" : "rgba(14,165,190,0.82)").ToArray(),
+                        borderColor     = byDay.Select(d => d.Date.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday
+                                            ? "rgba(217,119,6,1)" : "rgba(8,145,178,1)").ToArray(),
+                        borderWidth = 1, borderRadius = 4
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = true, position = "top", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 10 } } },
+                scales  = new
+                {
+                    x = new { grid = new { display = false } },
+                    y = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } }
+                }
+            }
+        });
+    }
+
     private async Task RenderEpicChart(List<WorklogRow> filtered)
     {
         var byEpic = filtered
@@ -1431,6 +1694,28 @@
     }
 
     // ── Export ──────────────────────────────────────────────────────────────────
+    private static readonly (string CanvasId, string Title)[] ChartExports =
+    [
+        ("chart-hours-member",   "Logged vs Capacity per Member"),
+        ("chart-hours-day",      "Hours per Day"),
+        ("chart-hours-epic",     "Hours per Epic"),
+        ("chart-avg-member-day", "Avg Hours per Member per Day"),
+    ];
+
+    private static void StyleHeaderCell(IXLCell cell)
+    {
+        cell.Style.Font.Bold = true;
+        cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+        cell.Style.Font.FontColor = XLColor.White;
+        cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+    }
+
+    private static void StyleMetaLabel(IXLCell cell)
+    {
+        cell.Style.Font.Bold = true;
+        cell.Style.Font.FontColor = XLColor.FromHtml("#6c757d");
+    }
+
     private async Task ExportToExcel()
     {
         var filtered = FilteredWorklogs;
@@ -1440,147 +1725,25 @@
         try
         {
             using var wb = new XLWorkbook();
-            var ws = wb.Worksheets.Add("Working Hours");
-
-            void Meta(int row, string label, string value)
-            {
-                ws.Cell(row, 1).Value = label;
-                ws.Cell(row, 1).Style.Font.Bold = true;
-                ws.Cell(row, 1).Style.Font.FontColor = XLColor.FromHtml("#6c757d");
-                ws.Cell(row, 2).Value = value;
-            }
 
             var sprintNames = SprintReports.Where(r => !string.IsNullOrEmpty(r.SprintName))
                 .Select(r => r.SprintName).Distinct();
             var sprintLabel = sprintNames.Any()
                 ? string.Join(", ", sprintNames)
                 : string.Join(", ", ParsedSprintIds);
+            var dateRangeLabel = DateFrom.HasValue || DateTo.HasValue
+                ? $"{(DateFrom.HasValue ? DateFrom.Value.ToString("yyyy-MM-dd") : "—")} → {(DateTo.HasValue ? DateTo.Value.ToString("yyyy-MM-dd") : "—")}"
+                : "All dates";
+            var exportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
 
-            Meta(1, "Sprint(s)",  sprintLabel);
-            Meta(2, "Members",    string.Join(", ", SelectedMembers.Order()));
-            Meta(3, "Date Range",
-                DateFrom.HasValue || DateTo.HasValue
-                    ? $"{(DateFrom.HasValue ? DateFrom.Value.ToString("yyyy-MM-dd") : "—")} → {(DateTo.HasValue ? DateTo.Value.ToString("yyyy-MM-dd") : "—")}"
-                    : "All dates");
-            Meta(4, "Exported", DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
-
-            var headers = new[] { "Date", "Day of the Week", "Team Member", "Logged Hours" };
-            for (int i = 0; i < headers.Length; i++)
-            {
-                var hc = ws.Cell(6, i + 1);
-                hc.Value = headers[i];
-                hc.Style.Font.Bold = true;
-                hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
-                hc.Style.Font.FontColor = XLColor.White;
-                hc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-            }
-            ws.SheetView.FreezeRows(6);
-
-            var sorted = filtered.OrderBy(w => w.Date).ThenBy(w => w.Author).ToList();
-            int row = 7;
-            foreach (var wl in sorted)
-            {
-                if (row % 2 == 0)
-                    ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
-                ws.Cell(row, 1).Value = wl.Date.ToString("yyyy-MM-dd");
-                ws.Cell(row, 2).Value = wl.Date.ToString("dddd");
-                ws.Cell(row, 3).Value = wl.Author;
-                ws.Cell(row, 4).Value = Math.Round(wl.TimeSpentSeconds / 3600.0, 2);
-                ws.Cell(row, 4).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-                row++;
-            }
-            ws.Cell(row, 1).Value = "TOTAL";
-            ws.Cell(row, 1).Style.Font.Bold = true;
-            ws.Cell(row, 4).Value = Math.Round(sorted.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
-            ws.Cell(row, 4).Style.Font.Bold = true;
-            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
-            ws.Columns().AdjustToContents();
-            ws.Row(6).Height = 22;
-
-            // Summary sheet
-            var wsSummary = wb.Worksheets.Add("Summary by Member");
-            void MetaS(int r, string label, string value)
-            {
-                wsSummary.Cell(r, 1).Value = label;
-                wsSummary.Cell(r, 1).Style.Font.Bold = true;
-                wsSummary.Cell(r, 1).Style.Font.FontColor = XLColor.FromHtml("#6c757d");
-                wsSummary.Cell(r, 2).Value = value;
-            }
-            MetaS(1, "Sprint(s)", sprintLabel);
-            MetaS(2, "Exported",  DateTime.Now.ToString("yyyy-MM-dd HH:mm"));
-
-            var members = filtered.Select(w => w.Author).Distinct().Order().ToList();
-            var dayMap  = filtered.GroupBy(w => w.Author).ToDictionary(
-                g => g.Key,
-                g => g.GroupBy(w => w.Date.DayOfWeek).ToDictionary(d => d.Key, d => d.Sum(w => w.TimeSpentSeconds) / 3600.0));
-
-            DayOfWeek[] orderedDays = [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
-                                       DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
-
-            wsSummary.Cell(4, 1).Value = "Day";
-            wsSummary.Cell(4, 1).Style.Font.Bold = true;
-            wsSummary.Cell(4, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
-            wsSummary.Cell(4, 1).Style.Font.FontColor = XLColor.White;
-            for (int m = 0; m < members.Count; m++)
-            {
-                var hc = wsSummary.Cell(4, m + 2);
-                hc.Value = members[m];
-                hc.Style.Font.Bold = true;
-                hc.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
-                hc.Style.Font.FontColor = XLColor.White;
-                hc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-            }
-            var totalHc = wsSummary.Cell(4, members.Count + 2);
-            totalHc.Value = "Total"; totalHc.Style.Font.Bold = true;
-            totalHc.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
-            totalHc.Style.Font.FontColor = XLColor.White;
-            totalHc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-            wsSummary.SheetView.FreezeRows(4);
-
-            int sRow = 5;
-            foreach (var day in orderedDays)
-            {
-                if (sRow % 2 == 0)
-                    wsSummary.Row(sRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
-                wsSummary.Cell(sRow, 1).Value = day.ToString();
-                wsSummary.Cell(sRow, 1).Style.Font.Bold = true;
-                double rowTotal = 0;
-                for (int m = 0; m < members.Count; m++)
-                {
-                    double hours = dayMap.TryGetValue(members[m], out var daysForMember)
-                                   && daysForMember.TryGetValue(day, out var h) ? h : 0;
-                    rowTotal += hours;
-                    if (hours > 0)
-                    {
-                        var dc = wsSummary.Cell(sRow, m + 2);
-                        dc.Value = Math.Round(hours, 2);
-                        dc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-                    }
-                }
-                var rtc = wsSummary.Cell(sRow, members.Count + 2);
-                rtc.Value = Math.Round(rowTotal, 2);
-                rtc.Style.Font.Bold = true;
-                rtc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-                sRow++;
-            }
-
-            wsSummary.Cell(sRow, 1).Value = "TOTAL";
-            wsSummary.Cell(sRow, 1).Style.Font.Bold = true;
-            wsSummary.Row(sRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
-            for (int m = 0; m < members.Count; m++)
-            {
-                double memberTotal = dayMap.TryGetValue(members[m], out var dm) ? dm.Values.Sum() : 0;
-                var tc = wsSummary.Cell(sRow, m + 2);
-                tc.Value = Math.Round(memberTotal, 2);
-                tc.Style.Font.Bold = true;
-                tc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-            }
-            var grandTotal = wsSummary.Cell(sRow, members.Count + 2);
-            grandTotal.Value = Math.Round(filtered.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
-            grandTotal.Style.Font.Bold = true;
-            grandTotal.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-            wsSummary.Columns().AdjustToContents();
-            wsSummary.Row(4).Height = 22;
+            BuildOverviewSheet(wb, sprintLabel, dateRangeLabel, exportedAt);
+            await BuildChartsSheetAsync(wb);
+            BuildMemberSummarySheet(wb);
+            BuildHeatmapSheet(wb);
+            BuildByEpicSheet(wb);
+            BuildDoneFeaturesSheet(wb);
+            BuildWorkingHoursSheet(wb, filtered, sprintLabel, dateRangeLabel, exportedAt);
+            BuildWeekdaySummarySheet(wb, filtered, sprintLabel, exportedAt);
 
             using var ms = new MemoryStream();
             wb.SaveAs(ms);
@@ -1592,5 +1755,362 @@
         }
         catch (Exception ex) { ErrorMessage = $"Export failed: {ex.Message}"; }
         finally { IsExporting = false; }
+    }
+
+    private void BuildOverviewSheet(XLWorkbook wb, string sprintLabel, string dateRangeLabel, string exportedAt)
+    {
+        var ws = wb.Worksheets.Add("Overview");
+        int row = 1;
+        void Meta(string label, string value)
+        {
+            var lc = ws.Cell(row, 1); lc.Value = label; StyleMetaLabel(lc);
+            ws.Cell(row, 2).Value = value;
+            row++;
+        }
+
+        Meta("Sprint(s)", sprintLabel);
+        Meta("Members",   SelectedMembers.Count == AllAuthors.Count ? "All" : string.Join(", ", SelectedMembers.Order()));
+        Meta("Epics",     SelectedEpics.Count == AllEpics.Count ? "All" : string.Join(", ", SelectedEpics.Order()));
+        Meta("Products",  SelectedProducts.Count == AllProducts.Count ? "All" : string.Join(", ", SelectedProducts.Order()));
+        Meta("Date Range", dateRangeLabel);
+        Meta("Exported",   exportedAt);
+        row++;
+
+        StyleHeaderCell(ws.Cell(row, 1)); ws.Cell(row, 1).Value = "Metric";
+        StyleHeaderCell(ws.Cell(row, 2)); ws.Cell(row, 2).Value = "Value";
+        row++;
+
+        void Kpi(string label, string value)
+        {
+            ws.Cell(row, 1).Value = label;
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 2).Value = value;
+            row++;
+        }
+
+        Kpi("Total Hours",         $"{TotalHours:F1} h");
+        Kpi("Utilisation",         $"{AvgUtilization:F0}% ({TotalHours:F0} / {TotalCapacityHours:F0} h capacity)");
+        Kpi("Members",             ActiveMemberCount.ToString());
+        Kpi("Log Entries",         FilteredEntryCount.ToString());
+        Kpi("Avg / Member",        $"{AvgHoursPerMember:F1} h");
+        Kpi("Avg / Day",           $"{AvgHoursPerDay:F1} h");
+        Kpi("Avg / Member / Day",  $"{AvgHoursPerMemberPerDay:F1} h");
+        Kpi("Peak Day",            $"{MaxDayHours:F1} h");
+        Kpi("Top Contributor",     TopContributor);
+        Kpi("Busiest Weekday",     BusiestWeekday);
+        Kpi("Most-Active Epic",    MostActiveEpic);
+        Kpi("Working Days",        WorkingDayCount.ToString());
+
+        ws.Columns().AdjustToContents();
+    }
+
+    private async Task BuildChartsSheetAsync(XLWorkbook wb)
+    {
+        var ws = wb.Worksheets.Add("Charts");
+        int row = 1;
+        foreach (var (canvasId, title) in ChartExports)
+        {
+            var titleCell = ws.Cell(row, 1);
+            titleCell.Value = title;
+            titleCell.Style.Font.Bold = true;
+            titleCell.Style.Font.FontSize = 13;
+            row++;
+
+            string? dataUrl = null;
+            try { dataUrl = await JS.InvokeAsync<string?>("getChartImage", canvasId); } catch { }
+
+            if (!string.IsNullOrEmpty(dataUrl))
+            {
+                var comma = dataUrl.IndexOf(',');
+                var base64Img = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
+                var bytes = Convert.FromBase64String(base64Img);
+                using var imgStream = new MemoryStream(bytes);
+                ws.AddPicture(imgStream, XLPictureFormat.Png)
+                  .MoveTo(ws.Cell(row, 1))
+                  .WithSize(640, 340);
+                row += 18;
+            }
+            else
+            {
+                ws.Cell(row, 1).Value = "(chart not available — no data for current filters)";
+                row += 1;
+            }
+            row += 2;
+        }
+        ws.Column(1).Width = 16;
+    }
+
+    private void BuildMemberSummarySheet(XLWorkbook wb)
+    {
+        var rows = MemberSummaries;
+        var ws = wb.Worksheets.Add("Member Summary");
+        var headers = new[] { "Member", "Logged (h)", "Active Days", "Avg / Active Day (h)", "Capacity (h)", "Utilisation %", "Top Epic" };
+        for (int i = 0; i < headers.Length; i++) { var hc = ws.Cell(1, i + 1); hc.Value = headers[i]; StyleHeaderCell(hc); }
+        ws.SheetView.FreezeRows(1);
+
+        int row = 2;
+        foreach (var m in rows)
+        {
+            if (row % 2 == 0) ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+            ws.Cell(row, 1).Value = m.Name;
+            ws.Cell(row, 2).Value = Math.Round(m.Hours, 2);
+            ws.Cell(row, 3).Value = m.ActiveDays;
+            ws.Cell(row, 4).Value = Math.Round(m.AvgPerActiveDay, 2);
+            ws.Cell(row, 5).Value = Math.Round(m.Capacity, 1);
+            ws.Cell(row, 6).Value = Math.Round(m.Util, 1);
+            ws.Cell(row, 7).Value = m.TopEpic;
+            row++;
+        }
+        if (rows.Count > 0)
+        {
+            ws.Cell(row, 1).Value = "TOTAL"; ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 2).Value = Math.Round(TotalHours, 2); ws.Cell(row, 2).Style.Font.Bold = true;
+            ws.Cell(row, 5).Value = Math.Round(TotalCapacityHours, 1); ws.Cell(row, 5).Style.Font.Bold = true;
+            ws.Cell(row, 6).Value = Math.Round(AvgUtilization, 1); ws.Cell(row, 6).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+        }
+        ws.Columns().AdjustToContents();
+        ws.Row(1).Height = 22;
+    }
+
+    private void BuildHeatmapSheet(XLWorkbook wb)
+    {
+        var days = HeatDays; var members = HeatMembers; var map = MemberDayHours;
+        if (days.Count == 0 || members.Count == 0) return;
+
+        var ws = wb.Worksheets.Add("Activity Heatmap");
+        var corner = ws.Cell(1, 1); corner.Value = "Member"; StyleHeaderCell(corner);
+        for (int d = 0; d < days.Count; d++)
+        {
+            var hc = ws.Cell(1, d + 2);
+            hc.Value = days[d].ToString("MMM d");
+            StyleHeaderCell(hc);
+        }
+        ws.SheetView.FreezeRows(1);
+        ws.SheetView.FreezeColumns(1);
+
+        int row = 2;
+        foreach (var member in members)
+        {
+            ws.Cell(row, 1).Value = member;
+            ws.Cell(row, 1).Style.Font.Bold = true;
+            var dayMap = map.TryGetValue(member, out var dm) ? dm : new();
+            for (int d = 0; d < days.Count; d++)
+            {
+                var hrs = dayMap.TryGetValue(days[d].Date, out var h) ? h : 0;
+                var c = ws.Cell(row, d + 2);
+                if (hrs > 0) c.Value = Math.Round(hrs, 2);
+                c.Style.Fill.BackgroundColor = HeatFillColor(hrs);
+                c.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            }
+            row++;
+        }
+        ws.Column(1).Width = 22;
+        for (int d = 0; d < days.Count; d++) ws.Column(d + 2).Width = 9;
+    }
+
+    // Mirrors the on-screen heatmap's cool-to-warm intensity ramp (.wh2-h0 … .wh2-h5).
+    private static XLColor HeatFillColor(double hours) => hours switch
+    {
+        <= 0 => XLColor.FromHtml("#eef1f6"),
+        < 2  => XLColor.FromHtml("#bfdbfe"),
+        < 4  => XLColor.FromHtml("#5eead4"),
+        < 6  => XLColor.FromHtml("#fde047"),
+        < 8  => XLColor.FromHtml("#fb923c"),
+        _    => XLColor.FromHtml("#ef4444"),
+    };
+
+    private void BuildByEpicSheet(XLWorkbook wb)
+    {
+        var groups = WorklogsByEpic;
+        var ws = wb.Worksheets.Add("By Epic");
+        var headers = new[] { "Epic Key", "Epic Name", "Entries", "Hours", "Share %", "Members" };
+        for (int i = 0; i < headers.Length; i++) { var hc = ws.Cell(1, i + 1); hc.Value = headers[i]; StyleHeaderCell(hc); }
+        ws.SheetView.FreezeRows(1);
+
+        var total = TotalHours;
+        int row = 2;
+        foreach (var eg in groups)
+        {
+            if (row % 2 == 0) ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+            var hours = eg.Rows.Sum(r => r.TimeSpentSeconds) / 3600.0;
+            var members = eg.Rows.Select(r => r.Author).Distinct().OrderBy(a => a);
+            ws.Cell(row, 1).Value = eg.EpicKey;
+            ws.Cell(row, 2).Value = string.IsNullOrEmpty(eg.EpicName) || eg.EpicName == "No Epic" ? "No Epic" : eg.EpicName;
+            ws.Cell(row, 3).Value = eg.Rows.Count;
+            ws.Cell(row, 4).Value = Math.Round(hours, 2);
+            ws.Cell(row, 5).Value = Math.Round(total > 0 ? hours / total * 100 : 0, 1);
+            ws.Cell(row, 6).Value = string.Join(", ", members);
+            row++;
+        }
+        if (groups.Count > 0)
+        {
+            ws.Cell(row, 1).Value = "TOTAL"; ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 4).Value = Math.Round(total, 2); ws.Cell(row, 4).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+        }
+        ws.Columns().AdjustToContents();
+        ws.Row(1).Height = 22;
+    }
+
+    private void BuildDoneFeaturesSheet(XLWorkbook wb)
+    {
+        var rows = DoneFeatures;
+        var showSprint = ShowSprintColDF;
+        var ws = wb.Worksheets.Add("Done Features");
+        var headers = showSprint
+            ? new[] { "Key", "Summary", "Type", "Assignee", "Sprint", "Epic Key", "Epic Name", "SP", "Hours" }
+            : new[] { "Key", "Summary", "Type", "Assignee", "Epic Key", "Epic Name", "SP", "Hours" };
+        for (int i = 0; i < headers.Length; i++) { var hc = ws.Cell(1, i + 1); hc.Value = headers[i]; StyleHeaderCell(hc); }
+        ws.SheetView.FreezeRows(1);
+
+        int row = 2;
+        int spCol = 0, hCol = 0;
+        foreach (var r in rows)
+        {
+            if (row % 2 == 0) ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+            int col = 1;
+            ws.Cell(row, col++).Value = r.Key;
+            ws.Cell(row, col++).Value = r.Summary;
+            ws.Cell(row, col++).Value = r.IssueType;
+            ws.Cell(row, col++).Value = r.Assignee;
+            if (showSprint) ws.Cell(row, col++).Value = r.SprintName;
+            ws.Cell(row, col++).Value = r.EpicKey;
+            ws.Cell(row, col++).Value = r.EpicName;
+            spCol = col;
+            if (r.StoryPoints.HasValue) ws.Cell(row, col).Value = r.StoryPoints.Value;
+            col++;
+            hCol = col;
+            ws.Cell(row, col).Value = Math.Round(r.HoursLogged, 2);
+            row++;
+        }
+        if (rows.Count > 0)
+        {
+            ws.Cell(row, 1).Value = "TOTAL"; ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, spCol).Value = DoneTotalSP; ws.Cell(row, spCol).Style.Font.Bold = true;
+            ws.Cell(row, hCol).Value = Math.Round(DoneTotalHours, 2); ws.Cell(row, hCol).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+        }
+        ws.Columns().AdjustToContents();
+        ws.Row(1).Height = 22;
+    }
+
+    private void BuildWorkingHoursSheet(XLWorkbook wb, List<WorklogRow> filtered, string sprintLabel, string dateRangeLabel, string exportedAt)
+    {
+        var ws = wb.Worksheets.Add("Working Hours");
+
+        void Meta(int row, string label, string value)
+        {
+            var lc = ws.Cell(row, 1); lc.Value = label; StyleMetaLabel(lc);
+            ws.Cell(row, 2).Value = value;
+        }
+
+        Meta(1, "Sprint(s)",   sprintLabel);
+        Meta(2, "Members",     string.Join(", ", SelectedMembers.Order()));
+        Meta(3, "Date Range",  dateRangeLabel);
+        Meta(4, "Exported",    exportedAt);
+
+        var headers = new[] { "Date", "Day of the Week", "Team Member", "Logged Hours" };
+        for (int i = 0; i < headers.Length; i++) { var hc = ws.Cell(6, i + 1); hc.Value = headers[i]; StyleHeaderCell(hc); }
+        ws.SheetView.FreezeRows(6);
+
+        var sorted = filtered.OrderBy(w => w.Date).ThenBy(w => w.Author).ToList();
+        int row = 7;
+        foreach (var wl in sorted)
+        {
+            if (row % 2 == 0)
+                ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+            ws.Cell(row, 1).Value = wl.Date.ToString("yyyy-MM-dd");
+            ws.Cell(row, 2).Value = wl.Date.ToString("dddd");
+            ws.Cell(row, 3).Value = wl.Author;
+            ws.Cell(row, 4).Value = Math.Round(wl.TimeSpentSeconds / 3600.0, 2);
+            ws.Cell(row, 4).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            row++;
+        }
+        ws.Cell(row, 1).Value = "TOTAL";
+        ws.Cell(row, 1).Style.Font.Bold = true;
+        ws.Cell(row, 4).Value = Math.Round(sorted.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
+        ws.Cell(row, 4).Style.Font.Bold = true;
+        ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+        ws.Columns().AdjustToContents();
+        ws.Row(6).Height = 22;
+    }
+
+    private void BuildWeekdaySummarySheet(XLWorkbook wb, List<WorklogRow> filtered, string sprintLabel, string exportedAt)
+    {
+        var ws = wb.Worksheets.Add("Summary by Member");
+
+        void Meta(int r, string label, string value)
+        {
+            var lc = ws.Cell(r, 1); lc.Value = label; StyleMetaLabel(lc);
+            ws.Cell(r, 2).Value = value;
+        }
+        Meta(1, "Sprint(s)", sprintLabel);
+        Meta(2, "Exported",  exportedAt);
+
+        var members = filtered.Select(w => w.Author).Distinct().Order().ToList();
+        var dayMap  = filtered.GroupBy(w => w.Author).ToDictionary(
+            g => g.Key,
+            g => g.GroupBy(w => w.Date.DayOfWeek).ToDictionary(d => d.Key, d => d.Sum(w => w.TimeSpentSeconds) / 3600.0));
+
+        DayOfWeek[] orderedDays = [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday,
+                                   DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
+
+        StyleHeaderCell(ws.Cell(4, 1)); ws.Cell(4, 1).Value = "Day";
+        for (int m = 0; m < members.Count; m++)
+        {
+            var hc = ws.Cell(4, m + 2);
+            hc.Value = members[m];
+            StyleHeaderCell(hc);
+        }
+        var totalHc = ws.Cell(4, members.Count + 2);
+        totalHc.Value = "Total";
+        StyleHeaderCell(totalHc);
+        ws.SheetView.FreezeRows(4);
+
+        int sRow = 5;
+        foreach (var day in orderedDays)
+        {
+            if (sRow % 2 == 0)
+                ws.Row(sRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+            ws.Cell(sRow, 1).Value = day.ToString();
+            ws.Cell(sRow, 1).Style.Font.Bold = true;
+            double rowTotal = 0;
+            for (int m = 0; m < members.Count; m++)
+            {
+                double hours = dayMap.TryGetValue(members[m], out var daysForMember)
+                               && daysForMember.TryGetValue(day, out var h) ? h : 0;
+                rowTotal += hours;
+                if (hours > 0)
+                {
+                    var dc = ws.Cell(sRow, m + 2);
+                    dc.Value = Math.Round(hours, 2);
+                    dc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                }
+            }
+            var rtc = ws.Cell(sRow, members.Count + 2);
+            rtc.Value = Math.Round(rowTotal, 2);
+            rtc.Style.Font.Bold = true;
+            rtc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            sRow++;
+        }
+
+        ws.Cell(sRow, 1).Value = "TOTAL";
+        ws.Cell(sRow, 1).Style.Font.Bold = true;
+        ws.Row(sRow).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+        for (int m = 0; m < members.Count; m++)
+        {
+            double memberTotal = dayMap.TryGetValue(members[m], out var dm) ? dm.Values.Sum() : 0;
+            var tc = ws.Cell(sRow, m + 2);
+            tc.Value = Math.Round(memberTotal, 2);
+            tc.Style.Font.Bold = true;
+            tc.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        }
+        var grandTotal = ws.Cell(sRow, members.Count + 2);
+        grandTotal.Value = Math.Round(filtered.Sum(w => w.TimeSpentSeconds) / 3600.0, 2);
+        grandTotal.Style.Font.Bold = true;
+        grandTotal.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+        ws.Columns().AdjustToContents();
+        ws.Row(4).Height = 22;
     }
 }

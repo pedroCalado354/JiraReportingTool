@@ -4,6 +4,7 @@ using JiraReportingTool.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace JiraReportingTool.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260708085237_AddSprintReportSprintState")]
+    partial class AddSprintReportSprintState
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -330,37 +333,6 @@ namespace JiraReportingTool.Migrations
                     b.ToTable("SprintReports");
                 });
 
-            modelBuilder.Entity("JiraReportingTool.Models.WorkingHoursSnapshot", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateTime>("CreatedAt")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("ReportJson")
-                        .IsRequired()
-                        .HasColumnType("nvarchar(max)");
-
-                    b.Property<int>("SprintId")
-                        .HasColumnType("int");
-
-                    b.Property<string>("SprintName")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("SprintId")
-                        .IsUnique();
-
-                    b.ToTable("WorkingHoursSnapshots");
-                });
-
             modelBuilder.Entity("JiraReportingTool.Models.WorklogEntry", b =>
                 {
                     b.Property<int>("Id")
@@ -444,34 +416,6 @@ namespace JiraReportingTool.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("Roster");
-                });
-
-            modelBuilder.Entity("RosterVacation", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
-
-                    b.Property<DateOnly>("EndDate")
-                        .HasColumnType("date");
-
-                    b.Property<string>("Note")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<int>("RosterMemberId")
-                        .HasColumnType("int");
-
-                    b.Property<DateOnly>("StartDate")
-                        .HasColumnType("date");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("RosterMemberId");
-
-                    b.ToTable("RosterVacations");
                 });
 
             modelBuilder.Entity("SharedHoliday", b =>
@@ -808,15 +752,6 @@ namespace JiraReportingTool.Migrations
                         .WithMany("Worklogs")
                         .HasForeignKey("SprintIssueId")
                         .OnDelete(DeleteBehavior.Cascade);
-                });
-
-            modelBuilder.Entity("RosterVacation", b =>
-                {
-                    b.HasOne("RosterMember", null)
-                        .WithMany()
-                        .HasForeignKey("RosterMemberId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
                 });
 
             modelBuilder.Entity("SprintPlanAllocation", b =>

@@ -15,6 +15,9 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     // ── Support Bugs · SLAs daily history snapshots ──────────────────────────
     public DbSet<SlaSnapshot> SlaSnapshots => Set<SlaSnapshot>();
 
+    // ── Working Hours frozen sprint snapshots ─────────────────────────────────
+    public DbSet<WorkingHoursSnapshot> WorkingHoursSnapshots => Set<WorkingHoursSnapshot>();
+
     // ── Sprint / Epic configuration (drives default inputs on dashboards) ────
     public DbSet<SprintConfig> SprintConfigs => Set<SprintConfig>();
 
@@ -22,6 +25,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
     public DbSet<RosterMember>       Roster              => Set<RosterMember>();
     public DbSet<SharedHoliday>      SharedHolidays      => Set<SharedHoliday>();
     public DbSet<CustomTaskTemplate> CustomTaskTemplates => Set<CustomTaskTemplate>();
+    public DbSet<RosterVacation>     RosterVacations     => Set<RosterVacation>();
 
     // ── Sprint Plan CRUD ──────────────────────────────────────────────────────
     public DbSet<SprintPlanHeader>     SprintPlans           => Set<SprintPlanHeader>();
@@ -172,12 +176,26 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : DbContext(op
             .HasIndex(h => h.Date)
             .IsUnique();
 
+        modelBuilder.Entity<RosterVacation>()
+            .HasOne<RosterMember>()
+            .WithMany()
+            .HasForeignKey(v => v.RosterMemberId)
+            .OnDelete(DeleteBehavior.Cascade);
+
         // ── SLA history snapshot: one row per day, JSON payload ──────────────
         modelBuilder.Entity<SlaSnapshot>()
             .HasIndex(s => s.SnapshotDate)
             .IsUnique();
         modelBuilder.Entity<SlaSnapshot>()
             .Property(s => s.DataJson)
+            .HasColumnType("nvarchar(max)");
+
+        // ── Working Hours frozen snapshot: one row per sprint, JSON payload ──
+        modelBuilder.Entity<WorkingHoursSnapshot>()
+            .HasIndex(s => s.SprintId)
+            .IsUnique();
+        modelBuilder.Entity<WorkingHoursSnapshot>()
+            .Property(s => s.ReportJson)
             .HasColumnType("nvarchar(max)");
     }
 }

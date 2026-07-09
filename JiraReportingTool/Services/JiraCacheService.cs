@@ -93,16 +93,44 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
         return report;
     }
 
+    // Sprint-aware cache, mirroring the Support Trends freeze/delta pattern (see
+    // GetSupportEpicBugsAsync): once Jira reports a sprint closed AND the stored copy was
+    // synced on or after its final day, that snapshot is the sprint's permanent historical
+    // record — carried-over tasks keep the state they had at close instead of picking up
+    // the next sprint's activity. While the sprint is still open (or the last sync predates
+    // its close), only issues updated in the hot window are re-fetched and merged over the
+    // stored copy, so a daily page load stays cheap.
     public async Task<SprintReport> GetDeliveryDataAsync(int sprintId, bool bypassCache = false)
     {
         var key = $"delivery:{sprintId}";
 
-        // bypassCache (hard refresh) skips the DB freshness check and always re-fetches
-        // from Jira, then upserts the cache so the stored copy is brought up to date too.
+        // bypassCache (full refresh button) always re-fetches every issue live from Jira and
+        // rebuilds the stored copy from scratch — the explicit escape hatch for a frozen
+        // sprint, at the cost of overwriting its historical snapshot with today's Jira state.
         if (_useCache && !bypassCache)
         {
             var cached = await repo.GetSprintReportAsync(key);
-            if (cached is not null && IsFresh(cached.SyncedAt)) return cached;
+            if (cached is not null && cached.Issues.Count > 0)
+            {
+                if (cached.IsFrozen) return cached;
+
+                var sinceDays = HotSinceDays(cached.SyncedAt ?? DateTime.UtcNow.AddDays(-_hotWindowDays));
+                var delta = await api.GetDeliveryDataUpdatedSinceAsync(sprintId, sinceDays);
+                var merged = MergeIssuesByKey(cached.Issues, delta.Issues);
+                var toStore = new SprintReport
+                {
+                    ReportIdentifier = key,
+                    JiraSprintId = sprintId,
+                    ProjectKey   = cached.ProjectKey,
+                    SprintName   = string.IsNullOrEmpty(delta.SprintName)  ? cached.SprintName  : delta.SprintName,
+                    SprintState  = string.IsNullOrEmpty(delta.SprintState) ? cached.SprintState : delta.SprintState,
+                    StartDate    = delta.StartDate ?? cached.StartDate,
+                    EndDate      = delta.EndDate   ?? cached.EndDate,
+                    Issues       = merged
+                };
+                await repo.UpsertSprintReportAsync(toStore);
+                return toStore;
+            }
         }
 
         var report = await api.GetDeliveryDataAsync(sprintId);

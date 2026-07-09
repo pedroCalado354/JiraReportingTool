@@ -67,6 +67,30 @@ public class TeamRosterService(AppDbContext db)
         }
     }
 
+    // ── Vacations ────────────────────────────────────────────────────────────────
+    public Task<List<RosterVacation>> GetVacationsAsync() =>
+        db.RosterVacations.AsNoTracking().OrderBy(v => v.StartDate).ToListAsync();
+
+    public async Task AddVacationAsync(int rosterMemberId, DateOnly start, DateOnly end, string? note)
+    {
+        if (end < start) (start, end) = (end, start);
+        db.RosterVacations.Add(new RosterVacation
+        {
+            RosterMemberId = rosterMemberId, StartDate = start, EndDate = end, Note = note
+        });
+        await db.SaveChangesAsync();
+    }
+
+    public async Task DeleteVacationAsync(int id)
+    {
+        var entry = await db.RosterVacations.FindAsync(id);
+        if (entry is not null)
+        {
+            db.RosterVacations.Remove(entry);
+            await db.SaveChangesAsync();
+        }
+    }
+
     // ── Custom task templates ─────────────────────────────────────────────────────
     public Task<List<CustomTaskTemplate>> GetCustomTaskTemplatesAsync() =>
         db.CustomTaskTemplates.AsNoTracking()

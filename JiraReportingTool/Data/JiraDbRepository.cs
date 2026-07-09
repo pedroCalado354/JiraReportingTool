@@ -95,6 +95,7 @@ public class JiraDbRepository(AppDbContext db)
             existing.SprintName = report.SprintName;
             existing.StartDate = report.StartDate;
             existing.EndDate = report.EndDate;
+            existing.SprintState = report.SprintState;
             existing.Issues = report.Issues;
         }
         else

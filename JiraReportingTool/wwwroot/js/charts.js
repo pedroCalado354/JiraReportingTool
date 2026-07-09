@@ -115,6 +115,13 @@ window.renderSlaBarChart = (canvasId, config, dotNetRef, methodName, tag) => {
     _charts[canvasId] = new Chart(canvas.getContext('2d'), config);
 };
 
+// Returns a chart's current render as a base64 PNG data URL, or null if it isn't rendered.
+window.getChartImage = (canvasId) => {
+    const chart = _charts[canvasId];
+    if (!chart) return null;
+    return chart.toBase64Image('image/png', 1);
+};
+
 window.destroyChart = (canvasId) => {
     if (_charts[canvasId]) {
         _charts[canvasId].destroy();

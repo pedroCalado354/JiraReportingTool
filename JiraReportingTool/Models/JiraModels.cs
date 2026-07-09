@@ -59,7 +59,22 @@ public class SprintReport
     public string SprintName { get; set; } = "";
     public DateTime? StartDate { get; set; }
     public DateTime? EndDate { get; set; }
+    /// <summary>Jira sprint state as of the last sync: "active", "closed", or "future". Empty when
+    /// the report wasn't loaded against one specific sprint (e.g. an arbitrary JQL filter).</summary>
+    public string SprintState { get; set; } = "";
     public List<SprintIssue> Issues { get; set; } = new();
+
+    /// <summary>
+    /// True once this sprint's history is permanently settled: Jira reports it closed, and the
+    /// stored snapshot was last synced on or after the sprint's final day. From that point on the
+    /// cache serves this report straight from the DB with no further Jira calls — carried-over
+    /// tasks keep their true end-of-sprint state instead of picking up the next sprint's activity.
+    /// </summary>
+    [NotMapped]
+    public bool IsFrozen =>
+        string.Equals(SprintState, "closed", StringComparison.OrdinalIgnoreCase) &&
+        SyncedAt.HasValue && EndDate.HasValue &&
+        SyncedAt.Value.Date >= EndDate.Value.Date;
 
     [NotMapped] public int TotalIssues => Issues.Count;
     [NotMapped] public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
@@ -330,4 +345,27 @@ public class SlaSnapshotBug
     public string Customer { get; set; } = "";
     public string Product { get; set; } = "";
     public DateTime? Created { get; set; }
+}
+
+// ── Working Hours snapshot (Working Hours dashboard) ──────────────────────────
+// One row per sprint, written once that sprint's end date is a few days in the
+// past (worklogs have settled by then) and never overwritten afterward — a
+// permanent, read-only historical record so the numbers don't drift if Jira
+// data changes long after the fact. ReportJson holds the full serialized
+// SprintReport (Issues + Worklogs) so the page can replay all of its existing
+// filters/charts against frozen data exactly as it does for a live report.
+public class WorkingHoursSnapshot
+{
+    public int Id { get; set; }
+
+    /// <summary>Jira sprint ID — one snapshot per sprint.</summary>
+    public int SprintId { get; set; }
+
+    [MaxLength(200)]
+    public string SprintName { get; set; } = "";
+
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+
+    /// <summary>Serialized <see cref="SprintReport"/> (with Issues and Worklogs).</summary>
+    public string ReportJson { get; set; } = "";
 }

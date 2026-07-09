@@ -2420,15 +2420,23 @@
         EpicKeyInput = "";
         StateHasChanged();
 
-        var report = await JiraService.GetEpicReportAsync(key);
-        var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
-        tasks = tasks.Where(g=> g.IssueType != "Bug").ToList();
+        try
+        {
+            var report = await JiraService.GetEpicReportAsync(key);
+            var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
+            tasks = tasks.Where(g=> g.IssueType != "Bug").ToList();
 
-        foreach (var t in tasks) { AssignStableTaskId(t); _taskCache[t.Id] = t; }
+            foreach (var t in tasks) { AssignStableTaskId(t); _taskCache[t.Id] = t; }
 
-        LoadedEpics[key].Tasks     = tasks;
-        LoadedEpics[key].IsLoading = false;
-        InfoMessage = $"Loaded {tasks.Count} tasks from epic {key}.";
+            LoadedEpics[key].Tasks     = tasks;
+            LoadedEpics[key].IsLoading = false;
+            InfoMessage = $"Loaded {tasks.Count} tasks from epic {key}.";
+        }
+        catch (Exception ex)
+        {
+            LoadedEpics.Remove(key);
+            ErrorMessage = $"Failed to load epic {key}: {ex.Message}";
+        }
     }
 
     private async Task OnEpicInputKeyPress(KeyboardEventArgs e)
@@ -2453,10 +2461,14 @@
     {
         if (string.IsNullOrWhiteSpace(key) || LoadedEpics.ContainsKey(key)) return;
         LoadedEpics[key] = new EpicLoadState { EpicKey = key, IsLoading = true };
-        var report = await JiraService.GetEpicReportAsync(key);
-        var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
-        foreach (var t in tasks) { AssignStableTaskId(t); _taskCache[t.Id] = t; }
-        LoadedEpics[key].Tasks     = tasks;
+        try
+        {
+            var report = await JiraService.GetEpicReportAsync(key);
+            var tasks  = report?.Issues?.OrderBy(i => i.Key).ToList() ?? new List<SprintIssue>();
+            foreach (var t in tasks) { AssignStableTaskId(t); _taskCache[t.Id] = t; }
+            LoadedEpics[key].Tasks = tasks;
+        }
+        catch { }
         LoadedEpics[key].IsLoading = false;
     }
 
