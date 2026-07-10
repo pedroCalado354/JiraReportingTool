@@ -163,55 +163,224 @@ public static class DeliveryHealthCalculator
             SupportLinkedPct: bugs.Count == 0 ? 0 : Math.Round(supportLinked.Count * 100.0 / bugs.Count, 1));
     }
 
-    // ── Scope comparison: initial sprint scope vs work added after the sprint started ──
-    public sealed record ScopeSplit(int Total, int Done, int Active, int ToDo, double CompletionPct);
-    public sealed record ScopeComparison(ScopeSplit Initial, ScopeSplit Added);
+    // ── Issues by epic: which epics are generating the load, closed this sprint vs still open.
+    // Generic over whatever issue population the caller passes in (bugs, features, a JSSUPPORT-
+    // linked subset, ...) — not bug-specific despite living next to the bug metrics below.
+    public sealed record EpicBreakdownRow(
+        string EpicKey, string EpicName, int ClosedCount, int OpenCount, double HoursLogged,
+        double ClosedHoursLogged, double OpenHoursLogged)
+    {
+        // Average hours logged (sprint window) per issue in each bucket — how much effort
+        // closed issues typically took to conclude vs how much open ones have absorbed so far.
+        public double AvgEffortClosed => ClosedCount == 0 ? 0 : Math.Round(ClosedHoursLogged / ClosedCount, 1);
+        public double AvgEffortOpen   => OpenCount == 0   ? 0 : Math.Round(OpenHoursLogged / OpenCount, 1);
+    }
 
-    public static ScopeComparison ComputeScopeComparison(SprintReport report, List<SprintIssue> scopedIssues)
+    public static List<EpicBreakdownRow> ComputeIssuesByEpic(SprintReport report, List<SprintIssue> issues) => issues
+        .GroupBy(i => (i.EpicKey, EpicName: string.IsNullOrEmpty(i.EpicName) ? "No Epic" : i.EpicName))
+        .Select(g =>
+        {
+            var closed = g.Where(i => i.StatusCategoryKey == "done").ToList();
+            var open   = g.Where(i => i.StatusCategoryKey != "done").ToList();
+            return new EpicBreakdownRow(
+                EpicKey: g.Key.EpicKey,
+                EpicName: g.Key.EpicName,
+                ClosedCount: closed.Count,
+                OpenCount: open.Count,
+                HoursLogged: SprintWindowHours(g, report.StartDate, report.EndDate),
+                ClosedHoursLogged: SprintWindowHours(closed, report.StartDate, report.EndDate),
+                OpenHoursLogged: SprintWindowHours(open, report.StartDate, report.EndDate));
+        })
+        .OrderByDescending(r => r.ClosedCount + r.OpenCount)
+        .ToList();
+
+    // ── Estimation accuracy: planned (original estimate) vs actual (all-time logged) hours per
+    // issue — one point per issue, feeds the Estimation Accuracy scatter. A point above the
+    // y = x diagonal means the issue is taking (or took) more effort than estimated.
+    public sealed record EstimationPoint(string Key, double PlannedHours, double ActualHours);
+
+    public static List<EstimationPoint> ComputeEstimationPoints(List<SprintIssue> issues) => issues
+        .Where(i => i.OriginalEstimateSeconds > 0 || i.TimeSpentSeconds > 0)
+        .Select(i => new EstimationPoint(i.Key, i.OriginalEstimateSeconds / 3600.0, i.TimeSpentSeconds / 3600.0))
+        .ToList();
+
+    // Daily throughput (issues resolved that day) — feeds the Velocity KPI's sparkline. An issue
+    // whose done status has no resolutiondate can't be placed on a specific day, so it's simply
+    // omitted from the trend (it still counts in the Velocity KPI's own totals elsewhere).
+    public static List<double> ComputeVelocitySparkline(SprintReport report, List<SprintIssue> issues)
+    {
+        var start = report.StartDate?.Date;
+        var end = report.EndDate?.Date;
+        if (start is null || end is null) return [];
+        var cap = end.Value < DateTime.Today ? end.Value : DateTime.Today;
+
+        var doneByDay = issues
+            .Where(i => i.StatusCategoryKey == "done" && i.ResolutionDate.HasValue)
+            .GroupBy(i => i.ResolutionDate!.Value.Date)
+            .ToDictionary(g => g.Key, g => g.Count());
+
+        var points = new List<double>();
+        for (var d = start.Value; d <= cap; d = d.AddDays(1))
+            points.Add(doneByDay.TryGetValue(d, out var c) ? c : 0);
+        return points;
+    }
+
+    // Average hours logged (sprint window) per closed issue — how much effort it typically
+    // takes to conclude one (e.g. a closed bug/redesign).
+    public static double AvgHoursToConclude(SprintReport report, List<SprintIssue> issues)
+    {
+        var closed = issues.Where(i => i.StatusCategoryKey == "done").ToList();
+        if (closed.Count == 0) return 0;
+        return Math.Round(SprintWindowHours(closed, report.StartDate, report.EndDate) / closed.Count, 1);
+    }
+
+    // Average hours logged (sprint window) per still-open issue — how much effort is already
+    // sunk into the ones that haven't concluded yet, as a counterpart to AvgHoursToConclude.
+    public static double AvgHoursOngoing(SprintReport report, List<SprintIssue> issues)
+    {
+        var open = issues.Where(i => i.StatusCategoryKey != "done").ToList();
+        if (open.Count == 0) return 0;
+        return Math.Round(SprintWindowHours(open, report.StartDate, report.EndDate) / open.Count, 1);
+    }
+
+    public sealed record PriorityCount(string Priority, int Count);
+
+    public static List<PriorityCount> ComputePriorityBreakdown(List<SprintIssue> issues) => issues
+        .GroupBy(i => string.IsNullOrWhiteSpace(i.Priority) ? "Unspecified" : i.Priority)
+        .Select(g => new PriorityCount(g.Key, g.Count()))
+        .OrderByDescending(p => p.Count)
+        .ToList();
+
+    public sealed record BugTypeSplit(int BugTypeCount, int RedesignTypeCount);
+
+    public static BugTypeSplit ComputeBugVsRedesignSplit(List<SprintIssue> bugs) => new(
+        BugTypeCount: bugs.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)),
+        RedesignTypeCount: bugs.Count(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase)));
+
+    // ── Scope added: work added to the sprint after it started (Created on/after sprint start) ──
+    public sealed record ScopeAddedTypeCount(string IssueType, int Count);
+
+    public sealed record ScopeAddedStats(
+        int AddedCount, int TotalCount, double PctOfSprintScope,
+        double AddedScopeHours, double TimeLoggedHours,
+        List<ScopeAddedTypeCount> TypeBreakdown);
+
+    public static ScopeAddedStats ComputeScopeAddedStats(SprintReport report, List<SprintIssue> scopedIssues)
     {
         var start = report.StartDate?.Date;
         var added = start is null ? [] : scopedIssues.Where(i => i.Created.HasValue && i.Created.Value.Date >= start.Value).ToList();
-        var initial = start is null ? scopedIssues : scopedIssues.Where(i => !(i.Created.HasValue && i.Created.Value.Date >= start.Value)).ToList();
-        return new ScopeComparison(ScopeStatFor(initial), ScopeStatFor(added));
+        var typeBreakdown = added
+            .GroupBy(i => string.IsNullOrWhiteSpace(i.IssueType) ? "Unspecified" : i.IssueType)
+            .Select(g => new ScopeAddedTypeCount(g.Key, g.Count()))
+            .OrderByDescending(t => t.Count)
+            .ToList();
+
+        return new ScopeAddedStats(
+            AddedCount: added.Count,
+            TotalCount: scopedIssues.Count,
+            PctOfSprintScope: scopedIssues.Count == 0 ? 0 : Math.Round(added.Count * 100.0 / scopedIssues.Count, 0),
+            AddedScopeHours: added.Sum(i => i.OriginalEstimateSeconds) / 3600.0,
+            TimeLoggedHours: SprintWindowHours(added, report.StartDate, report.EndDate),
+            TypeBreakdown: typeBreakdown);
     }
 
-    private static ScopeSplit ScopeStatFor(List<SprintIssue> src)
+    // ── Epic breadth: how many epics the team actively logged time on this sprint, what share
+    // of everyone who logged time worked on at least one of them (vs. only non-epic work like
+    // support tickets, meetings, or admin), and how spread out individuals are across epics —
+    // Focused (1 epic), Spread (2 epics), Critical (3+ epics — heavy context-switching).
+    public sealed record EpicBreadthStats(
+        int EpicCount, int ContributorsOnEpics, int TotalContributors, double PctOfContributors,
+        int FocusedContributors, int SpreadContributors, int CriticalContributors,
+        double PctFocused, double PctSpread, double PctCritical, double AvgEpicsPerContributor);
+
+    public static EpicBreadthStats ComputeEpicBreadthStats(SprintReport report, List<SprintIssue> issues)
     {
-        var total = src.Count;
-        var done = src.Count(i => i.StatusCategoryKey == "done");
-        return new ScopeSplit(
-            Total: total,
-            Done: done,
-            Active: src.Count(i => i.StatusCategoryKey == "indeterminate"),
-            ToDo: src.Count(i => i.StatusCategoryKey == "new"),
-            CompletionPct: total == 0 ? 0 : Math.Round(done * 100.0 / total, 1));
+        bool LoggedInWindow(WorklogEntry w) =>
+            (report.StartDate == null || w.Started.Date >= report.StartDate.Value.Date) &&
+            (report.EndDate   == null || w.Started.Date <= report.EndDate.Value.Date);
+
+        var epicIssues = issues.Where(i => !string.IsNullOrEmpty(i.EpicKey) && i.Worklogs.Any(LoggedInWindow)).ToList();
+        var epicCount = epicIssues.Select(i => i.EpicKey).Distinct().Count();
+
+        static int DistinctAuthors(IEnumerable<SprintIssue> src, Func<WorklogEntry, bool> filter) => src
+            .SelectMany(i => i.Worklogs.Where(filter))
+            .Select(w => w.Author)
+            .Where(a => !string.IsNullOrWhiteSpace(a))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count();
+
+        var contributorsOnEpics = DistinctAuthors(epicIssues, LoggedInWindow);
+        var totalContributors = DistinctAuthors(issues, LoggedInWindow);
+
+        // Distinct epic count per contributor who touched at least one epic — measures focus
+        // (one epic all sprint) vs context-switching (spread across several).
+        var epicsPerContributor = epicIssues
+            .SelectMany(i => i.Worklogs.Where(LoggedInWindow).Select(w => (w.Author, i.EpicKey)))
+            .Where(x => !string.IsNullOrWhiteSpace(x.Author))
+            .GroupBy(x => x.Author, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.Select(x => x.EpicKey).Distinct().Count())
+            .ToList();
+
+        var focusedContributors  = epicsPerContributor.Count(c => c == 1);
+        var spreadContributors   = epicsPerContributor.Count(c => c == 2);
+        var criticalContributors = epicsPerContributor.Count(c => c >= 3);
+        var avgEpicsPerContributor = epicsPerContributor.Count == 0 ? 0 : epicsPerContributor.Average();
+
+        return new EpicBreadthStats(
+            EpicCount: epicCount,
+            ContributorsOnEpics: contributorsOnEpics,
+            TotalContributors: totalContributors,
+            PctOfContributors: totalContributors == 0 ? 0 : Math.Round(contributorsOnEpics * 100.0 / totalContributors, 0),
+            FocusedContributors: focusedContributors,
+            SpreadContributors: spreadContributors,
+            CriticalContributors: criticalContributors,
+            PctFocused: totalContributors == 0 ? 0 : Math.Round(focusedContributors * 100.0 / totalContributors, 0),
+            PctSpread: totalContributors == 0 ? 0 : Math.Round(spreadContributors * 100.0 / totalContributors, 0),
+            PctCritical: totalContributors == 0 ? 0 : Math.Round(criticalContributors * 100.0 / totalContributors, 0),
+            AvgEpicsPerContributor: Math.Round(avgEpicsPerContributor, 1));
     }
 
     // ── Time series: day-by-day burndown (remaining estimate) and hours logged per day ──
+    // Scope-based burndown: remaining = total estimated scope minus the estimate of whatever
+    // has actually resolved by that day. Deliberately NOT "total estimate minus cumulative hours
+    // logged" — that conflates hours worked with scope completed, so heavy logging on unfinished
+    // or unestimated issues (a common case — see Estimation Coverage) drains the pool to zero
+    // long before the backlog is actually cleared, producing a burndown that craters in the
+    // first couple of days no matter how much work is actually left open.
     public static List<(DateTime Date, double RemainingHours)> ComputeBurndown(SprintReport report, List<SprintIssue> scopedIssues)
     {
         var start = report.StartDate?.Date;
         var end = report.EndDate?.Date;
         if (start is null || end is null) return [];
 
-        var totalHours = scopedIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
-        if (totalHours == 0) totalHours = scopedIssues.Count;
-
-        var loggedByDay = new Dictionary<DateTime, double>();
-        foreach (var w in scopedIssues.SelectMany(i => i.Worklogs))
-        {
-            var d = w.Started.Date;
-            loggedByDay[d] = loggedByDay.GetValueOrDefault(d) + w.TimeSpentSeconds / 3600.0;
-        }
+        var totalEstimateHours = scopedIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
+        var useCountFallback = totalEstimateHours == 0;
 
         var cap = end.Value < DateTime.Today ? end.Value : DateTime.Today;
-        var points = new List<(DateTime, double)>();
-        var remaining = totalHours;
-        for (var d = start.Value; d <= end.Value; d = d.AddDays(1))
+
+        // An issue with StatusCategoryKey == "done" but no resolutiondate (rare, workflow-
+        // dependent) can only be confirmed done as of "today" — treat it as still remaining on
+        // every earlier plotted day rather than guessing when it actually closed.
+        bool IsDoneByDay(SprintIssue i, DateTime d) => i.StatusCategoryKey == "done" &&
+            (i.ResolutionDate.HasValue ? i.ResolutionDate.Value.Date <= d : d >= cap);
+
+        // Per-issue remaining as of day d: estimate minus whatever had been logged against it
+        // by that day, clamped at zero — same convention as SprintIssue.ComputedRemainingSeconds
+        // (the "Remaining" KPI), just tracked day-by-day instead of only for "today". This is
+        // what makes the chart's last point line up with that KPI: a still-open issue with
+        // partial logged hours counts as partially done here too, not fully remaining.
+        double RemainingFor(SprintIssue i, DateTime d)
         {
-            if (loggedByDay.TryGetValue(d, out var logged)) remaining -= logged;
-            if (d <= cap) points.Add((d, Math.Max(0, remaining)));
+            if (IsDoneByDay(i, d)) return 0;
+            if (useCountFallback) return 1;
+            if (i.OriginalEstimateSeconds == 0) return 0; // unestimated — 0 remaining, matching ComputedRemainingSeconds
+            var loggedByDay = i.Worklogs.Where(w => w.Started.Date <= d).Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
+            return Math.Max(0, i.OriginalEstimateSeconds / 3600.0 - loggedByDay);
         }
+
+        var points = new List<(DateTime, double)>();
+        for (var d = start.Value; d <= cap; d = d.AddDays(1))
+            points.Add((d, scopedIssues.Sum(i => RemainingFor(i, d))));
         return points;
     }
 

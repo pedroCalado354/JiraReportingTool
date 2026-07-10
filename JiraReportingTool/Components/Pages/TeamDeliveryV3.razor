@@ -286,6 +286,13 @@
                 <div class="v2-kpi-sub">@($"{TaskSprintDoneLoggedHours:F0}h") on done · @($"{TaskSprintDoneReviewLoggedHours:F0}h") incl. in review</div>
             </div>
 
+            <!-- Avg / Member / Day (tasks) -->
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-person-workspace"></i>Avg / Member / Day</div>
+                <div class="v2-kpi-value">@($"{TaskAvgHoursPerMemberPerDay:F1}h")<span class="v2-kpi-of">of @TaskLoggingContributorCount contributor@(TaskLoggingContributorCount == 1 ? "" : "s")</span></div>
+                <div class="v2-kpi-sub">mean per contributor per workday</div>
+            </div>
+
             <!-- Idle Tasks (tasks) -->
             <div class="v2-kpi @(TaskIdleActiveCount == 0 ? "v2-kpi-success" : TaskIdleActiveCount > TaskInProgressCount * 0.5 ? "v2-kpi-danger" : "v2-kpi-warn")">
                 <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Idle Tasks</div>
@@ -456,6 +463,13 @@
                 <div class="v2-kpi-sub">@($"{SprintDoneLoggedHours:F0}h") on done · @($"{SprintDoneReviewLoggedHours:F0}h") incl. in review</div>
             </div>
 
+            <!-- Avg / Member / Day (all) -->
+            <div class="v2-kpi v2-kpi-neutral">
+                <div class="v2-kpi-head"><i class="bi bi-person-workspace"></i>Avg / Member / Day</div>
+                <div class="v2-kpi-value">@($"{AvgHoursPerMemberPerDay:F1}h")<span class="v2-kpi-of">of @LoggingContributorCount contributor@(LoggingContributorCount == 1 ? "" : "s")</span></div>
+                <div class="v2-kpi-sub">mean per contributor per workday</div>
+            </div>
+
             <!-- Idle Tasks (all) -->
             <div class="v2-kpi @(IdleActiveCount == 0 ? "v2-kpi-success" : IdleActiveCount > InProgressCount * 0.5 ? "v2-kpi-danger" : "v2-kpi-warn")">
                 <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Idle Tasks</div>
@@ -556,6 +570,7 @@
                 <i class="bi bi-graph-down-arrow" style="color:#7c3aed"></i>
                 Non-Bug Task Burndown
                 <span class="v2-section-note">ideal line vs actual remaining work — bugs excluded</span>
+                <i class="bi bi-info-circle v2-info-icon" title="Remaining = each issue's original estimate minus hours already logged against it (never below zero), dropping to zero once the issue is marked Done. It's not a straight subtraction of total hours logged — an issue's remaining only falls when work is logged on that specific issue, or the issue resolves."></i>
             </div>
             @NonBugBurndownSvg()
             <div style="display:flex;gap:14px;margin-top:10px;font-size:11px;color:var(--v2-ink-3)">
@@ -622,6 +637,7 @@
                         <i class="bi bi-graph-down" style="color:#6366f1"></i>
                         Burndown
                         <span class="v2-section-note">remaining work over time vs ideal trajectory</span>
+                        <i class="bi bi-info-circle v2-info-icon" title="Remaining = each issue's original estimate minus hours already logged against it (never below zero), dropping to zero once the issue is marked Done. It's not a straight subtraction of total hours logged — an issue's remaining only falls when work is logged on that specific issue, or the issue resolves."></i>
                     </div>
                     @BurndownSvg()
                     <div style="display:flex;gap:14px;margin-top:10px;font-size:11px;color:var(--v2-ink-3)">
@@ -3830,6 +3846,34 @@
     private double SprintDoneLoggedHours        => SprintWindowLoggedHours(ActiveIssues.Where(i => i.StatusCategoryKey == "done"));
     private double SprintDoneReviewLoggedHours  => SprintWindowLoggedHours(ActiveIssues.Where(IsDoneOrInReview));
 
+    // Avg / Member / Day — mirrors Working Hours' identical KPI (and DeliveryReports' copy):
+    // distinct worklog authors in the window, over weekdays elapsed so far (future days
+    // haven't had a chance to log anything yet, same capping as the burndown elsewhere).
+    // Kept independent per this file's no-shared-code-path design (see DeliveryHealthCalculator.cs).
+    private static int DistinctLoggingAuthors(IEnumerable<SprintIssue> issues, DateTime? start, DateTime? end) => issues
+        .SelectMany(i => i.Worklogs)
+        .Where(w => start == null || w.Started.Date >= start.Value.Date)
+        .Where(w => end   == null || w.Started.Date <= end.Value.Date)
+        .Select(w => w.Author)
+        .Where(a => !string.IsNullOrWhiteSpace(a))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Count();
+
+    private double AvgHoursPerMemberPerDayFor(int contributorCount, double sprintWindowHours)
+    {
+        if (Report?.StartDate is null || Report?.EndDate is null || contributorCount == 0) return 0;
+        var cappedEnd = Report.EndDate.Value.Date < DateTime.Today ? Report.EndDate.Value.Date : DateTime.Today;
+        if (cappedEnd < Report.StartDate.Value.Date) return 0;
+        var workingDays = CountVacationWeekdays(Report.StartDate.Value.Date, cappedEnd);
+        return workingDays == 0 ? 0 : sprintWindowHours / contributorCount / workingDays;
+    }
+
+    private int    TaskLoggingContributorCount => DistinctLoggingAuthors(TaskOnlyIssues, Report?.StartDate, Report?.EndDate);
+    private double TaskAvgHoursPerMemberPerDay => AvgHoursPerMemberPerDayFor(TaskLoggingContributorCount, TaskSprintLoggedHours);
+
+    private int    LoggingContributorCount     => DistinctLoggingAuthors(ActiveIssues, Report?.StartDate, Report?.EndDate);
+    private double AvgHoursPerMemberPerDay     => AvgHoursPerMemberPerDayFor(LoggingContributorCount, SprintLoggedHours);
+
     // ── Task-only hours / burn / workload / estimation (mirror all-issue KPIs) ─
     private double TaskTotalLoggedHours => TaskOnlyIssues.Sum(i => i.TimeSpentSeconds) / 3600.0;
     private double TaskDoneHours => TaskOnlyIssues
@@ -3896,31 +3940,42 @@
         }
     }
 
-    private List<double> TaskDailyBurndownHours
+    // Scope-based burndown, shared by the three burndown series below (Task-only, all issues,
+    // non-bug) — NOT shared with DeliveryReports.razor/DeliveryHealthCalculator.cs by design
+    // (see the comment at the top of that file), just de-duplicated within this page.
+    // Remaining per issue on a given day = its original estimate minus whatever had been logged
+    // against it by that day, clamped at zero, and forced to zero once the issue actually
+    // resolves. Deliberately NOT "total estimate minus cumulative hours logged that day" — that
+    // conflates hours worked with scope completed, so heavy logging on unfinished or unestimated
+    // issues (a common case) drains the pool to zero long before the backlog is actually
+    // cleared. This also keeps the chart's last point in line with the Remaining KPI elsewhere
+    // on this page, which is computed the same way (SprintIssue.ComputedRemainingSeconds).
+    private static List<double> ComputeDailyBurndown(DateTime start, DateTime end, List<SprintIssue> issues)
     {
-        get
+        var cap = end < DateTime.Today ? end : DateTime.Today;
+        var totalHours = issues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
+        var useCountFallback = totalHours == 0;
+
+        bool IsDoneByDay(SprintIssue i, DateTime d) => i.StatusCategoryKey == "done" &&
+            (i.ResolutionDate.HasValue ? i.ResolutionDate.Value.Date <= d : d >= cap);
+
+        double RemainingFor(SprintIssue i, DateTime d)
         {
-            if (Report == null) return new();
-            var start = Report.StartDate?.Date ?? DateTime.Today.AddDays(-13);
-            var end = Report.EndDate?.Date ?? DateTime.Today;
-            var totalHours = TaskOnlyIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
-            if (totalHours == 0) totalHours = TaskOnlyIssues.Count;
-            var loggedByDay = new Dictionary<DateTime, double>();
-            foreach (var w in TaskOnlyIssues.SelectMany(i => i.Worklogs))
-            {
-                var d = w.Started.Date;
-                loggedByDay[d] = (loggedByDay.ContainsKey(d) ? loggedByDay[d] : 0) + w.TimeSpentSeconds / 3600.0;
-            }
-            var points = new List<double>();
-            var remaining = totalHours;
-            for (var d = start; d <= end; d = d.AddDays(1))
-            {
-                if (loggedByDay.TryGetValue(d, out var logged)) remaining -= logged;
-                if (d <= DateTime.Today) points.Add(Math.Max(0, remaining));
-            }
-            return points;
+            if (IsDoneByDay(i, d)) return 0;
+            if (useCountFallback) return 1;
+            if (i.OriginalEstimateSeconds == 0) return 0;
+            var loggedByDay = i.Worklogs.Where(w => w.Started.Date <= d).Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
+            return Math.Max(0, i.OriginalEstimateSeconds / 3600.0 - loggedByDay);
         }
+
+        var points = new List<double>();
+        for (var d = start; d <= cap; d = d.AddDays(1))
+            points.Add(issues.Sum(i => RemainingFor(i, d)));
+        return points;
     }
+
+    private List<double> TaskDailyBurndownHours => Report == null ? new()
+        : ComputeDailyBurndown(Report.StartDate?.Date ?? DateTime.Today.AddDays(-13), Report.EndDate?.Date ?? DateTime.Today, TaskOnlyIssues);
 
     // ── Health score (0-100) — weighted composite ────────────────────────────
     private int HealthScore
@@ -4839,31 +4894,8 @@
     }
 
     // ── Burndown points (cumulative remaining hours per day) ─────────────────
-    private List<double> DailyBurndownHours
-    {
-        get
-        {
-            if (Report == null) return new();
-            var start = Report.StartDate?.Date ?? DateTime.Today.AddDays(-13);
-            var end = Report.EndDate?.Date ?? DateTime.Today;
-            var totalHours = ActiveIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
-            if (totalHours == 0) totalHours = ActiveIssues.Count;
-            var loggedByDay = new Dictionary<DateTime, double>();
-            foreach (var w in ActiveIssues.SelectMany(i => i.Worklogs))
-            {
-                var d = w.Started.Date;
-                loggedByDay[d] = (loggedByDay.ContainsKey(d) ? loggedByDay[d] : 0) + w.TimeSpentSeconds / 3600.0;
-            }
-            var points = new List<double>();
-            var remaining = totalHours;
-            for (var d = start; d <= end; d = d.AddDays(1))
-            {
-                if (loggedByDay.TryGetValue(d, out var logged)) remaining -= logged;
-                if (d <= DateTime.Today) points.Add(Math.Max(0, remaining));
-            }
-            return points;
-        }
-    }
+    private List<double> DailyBurndownHours => Report == null ? new()
+        : ComputeDailyBurndown(Report.StartDate?.Date ?? DateTime.Today.AddDays(-13), Report.EndDate?.Date ?? DateTime.Today, ActiveIssues);
 
     // ── Recent worklogs feed ─────────────────────────────────────────────────
     private record WorklogRow(DateTime Started, string Author, string IssueKey, string Comment, int TimeSpentSeconds);
@@ -4876,7 +4908,7 @@
     // ── Lifecycle ────────────────────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
     {
-        try { _roster = await RosterService.GetActiveAsync(); } catch { _roster = new(); }
+        try { _roster = (await RosterService.GetActiveAsync()).Where(m => m.IncludeInCommandCenter).ToList(); } catch { _roster = new(); }
         try { _vacations = await RosterService.GetVacationsAsync(); } catch { _vacations = new(); }
 
         _knownSprints = (await SprintConfigService.GetAllAsync())
@@ -5428,24 +5460,7 @@
             var nonBugs = ActiveIssues
                 .Where(i => !string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase))
                 .ToList();
-            var start = Report.StartDate?.Date ?? DateTime.Today.AddDays(-13);
-            var end   = Report.EndDate?.Date ?? DateTime.Today;
-            var totalHours = nonBugs.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
-            if (totalHours == 0) totalHours = nonBugs.Count;
-            var loggedByDay = new Dictionary<DateTime, double>();
-            foreach (var w in nonBugs.SelectMany(i => i.Worklogs))
-            {
-                var d = w.Started.Date;
-                loggedByDay[d] = (loggedByDay.ContainsKey(d) ? loggedByDay[d] : 0) + w.TimeSpentSeconds / 3600.0;
-            }
-            var points    = new List<double>();
-            var remaining = totalHours;
-            for (var d = start; d <= end; d = d.AddDays(1))
-            {
-                if (loggedByDay.TryGetValue(d, out var logged)) remaining -= logged;
-                if (d <= DateTime.Today) points.Add(Math.Max(0, remaining));
-            }
-            return points;
+            return ComputeDailyBurndown(Report.StartDate?.Date ?? DateTime.Today.AddDays(-13), Report.EndDate?.Date ?? DateTime.Today, nonBugs);
         }
     }
 
@@ -5755,4 +5770,7 @@
     .v2-gauge::before { background: radial-gradient(400px 200px at 0% 50%, rgba(20,184,166,0.06), transparent 60%); }
     .v2-cal-badge { border-color: #99f6e4; }
     .v2-cal-chip-active { background: #ccfbf1; color: #134e4a; }
+
+    .v2-info-icon { color:var(--v2-ink-4); cursor:help; font-size:12px; margin-left:2px; }
+    .v2-info-icon:hover { color:var(--v2-brand); }
 </style>

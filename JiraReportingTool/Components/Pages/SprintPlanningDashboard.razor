@@ -2334,14 +2334,14 @@
         foreach (var r in _allRoster)
             _memberHours[MemberId(r.Name, r.Team)] = r.HoursPerDay > 0m ? r.HoursPerDay : DefaultHoursPerDay;
 
-        var active = _allRoster.Where(r => r.Active).ToList();
+        var active = _allRoster.Where(r => r.Active && r.IncludeInSprintPlanning).ToList();
         _activeMemberIds = active.Select(r => MemberId(r.Name, r.Team)).ToHashSet();
         ResetTeamMembersToActive();
     }
 
     // Rebuilds the rendered member list to just the active roster (used for new/empty plans).
     private void ResetTeamMembersToActive()
-        => TeamMembers = _allRoster.Where(r => r.Active)
+        => TeamMembers = _allRoster.Where(r => r.Active && r.IncludeInSprintPlanning)
             .Select(r => new TeamMemberDto(MemberId(r.Name, r.Team), r.Name, r.Team))
             .ToList();
 

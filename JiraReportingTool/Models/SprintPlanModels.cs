@@ -185,6 +185,20 @@ public class RosterMember
     /// </summary>
     [MaxLength(200)]
     public string? JiraEmail { get; set; }
+
+    /// <summary>
+    /// Per-page inclusion flags — layered on top of <see cref="Active"/>. An inactive member is
+    /// hidden everywhere regardless of these; an active member can still be selectively excluded
+    /// from a given page's roster-driven capacity/board membership (e.g. a new hire counted for
+    /// Sprint Planning capacity before they're ramped up enough to show on the exec dashboards).
+    /// </summary>
+    public bool IncludeInDeliveryReports { get; set; } = true;
+
+    /// <summary>Counts toward roster-driven capacity on Delivery — Command Center (/delivery-v3).</summary>
+    public bool IncludeInCommandCenter { get; set; } = true;
+
+    /// <summary>Appears as a plannable resource/row and counts toward capacity on Sprint Planning (/sprint-planning).</summary>
+    public bool IncludeInSprintPlanning { get; set; } = true;
 }
 
 /// <summary>

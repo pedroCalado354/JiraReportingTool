@@ -137,3 +137,53 @@ window.downloadBase64File = (base64, fileName, mimeType) => {
     link.click();
     document.body.removeChild(link);
 };
+
+// Snapshots one element as a standalone .html file: clones the subtree, drops anything
+// marked .dr-export-skip (interactive controls that wouldn't do anything in a static file),
+// swaps each listed chart canvas for a static PNG (canvas pixels aren't part of the DOM so a
+// plain clone would leave them blank), and points at this page's own stylesheets so it keeps
+// the same look when opened with network access.
+window.exportElementAsHtml = (elementId, fileName, chartIds, title) => {
+    const root = document.getElementById(elementId);
+    if (!root) return;
+
+    const clone = root.cloneNode(true);
+    clone.querySelectorAll('.dr-export-skip').forEach(el => el.remove());
+
+    (chartIds || []).forEach(id => {
+        const chart = _charts[id];
+        if (!chart) return;
+        const img = document.createElement('img');
+        img.src = chart.toBase64Image('image/png', 1);
+        img.style.maxWidth = '100%';
+        const canvasInClone = clone.querySelector('#' + id);
+        if (canvasInClone) canvasInClone.replaceWith(img);
+    });
+
+    const styleLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+        .map(l => `<link rel="stylesheet" href="${l.href}">`)
+        .join('\n');
+
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>${title || document.title}</title>
+${styleLinks}
+<style>body{background:#f8fafc;padding:24px;} .v2-root{max-width:1400px;margin:0 auto;}</style>
+</head>
+<body>
+${clone.outerHTML}
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+};

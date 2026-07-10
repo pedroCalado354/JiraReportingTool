@@ -4,11 +4,14 @@
 @inject SprintConfigService SprintConfigService
 @inject TeamRosterService RosterService
 @inject IJSRuntime JS
+@inject IConfiguration Config
 @using JiraReportingTool.Models
+@using ClosedXML.Excel
+@using ClosedXML.Excel.Drawings
 
 <PageTitle>Delivery Reports</PageTitle>
 
-<div class="v2-root">
+<div class="v2-root" id="dr-report-root">
 
     <!-- ═══ HERO ═════════════════════════════════════════════════════════════ -->
     <div class="v2-hero">
@@ -41,7 +44,7 @@
     </div>
 
     <!-- ═══ SPRINT PICKER ═══════════════════════════════════════════════════ -->
-    <div class="v2-control-bar">
+    <div class="v2-control-bar dr-export-skip">
         <div class="v2-field" style="min-width:280px">
             <label class="v2-label">Sprint</label>
             <select class="v2-select" @bind="SprintId" @bind:after="OnSprintPicked">
@@ -52,11 +55,37 @@
                 }
             </select>
         </div>
-        @if (IsLoading)
+        <div class="v2-hero-spacer"></div>
+        @if (Report is not null)
         {
-            <span class="v2-hint"><span class="v2-spin"></span> Loading…</span>
+            <button class="dr-export-btn" @onclick="ExportToExcel" disabled="@IsExporting">
+                @if (IsExporting) { <span class="v2-spin" style="width:12px;height:12px"></span> }
+                else { <i class="bi bi-download"></i> }
+                Export .xlsx
+            </button>
+            <button class="dr-export-btn" @onclick="ExportToHtml" disabled="@IsExportingHtml">
+                @if (IsExportingHtml) { <span class="v2-spin" style="width:12px;height:12px"></span> }
+                else { <i class="bi bi-filetype-html"></i> }
+                Export .html
+            </button>
+            <button class="dr-export-btn dr-export-btn-compact" @onclick="ExportToExcelCompact" disabled="@IsExportingCompact" title="Bug vs Feature Split, Bug Origin, Planned vs Worked and Delivery Burndown for Delivery Work only">
+                @if (IsExportingCompact) { <span class="v2-spin" style="width:12px;height:12px"></span> }
+                else { <i class="bi bi-file-earmark-spreadsheet"></i> }
+                Export Compact
+            </button>
         }
     </div>
+
+    @if (IsLoading)
+    {
+        <div class="v2-card" style="margin-bottom:16px;display:flex;align-items:center;gap:14px">
+            <span class="v2-spin" style="border-color:rgba(99,102,241,0.20);border-top-color:var(--v2-brand);width:20px;height:20px"></span>
+            <div>
+                <div style="font-weight:700;font-size:13px;color:var(--v2-ink-1)">Loading sprint data…</div>
+                <div class="v2-hint">@(_loadingStatus ?? "Working…")</div>
+            </div>
+        </div>
+    }
 
     @if (ErrorMessage != null)
     {
@@ -76,7 +105,7 @@
     {
         <div class="v2-card" style="margin-top:16px">
             <div class="v2-section-title"><i class="bi bi-grid-fill"></i>Product <span class="v2-section-note">by worklog date within @(Report.StartDate?.ToString("MMM d")) – @(Report.EndDate?.ToString("MMM d")), not Jira sprint membership — filter, or leave all selected to view every product merged</span></div>
-            <div class="dr-chip-row">
+            <div class="dr-chip-row dr-export-skip">
                 @foreach (var (name, count) in AllProducts)
                 {
                     var n = name;
@@ -86,16 +115,18 @@
                     </button>
                 }
             </div>
-            <div class="v2-hint" style="margin-top:8px;display:flex;align-items:center;gap:10px">
+            <div class="v2-hint" style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                 <span>@SelectedProducts.Count of @AllProducts.Count selected@(SelectedProducts.Count == AllProducts.Count ? " — all products merged" : "")</span>
-                <button type="button" class="dr-link-btn" @onclick="SelectAllProducts">All</button>
-                <span class="dr-dot-sep">·</span>
-                <button type="button" class="dr-link-btn" @onclick="ClearProducts">None</button>
+                <button type="button" class="dr-link-btn dr-export-skip" @onclick="SelectAllProducts">All</button>
+                <span class="dr-dot-sep dr-export-skip">·</span>
+                <button type="button" class="dr-link-btn dr-export-skip" @onclick="ClearProducts">None</button>
+                <span class="dr-dot-sep dr-export-skip">·</span>
+                <button type="button" class="dr-link-btn dr-export-skip" @onclick="OpenTicketsModal"><i class="bi bi-table"></i> View @FilteredIssues.Count ticket@(FilteredIssues.Count == 1 ? "" : "s")</button>
             </div>
 
-            @if (AvailableSprints.Count > 0)
+            @if (AvailableSprints.Count > 0 || NoSprintIssueCount > 0)
             {
-                <div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--v2-divider);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                <div class="dr-export-skip" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--v2-divider);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                     <label class="v2-label" style="margin:0">Sprint</label>
                     <select class="v2-select v2-input-sm" style="max-width:320px" @onchange="OnSprintFilterChanged">
                         <option value="">All sprints in this window</option>
@@ -103,8 +134,12 @@
                         {
                             <option value="@s.Id" selected="@(SelectedSprintId == s.Id)">@s.Name@(s.StartDate.HasValue ? $" ({s.StartDate:MMM d}–{s.EndDate:MMM d})" : "")</option>
                         }
+                        @if (NoSprintIssueCount > 0)
+                        {
+                            <option value="0" selected="@(SelectedSprintId == 0)">No sprint (@NoSprintIssueCount) — never added to a sprint</option>
+                        }
                     </select>
-                    <span class="v2-hint">real Jira sprints found on the selected product(s)' issues — narrows further within the window above</span>
+                    <span class="v2-hint">real Jira sprints found on the selected product(s)' issues — narrows further within the window above@(NoSprintIssueCount > 0 ? $"; {NoSprintIssueCount} ticket{(NoSprintIssueCount == 1 ? "" : "s")} logged time here with no sprint at all" : "")</span>
                 </div>
             }
         </div>
@@ -125,6 +160,15 @@
                 <div class="v2-hint" style="max-width:260px">@(AllBugSplit.BugPct >= 40 ? "A large share of logged time is going to bugs — the team may be firefighting more than building." : "Most logged time is going toward feature/task work.")</div>
             </div>
 
+            @if (BugsByEpic.Count > 0)
+            {
+                @RenderEpicTable("Bugs by Epic", "closed this sprint vs still open, avg effort per issue", BugsByEpic, skipInHtmlExport: true)
+            }
+            @if (FeaturesByEpic.Count > 0)
+            {
+                @RenderEpicTable("Tasks by Epic", "closed this sprint vs still open, avg effort per issue", FeaturesByEpic, skipInHtmlExport: true)
+            }
+
             @if (AllBugOriginSplit is not null && (AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) > 0)
             {
                 <div class="v2-divider"></div>
@@ -142,14 +186,164 @@
                     </div>
                     <div class="v2-hint" style="max-width:260px">@AllBugOriginSplit.SupportLinkedPct.ToString("F0")% of bugs trace back to a customer-reported JSSUPPORT ticket rather than being found during feature work.</div>
                 </div>
+
+                @if (SupportBugsByEpic.Count > 0)
+                {
+                    @RenderEpicTable("JSSUPPORT-linked Bugs by Epic", "closed this sprint vs still open, hours logged, avg effort per issue", SupportBugsByEpic)
+                }
+
+                @if (SupportBugTypeSplitStat is not null)
+                {
+                    <div class="v2-kpi-grid" style="margin-top:12px;margin-bottom:0">
+                        <div class="v2-kpi v2-kpi-neutral">
+                            <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Avg Effort per Issue</div>
+                            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
+                                <div>
+                                    <div class="v2-kpi-value" style="font-size:22px">@SupportBugAvgEffortHours.ToString("F1")h</div>
+                                    <div class="v2-kpi-sub">to conclude (closed)</div>
+                                </div>
+                                <div>
+                                    <div class="v2-kpi-value" style="font-size:22px">@SupportBugAvgEffortOngoingHours.ToString("F1")h</div>
+                                    <div class="v2-kpi-sub">ongoing (still open)</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="v2-kpi v2-kpi-neutral">
+                            <div class="v2-kpi-head"><i class="bi bi-flag"></i>Priority Breakdown</div>
+                            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
+                                @foreach (var p in SupportBugPriorityBreakdown)
+                                {
+                                    <span class="v2-chip v2-chip-pri-@(p.Priority.ToLower())">@p.Priority (@p.Count)</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="v2-kpi v2-kpi-neutral">
+                            <div class="v2-kpi-head"><i class="bi bi-bug"></i>Bug vs Redesign</div>
+                            <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
+                                <span class="v2-chip v2-chip-bug">Bug (@SupportBugTypeSplitStat.BugTypeCount)</span>
+                                <span class="v2-chip" style="background:#f3e8ff;color:#7c3aed">Redesign (@SupportBugTypeSplitStat.RedesignTypeCount)</span>
+                            </div>
+                        </div>
+                    </div>
+                }
             }
+        </div>
+    }
+
+    @if (Report is not null && EpicBreadth is not null)
+    {
+        <div class="v2-card" style="margin-top:16px">
+            <div class="v2-section-title"><i class="bi bi-diagram-3-fill" style="color:var(--v2-brand)"></i>Epic Coverage <span class="v2-section-note">breadth of epics the team actively logged time on — All Issue Types, current product filter</span></div>
+            <div style="display:flex;align-items:baseline;gap:28px;flex-wrap:wrap">
+                <div class="v2-gauge-score">@EpicBreadth.EpicCount</div>
+                <div class="v2-hint" style="max-width:420px">
+                    @EpicBreadth.PctOfContributors.ToString("F0")% of the team (@EpicBreadth.ContributorsOnEpics of @EpicBreadth.TotalContributors contributors who logged time) worked in @EpicBreadth.EpicCount epic@(EpicBreadth.EpicCount == 1 ? "" : "s") this sprint.
+                </div>
+            </div>
+            <div class="v2-row" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--v2-divider)">
+                <span class="v2-chip v2-chip-task">Focused</span>
+                <span class="v2-row-value">@EpicBreadth.PctFocused.ToString("F0")% of the team (@EpicBreadth.FocusedContributors) worked in exactly 1 epic</span>
+            </div>
+            <div class="v2-row" style="margin-top:6px">
+                <span class="v2-chip v2-chip-pri-high">Spread</span>
+                <span class="v2-row-value">@EpicBreadth.PctSpread.ToString("F0")% of the team (@EpicBreadth.SpreadContributors) worked in 2 epics</span>
+            </div>
+            <div class="v2-row" style="margin-top:6px">
+                <span class="v2-chip v2-chip-pri-highest">Critical</span>
+                <span class="v2-row-value">@EpicBreadth.PctCritical.ToString("F0")% of the team (@EpicBreadth.CriticalContributors) worked in 3+ epics</span>
+            </div>
+            <div class="v2-hint" style="margin-top:8px">avg @EpicBreadth.AvgEpicsPerContributor.ToString("F1") epics per contributor</div>
         </div>
     }
 
     @if (Report is not null && TaskMetrics is not null && AllMetrics is not null)
     {
-        @RenderSection("Delivery Work", "Task issue type only", TaskMetrics, TaskScope, "task")
-        @RenderSection("All Issue Types", "Every issue in the sprint", AllMetrics, AllScope, "all")
+        @RenderSection("Delivery Work", "Task issue type only", TaskMetrics, TaskScopeAdded, TaskVelocitySparkline, TaskProductBreakdown, "task")
+        @RenderSection("All Issue Types", "Every issue in the sprint", AllMetrics, AllScopeAdded, AllVelocitySparkline, null, "all")
+
+        @if (AllScopeAdded is not null)
+        {
+            var pctUnplanned = AllMetrics.FullSprintCapacityHours > 0
+                ? AllScopeAdded.TimeLoggedHours / AllMetrics.FullSprintCapacityHours * 100 : 0;
+            var pctPlanned = AllMetrics.FullSprintCapacityHours > 0
+                ? AllMetrics.PlannedHours / AllMetrics.FullSprintCapacityHours * 100 : 0;
+            <div class="v2-card" style="margin-top:12px">
+                <div class="v2-section-title"><i class="bi bi-cash-coin" style="color:var(--v2-danger)"></i>Cost &amp; Capacity <span class="v2-section-note">opportunity cost of unplanned work, in hours — All Issue Types, current product filter</span></div>
+                <div class="v2-kpi-grid" style="margin-top:12px;margin-bottom:0">
+                    <div class="v2-kpi v2-kpi-neutral">
+                        <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Full-Sprint Capacity</div>
+                        <div class="v2-kpi-value">@($"{AllMetrics.FullSprintCapacityHours:F0}h")</div>
+                        <div class="v2-kpi-sub">total team hours available this sprint</div>
+                    </div>
+                    <div class="v2-kpi v2-kpi-neutral">
+                        <div class="v2-kpi-head"><i class="bi bi-clipboard-check"></i>Planned Work</div>
+                        <div class="v2-kpi-value">@($"{AllMetrics.PlannedHours:F0}h")</div>
+                        <div class="v2-kpi-sub">@pctPlanned.ToString("F0")% of capacity committed to planned scope</div>
+                    </div>
+                    <div class="v2-kpi @(pctUnplanned > 25 ? "v2-kpi-danger" : pctUnplanned > 10 ? "v2-kpi-warn" : "v2-kpi-success")">
+                        <div class="v2-kpi-head"><i class="bi bi-exclamation-triangle"></i>Cost of Unplanned Work</div>
+                        <div class="v2-kpi-value">@($"{AllScopeAdded.TimeLoggedHours:F0}h")</div>
+                        <div class="v2-kpi-sub">@pctUnplanned.ToString("F0")% of full-sprint capacity spent on added-scope work instead of planned scope</div>
+                    </div>
+                </div>
+            </div>
+        }
+    }
+
+    @if (_showTicketsModal)
+    {
+        <div class="v2-modal-overlay dr-export-skip" @onclick="CloseTicketsModal">
+            <div class="v2-modal" style="max-width:1200px" @onclick:stopPropagation="true">
+                <div class="v2-modal-head">
+                    <div>
+                        <div class="v2-modal-title"><i class="bi bi-table"></i> Tickets — @FilteredIssues.Count in current filter</div>
+                        <div class="v2-modal-sub">@SelectedProducts.Count of @AllProducts.Count product(s) selected@(SelectedSprintId.HasValue ? $" · sprint: {SprintFilterLabel()}" : "")</div>
+                    </div>
+                    <button class="v2-modal-close" @onclick="CloseTicketsModal" title="Close">&times;</button>
+                </div>
+                <div class="v2-modal-body">
+                    @if (FilteredIssues.Count == 0)
+                    {
+                        <div class="v2-empty" style="padding:24px">No tickets match the current filter.</div>
+                    }
+                    else
+                    {
+                        <div class="v2-table-wrap" style="margin:0">
+                            <table class="v2-table">
+                                <thead>
+                                    <tr>
+                                        <th>Key</th><th>Epic</th><th>Summary</th><th>Product</th><th>Type</th>
+                                        <th>Status</th><th>Assignee</th><th>Priority</th><th class="v2-table-num">Hours</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var i in FilteredIssues.OrderBy(i => i.EpicName).ThenBy(i => i.Key))
+                                    {
+                                        <tr class="@(i.StatusCategoryKey == "done" ? "is-done" : "")">
+                                            <td class="v2-table-key"><a href="@(Config["Jira:BaseUrl"]?.TrimEnd('/'))/browse/@i.Key" target="_blank" class="v2-key-link">@i.Key</a></td>
+                                            <td class="v2-truncate" style="max-width:200px" title="@i.EpicName">@i.EpicName</td>
+                                            <td class="v2-truncate" style="max-width:320px" title="@i.Summary">@i.Summary</td>
+                                            <td>@ProductOf(i)</td>
+                                            <td><span class="v2-chip v2-chip-@(i.IssueType.ToLower())">@i.IssueType</span></td>
+                                            <td><span class="v2-pill v2-pill-@(i.StatusCategoryKey == "done" ? "success" : i.StatusCategoryKey == "indeterminate" ? "brand" : "neutral")" style="font-size:10px;padding:1px 6px">@i.Status</span></td>
+                                            <td class="v2-truncate" style="max-width:160px">@i.Assignee</td>
+                                            <td>
+                                                @if (!string.IsNullOrEmpty(i.Priority))
+                                                {
+                                                    <span class="v2-chip v2-chip-pri-@(i.Priority.ToLower())">@i.Priority</span>
+                                                }
+                                                else { <span class="v2-text-muted">—</span> }
+                                            </td>
+                                            <td class="v2-table-num">@IssueWindowHours(i).ToString("F1")h</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
     }
 </div>
 
@@ -160,21 +354,48 @@
     private List<RosterVacation> _vacations = [];
     private string SprintId = "";
     private bool IsLoading;
+    private string? _loadingStatus;
     private string? ErrorMessage;
     private bool _renderCharts;
 
     private DeliveryHealthMetrics? TaskMetrics;
     private DeliveryHealthMetrics? AllMetrics;
-    private DeliveryHealthCalculator.ScopeComparison? TaskScope;
-    private DeliveryHealthCalculator.ScopeComparison? AllScope;
+    private DeliveryHealthCalculator.ScopeAddedStats? TaskScopeAdded;
+    private DeliveryHealthCalculator.ScopeAddedStats? AllScopeAdded;
+    private DeliveryHealthCalculator.EpicBreadthStats? EpicBreadth;
     private List<(DateTime Date, double RemainingHours)> TaskBurndown = [];
     private List<(DateTime Date, double RemainingHours)> AllBurndown = [];
     private List<(DateTime Date, double IdealRemainingHours)> TaskIdealBurndown = [];
     private List<(DateTime Date, double IdealRemainingHours)> AllIdealBurndown = [];
     private List<(DateTime Date, double Hours)> TaskHoursPerDay = [];
     private List<(DateTime Date, double Hours)> AllHoursPerDay = [];
+    private List<DeliveryHealthCalculator.EstimationPoint> TaskEstimationPoints = [];
+    private List<DeliveryHealthCalculator.EstimationPoint> AllEstimationPoints = [];
+    private List<double> TaskVelocitySparkline = [];
+    private List<double> AllVelocitySparkline = [];
+    private List<(string Product, int Total, int Done)> TaskProductBreakdown = [];
     private DeliveryHealthCalculator.BugFeatureSplit? AllBugSplit;
     private DeliveryHealthCalculator.BugOriginSplit? AllBugOriginSplit;
+    // Bug vs Feature Split detail: per-epic breakdown of the Bug (Bug ∪ Redesign) and Feature
+    // (Task-only) populations that make up the split above.
+    private List<DeliveryHealthCalculator.EpicBreakdownRow> BugsByEpic = [];
+    private List<DeliveryHealthCalculator.EpicBreakdownRow> FeaturesByEpic = [];
+
+    // Bug Origin detail: scoped to JSSUPPORT-linked bugs only (not the Feature-found half),
+    // since Bug Origin is specifically about customer-reported/support-driven bug load.
+    private List<DeliveryHealthCalculator.EpicBreakdownRow> SupportBugsByEpic = [];
+    private double SupportBugAvgEffortHours;
+    private double SupportBugAvgEffortOngoingHours;
+    private List<DeliveryHealthCalculator.PriorityCount> SupportBugPriorityBreakdown = [];
+    private DeliveryHealthCalculator.BugTypeSplit? SupportBugTypeSplitStat;
+
+    // The fully filtered (products + sprint) issue set currently driving every metric on the
+    // page — kept around so the "view tickets" popup can list exactly what's being measured.
+    private List<SprintIssue> FilteredIssues = [];
+    private bool _showTicketsModal;
+    private bool IsExporting;
+    private bool IsExportingHtml;
+    private bool IsExportingCompact;
 
     // ── Product filter ── "JS Project[Radio Buttons]" field; empty selection means "no filter"
     // (same convention as Working Hours' product filter), so clearing chips shows everything merged.
@@ -201,18 +422,49 @@
 
     // Real Jira sprints found across the currently-selected product(s)' issues — populates the
     // Sprint dropdown so the merged, date-scoped view can be narrowed to one specific sprint.
+    // A ticket's Sprints list is its full cumulative sprint history (every sprint it was ever
+    // added to, per Jira's sprint field) — not just sprints relevant now — so a long-lived
+    // carried-over ticket would otherwise drag in sprints from months earlier. Restrict to
+    // sprints whose own date range actually overlaps the loaded report window.
     private List<IssueSprint> AvailableSprints => _productIssues
         .Where(kv => SelectedProducts.Count == 0 || SelectedProducts.Contains(kv.Key))
         .SelectMany(kv => kv.Value)
         .SelectMany(i => i.Sprints)
-        .Where(s => s.Id != 0)
+        .Where(s => s.Id != 0 && SprintOverlapsWindow(s, Report?.StartDate, Report?.EndDate))
         .DistinctBy(s => s.Id)
         .OrderByDescending(s => s.StartDate)
         .ToList();
 
+    private static bool SprintOverlapsWindow(IssueSprint s, DateTime? winStart, DateTime? winEnd)
+    {
+        if (winStart is null || winEnd is null) return true;
+        if (s.StartDate is null || s.EndDate is null) return false;
+        return s.StartDate.Value.Date <= winEnd.Value.Date && s.EndDate.Value.Date >= winStart.Value.Date;
+    }
+
+    // Issues pulled in by the per-product/worklog-date-range fetch (LoadProductIssuesAsync) that
+    // have NEVER been added to any Jira sprint (i.SprintsCount == 0 — not just "not in the
+    // window", but zero sprint history) yet still logged time in this window for a selected
+    // product. These are counted in every metric on the page by default (the per-product fetch
+    // has no sprint clause at all) — surfaced here so the Sprint sub-filter can isolate or
+    // exclude them instead of silently blending them into "All sprints in this window".
+    private int NoSprintIssueCount => _productIssues
+        .Where(kv => SelectedProducts.Count == 0 || SelectedProducts.Contains(kv.Key))
+        .SelectMany(kv => kv.Value)
+        .Count(i => i.Sprints.Count == 0);
+
+    // Display label for the current Sprint sub-filter value — handles the "0" sentinel
+    // (no-sprint tickets) separately since AvailableSprints excludes Id 0 by construction.
+    private string SprintFilterLabel() => SelectedSprintId switch
+    {
+        null => "All sprints in window",
+        0    => "No sprint",
+        _    => AvailableSprints.FirstOrDefault(s => s.Id == SelectedSprintId)?.Name ?? "—"
+    };
+
     protected override async Task OnInitializedAsync()
     {
-        try { _roster = await RosterService.GetActiveAsync(); } catch { _roster = []; }
+        try { _roster = (await RosterService.GetActiveAsync()).Where(m => m.IncludeInDeliveryReports).ToList(); } catch { _roster = []; }
         try { _vacations = await RosterService.GetVacationsAsync(); } catch { _vacations = []; }
 
         _knownSprints = (await SprintConfigService.GetAllAsync())
@@ -242,6 +494,7 @@
         IsLoading = true; ErrorMessage = null; Report = null;
         _productIssues.Clear();
         SelectedSprintId = null;
+        _loadingStatus = "Loading sprint report…";
         StateHasChanged();
 
         try
@@ -256,7 +509,7 @@
             _renderCharts = true;
         }
         catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
-        finally { IsLoading = false; }
+        finally { IsLoading = false; _loadingStatus = null; }
     }
 
     private async Task LoadProductIssuesAsync()
@@ -274,9 +527,14 @@
             .GroupBy(ProductOf)
             .ToDictionary(g => g.Key, g => g.ToList());
 
+        var products = nativeByProduct.Keys.ToList();
         var byProduct = new Dictionary<string, List<SprintIssue>>();
-        foreach (var product in nativeByProduct.Keys)
+        for (var idx = 0; idx < products.Count; idx++)
         {
+            var product = products[idx];
+            _loadingStatus = $"Fetching {product} ({idx + 1} of {products.Count})…";
+            StateHasChanged();
+
             // Union with a worklog-date + product fetch so cross-sprint work is still counted
             // for products that aren't this sprint's own (e.g. Integrations logs continuously
             // without every ticket being added to this sprint) — sprint membership alone
@@ -302,25 +560,50 @@
         var combined = _productIssues
             .Where(kv => SelectedProducts.Count == 0 || SelectedProducts.Contains(kv.Key))
             .SelectMany(kv => kv.Value)
-            .Where(i => SelectedSprintId is null || i.Sprints.Any(s => s.Id == SelectedSprintId))
+            .Where(i => SelectedSprintId is null
+                || (SelectedSprintId == 0 ? i.Sprints.Count == 0 : i.Sprints.Any(s => s.Id == SelectedSprintId)))
             .DistinctBy(i => i.Key)
             .ToList();
 
         var taskIssues = combined.Where(DeliveryHealthCalculator.IsDeliveryType).ToList();
         var allIssues  = combined;
+        FilteredIssues = combined;
+
+        TaskProductBreakdown = taskIssues
+            .GroupBy(ProductOf)
+            .Select(g => (Product: g.Key, Total: g.Count(), Done: g.Count(i => i.StatusCategoryKey == "done")))
+            .OrderByDescending(g => g.Total)
+            .ToList();
 
         TaskMetrics = DeliveryHealthCalculator.ComputeForIssues(report, taskIssues, effectiveDaysRemaining, isTaskOnly: true, _roster, _vacations);
         AllMetrics  = DeliveryHealthCalculator.ComputeForIssues(report, allIssues, effectiveDaysRemaining, isTaskOnly: false, _roster, _vacations);
-        TaskScope   = DeliveryHealthCalculator.ComputeScopeComparison(report, taskIssues);
-        AllScope    = DeliveryHealthCalculator.ComputeScopeComparison(report, allIssues);
+        TaskScopeAdded = DeliveryHealthCalculator.ComputeScopeAddedStats(report, taskIssues);
+        AllScopeAdded  = DeliveryHealthCalculator.ComputeScopeAddedStats(report, allIssues);
+        EpicBreadth    = DeliveryHealthCalculator.ComputeEpicBreadthStats(report, allIssues);
         TaskBurndown      = DeliveryHealthCalculator.ComputeBurndown(report, taskIssues);
         AllBurndown       = DeliveryHealthCalculator.ComputeBurndown(report, allIssues);
         TaskIdealBurndown = DeliveryHealthCalculator.ComputeIdealBurndown(report, taskIssues);
         AllIdealBurndown  = DeliveryHealthCalculator.ComputeIdealBurndown(report, allIssues);
         TaskHoursPerDay   = DeliveryHealthCalculator.ComputeHoursPerDay(report, taskIssues);
         AllHoursPerDay    = DeliveryHealthCalculator.ComputeHoursPerDay(report, allIssues);
+        TaskEstimationPoints = DeliveryHealthCalculator.ComputeEstimationPoints(taskIssues);
+        AllEstimationPoints  = DeliveryHealthCalculator.ComputeEstimationPoints(allIssues);
+        TaskVelocitySparkline = DeliveryHealthCalculator.ComputeVelocitySparkline(report, taskIssues);
+        AllVelocitySparkline  = DeliveryHealthCalculator.ComputeVelocitySparkline(report, allIssues);
         AllBugSplit       = DeliveryHealthCalculator.ComputeBugFeatureSplit(report, allIssues);
         AllBugOriginSplit = DeliveryHealthCalculator.ComputeBugOriginSplit(report, allIssues);
+
+        var bugsInScope = allIssues.Where(DeliveryHealthCalculator.IsBugLike).ToList();
+        var featuresInScope = allIssues.Where(DeliveryHealthCalculator.IsDeliveryType).ToList();
+        BugsByEpic     = DeliveryHealthCalculator.ComputeIssuesByEpic(report, bugsInScope);
+        FeaturesByEpic = DeliveryHealthCalculator.ComputeIssuesByEpic(report, featuresInScope);
+
+        var supportLinkedBugs = bugsInScope.Where(DeliveryHealthCalculator.IsSupportLinkedBug).ToList();
+        SupportBugsByEpic           = DeliveryHealthCalculator.ComputeIssuesByEpic(report, supportLinkedBugs);
+        SupportBugAvgEffortHours    = DeliveryHealthCalculator.AvgHoursToConclude(report, supportLinkedBugs);
+        SupportBugAvgEffortOngoingHours = DeliveryHealthCalculator.AvgHoursOngoing(report, supportLinkedBugs);
+        SupportBugPriorityBreakdown = DeliveryHealthCalculator.ComputePriorityBreakdown(supportLinkedBugs);
+        SupportBugTypeSplitStat     = DeliveryHealthCalculator.ComputeBugVsRedesignSplit(supportLinkedBugs);
     }
 
     private void ToggleProduct(string name)
@@ -355,6 +638,421 @@
         _renderCharts = true;
     }
 
+    private void OpenTicketsModal() => _showTicketsModal = true;
+    private void CloseTicketsModal() => _showTicketsModal = false;
+
+    private double IssueWindowHours(SprintIssue i) =>
+        Report is null ? 0 : DeliveryHealthCalculator.SprintWindowHours([i], Report.StartDate, Report.EndDate);
+
+    // ── Excel export ── one workbook: KPI overview, every chart on the page as an image,
+    // the product breakdown, bug/feature detail, and the full filtered ticket list — so a
+    // director can get the whole report without opening the app.
+    private static readonly (string CanvasId, string Title)[] ChartExports =
+    [
+        ("chart-status-task",   "Sprint Status — Delivery Work"),
+        ("chart-status-all",    "Sprint Status — All Issue Types"),
+        ("chart-burndown-task", "Delivery Burndown — Delivery Work"),
+        ("chart-burndown-all",  "Delivery Burndown — All Issue Types"),
+        ("chart-hours-task",    "Hours Logged per Day — Delivery Work"),
+        ("chart-hours-all",     "Hours Logged per Day — All Issue Types"),
+        ("chart-estimation-task", "Estimation Accuracy — Delivery Work"),
+        ("chart-estimation-all",  "Estimation Accuracy — All Issue Types"),
+    ];
+
+    private async Task ExportToExcel()
+    {
+        if (Report is null || TaskMetrics is null || AllMetrics is null) return;
+
+        IsExporting = true; StateHasChanged();
+        try
+        {
+            using var wb = new XLWorkbook();
+            var sprintLabel = Report.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}";
+            var dateRangeLabel = Report.StartDate.HasValue && Report.EndDate.HasValue
+                ? $"{Report.StartDate:MMM d, yyyy} – {Report.EndDate:MMM d, yyyy}"
+                : "—";
+            var productLabel = SelectedProducts.Count == AllProducts.Count
+                ? "All products"
+                : (SelectedProducts.Count == 0 ? "(none selected)" : string.Join(", ", SelectedProducts.Order()));
+            var sprintFilterLabel = SprintFilterLabel();
+            var exportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+
+            BuildOverviewSheet(wb, sprintLabel, dateRangeLabel, productLabel, sprintFilterLabel, exportedAt);
+            await BuildChartsSheetAsync(wb);
+            BuildProductsSheet(wb);
+            BuildBugFeatureSheet(wb);
+            BuildTicketsSheet(wb);
+
+            using var ms = new MemoryStream();
+            wb.SaveAs(ms);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+            var fileLabel = sprintLabel.Replace(" ", "_").Replace("/", "-").Replace(",", "");
+            var fileName = $"DeliveryReport_{fileLabel}_{DateTime.Today:yyyyMMdd}.xlsx";
+            const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
+        }
+        catch (Exception ex) { ErrorMessage = $"Export failed: {ex.Message}"; }
+        finally { IsExporting = false; }
+    }
+
+    // Snapshots the report body (everything but the sprint/product/sprint-filter controls,
+    // marked with the dr-export-skip class) as a standalone .html file — charts are swapped
+    // for static PNGs client-side since a <canvas> element's pixels aren't part of the DOM.
+    private async Task ExportToHtml()
+    {
+        if (Report is null) return;
+
+        IsExportingHtml = true; StateHasChanged();
+        try
+        {
+            var sprintLabel = Report.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}";
+            var fileLabel = sprintLabel.Replace(" ", "_").Replace("/", "-").Replace(",", "");
+            var fileName = $"DeliveryReport_{fileLabel}_{DateTime.Today:yyyyMMdd}.html";
+            await JS.InvokeVoidAsync("exportElementAsHtml", "dr-report-root", fileName,
+                ChartExports.Select(c => c.CanvasId).ToArray(), $"Delivery Report — {sprintLabel}");
+        }
+        catch (Exception ex) { ErrorMessage = $"HTML export failed: {ex.Message}"; }
+        finally { IsExportingHtml = false; }
+    }
+
+    // A smaller, single-sheet export for a quick share: just Bug vs Feature Split, Bug Origin,
+    // and Planned vs Worked + Delivery Burndown for Delivery Work — no epic tables, no ticket
+    // list, no All Issue Types section.
+    private async Task ExportToExcelCompact()
+    {
+        if (Report is null) return;
+
+        IsExportingCompact = true; StateHasChanged();
+        try
+        {
+            using var wb = new XLWorkbook();
+            var sprintLabel = Report.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}";
+            var dateRangeLabel = Report.StartDate.HasValue && Report.EndDate.HasValue
+                ? $"{Report.StartDate:MMM d, yyyy} – {Report.EndDate:MMM d, yyyy}"
+                : "—";
+            var productLabel = SelectedProducts.Count == AllProducts.Count
+                ? "All products"
+                : (SelectedProducts.Count == 0 ? "(none selected)" : string.Join(", ", SelectedProducts.Order()));
+            var exportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
+
+            await BuildCompactSheetAsync(wb, sprintLabel, dateRangeLabel, productLabel, exportedAt);
+
+            using var ms = new MemoryStream();
+            wb.SaveAs(ms);
+            var base64 = Convert.ToBase64String(ms.ToArray());
+            var fileLabel = sprintLabel.Replace(" ", "_").Replace("/", "-").Replace(",", "");
+            var fileName = $"DeliveryReport_Compact_{fileLabel}_{DateTime.Today:yyyyMMdd}.xlsx";
+            const string mime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            await JS.InvokeVoidAsync("downloadBase64File", base64, fileName, mime);
+        }
+        catch (Exception ex) { ErrorMessage = $"Compact export failed: {ex.Message}"; }
+        finally { IsExportingCompact = false; }
+    }
+
+    private async Task BuildCompactSheetAsync(XLWorkbook wb, string sprintLabel, string dateRangeLabel, string productLabel, string exportedAt)
+    {
+        var ws = wb.Worksheets.Add("Summary");
+        int row = 1;
+
+        void Meta(string label, string value)
+        {
+            var lc = ws.Cell(row, 1); lc.Value = label; StyleMetaLabel(lc);
+            ws.Cell(row, 2).Value = value;
+            row++;
+        }
+
+        void SectionTitle(string title)
+        {
+            var c = ws.Cell(row, 1); c.Value = title; c.Style.Font.Bold = true; c.Style.Font.FontSize = 13;
+            row++;
+        }
+
+        Meta("Sprint", sprintLabel);
+        Meta("Date Range", dateRangeLabel);
+        Meta("Products", productLabel);
+        Meta("Exported", exportedAt);
+        row++;
+
+        if (AllBugSplit is not null)
+        {
+            SectionTitle("Bug vs Feature Split");
+            Meta("Bug %", $"{AllBugSplit.BugPct:F0}%");
+            Meta("Bugs", $"{AllBugSplit.BugCount} issues · {AllBugSplit.BugHours:F0}h logged");
+            Meta("Feature / Task", $"{AllBugSplit.FeatureCount} issues · {AllBugSplit.FeatureHours:F0}h logged");
+            row++;
+        }
+
+        if (AllBugOriginSplit is not null && (AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) > 0)
+        {
+            SectionTitle("Bug Origin");
+            Meta("Support-linked %", $"{AllBugOriginSplit.SupportLinkedPct:F0}%");
+            Meta("JSSUPPORT-linked", $"{AllBugOriginSplit.SupportLinkedCount} bugs · {AllBugOriginSplit.SupportLinkedHours:F0}h logged");
+            Meta("Feature-found", $"{AllBugOriginSplit.FeatureFoundCount} bugs · {AllBugOriginSplit.FeatureFoundHours:F0}h logged");
+            row++;
+        }
+
+        if (TaskMetrics is not null)
+        {
+            var t = TaskMetrics;
+            var delta = t.SprintWindowLoggedHours - t.PlannedHours;
+            var deltaPct = t.PlannedHours > 0 ? Math.Abs(delta) / t.PlannedHours * 100 : 0;
+            SectionTitle("Planned vs Worked — Delivery Work");
+            Meta("Planned", $"{t.PlannedHours:F0}h");
+            Meta("Logged", $"{t.SprintWindowLoggedHours:F0}h");
+            Meta("Delta", delta > 0 ? $"+{delta:F0}h ({deltaPct:F0}% over)" : delta < 0 ? $"{delta:F0}h ({deltaPct:F0}% under)" : "on plan");
+            row++;
+        }
+
+        SectionTitle("Delivery Burndown — Delivery Work");
+        string? dataUrl = null;
+        try { dataUrl = await JS.InvokeAsync<string?>("getChartImage", "chart-burndown-task"); } catch { }
+
+        if (!string.IsNullOrEmpty(dataUrl))
+        {
+            var comma = dataUrl.IndexOf(',');
+            var base64Img = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
+            var bytes = Convert.FromBase64String(base64Img);
+            using var imgStream = new MemoryStream(bytes);
+            ws.AddPicture(imgStream, XLPictureFormat.Png)
+              .MoveTo(ws.Cell(row, 1))
+              .WithSize(640, 340);
+        }
+        else
+        {
+            ws.Cell(row, 1).Value = "(chart not available — no data for current filters)";
+        }
+
+        ws.Columns().AdjustToContents();
+    }
+
+    private void BuildOverviewSheet(XLWorkbook wb, string sprintLabel, string dateRangeLabel, string productLabel, string sprintFilterLabel, string exportedAt)
+    {
+        var ws = wb.Worksheets.Add("Overview");
+        int row = 1;
+        void Meta(string label, string value)
+        {
+            var lc = ws.Cell(row, 1); lc.Value = label; StyleMetaLabel(lc);
+            ws.Cell(row, 2).Value = value;
+            row++;
+        }
+
+        Meta("Sprint", sprintLabel);
+        Meta("Date Range", dateRangeLabel);
+        Meta("Products", productLabel);
+        Meta("Sprint Filter", sprintFilterLabel);
+        Meta("Exported", exportedAt);
+        row++;
+
+        var h1 = ws.Cell(row, 1); h1.Value = "Metric";           StyleHeaderCell(h1);
+        var h2 = ws.Cell(row, 2); h2.Value = "Delivery Work";    StyleHeaderCell(h2);
+        var h3 = ws.Cell(row, 3); h3.Value = "All Issue Types";  StyleHeaderCell(h3);
+        row++;
+
+        void Kpi(string label, string taskVal, string allVal)
+        {
+            ws.Cell(row, 1).Value = label; ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 2).Value = taskVal;
+            ws.Cell(row, 3).Value = allVal;
+            row++;
+        }
+
+        var t = TaskMetrics!; var a = AllMetrics!;
+        Kpi("Sprint Health Score",         $"{t.Score} ({t.Band})", $"{a.Score} ({a.Band})");
+        Kpi("Message",                     t.Message, a.Message);
+        Kpi("Time Elapsed",                $"{t.TimeElapsedPct:F0}%", $"{a.TimeElapsedPct:F0}%");
+        Kpi("Completion",                  $"{t.CompletionPct:F0}%", $"{a.CompletionPct:F0}%");
+        Kpi("Done / In Progress / To Do",  $"{t.DoneCount} / {t.InProgressCount} / {t.ToDoCount}", $"{a.DoneCount} / {a.InProgressCount} / {a.ToDoCount}");
+        Kpi("Planned Hours",               $"{t.PlannedHours:F0}h", $"{a.PlannedHours:F0}h");
+        Kpi("Full-Sprint Capacity",        $"{t.FullSprintCapacityHours:F0}h", $"{a.FullSprintCapacityHours:F0}h");
+        Kpi("Remaining Capacity",          $"{t.CapacityHours:F0}h", $"{a.CapacityHours:F0}h");
+        Kpi("Remaining Work",              $"{t.RemainingHours:F0}h", $"{a.RemainingHours:F0}h");
+        Kpi("Logged Hours (window)",       $"{t.SprintWindowLoggedHours:F0}h", $"{a.SprintWindowLoggedHours:F0}h");
+        Kpi("Hours / Workday",             $"{t.HoursLoggedPerWorkday:F1}h", $"{a.HoursLoggedPerWorkday:F1}h");
+        Kpi("Projected Finish",            $"{t.ProjectedFinishHours:F0}h", $"{a.ProjectedFinishHours:F0}h");
+        Kpi("Idle Tasks",                  $"{t.IdleActiveCount} of {t.InProgressCount}", $"{a.IdleActiveCount} of {a.InProgressCount}");
+        Kpi("Stale (2d+ no worklog)",      t.StaleCount.ToString(), a.StaleCount.ToString());
+        Kpi("Velocity / day (needed)",     $"{t.ThroughputPerDay:F1} ({t.NeededThroughputPerDay:F1})", $"{a.ThroughputPerDay:F1} ({a.NeededThroughputPerDay:F1})");
+        Kpi("Unassigned",                  t.UnassignedCount.ToString(), a.UnassignedCount.ToString());
+        Kpi("Estimation Coverage",         $"{t.EstimationCoveragePct:F0}%", $"{a.EstimationCoveragePct:F0}%");
+        if (AllScopeAdded is not null)
+        {
+            var pctUnplanned = a.FullSprintCapacityHours > 0 ? AllScopeAdded.TimeLoggedHours / a.FullSprintCapacityHours * 100 : 0;
+            Kpi("Cost of Unplanned Work",  "—", $"{AllScopeAdded.TimeLoggedHours:F0}h ({pctUnplanned:F0}% of capacity)");
+        }
+
+        ws.Columns().AdjustToContents();
+    }
+
+    private async Task BuildChartsSheetAsync(XLWorkbook wb)
+    {
+        var ws = wb.Worksheets.Add("Charts");
+        int row = 1;
+        foreach (var (canvasId, title) in ChartExports)
+        {
+            var titleCell = ws.Cell(row, 1);
+            titleCell.Value = title;
+            titleCell.Style.Font.Bold = true;
+            titleCell.Style.Font.FontSize = 13;
+            row++;
+
+            string? dataUrl = null;
+            try { dataUrl = await JS.InvokeAsync<string?>("getChartImage", canvasId); } catch { }
+
+            if (!string.IsNullOrEmpty(dataUrl))
+            {
+                var comma = dataUrl.IndexOf(',');
+                var base64Img = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
+                var bytes = Convert.FromBase64String(base64Img);
+                using var imgStream = new MemoryStream(bytes);
+                ws.AddPicture(imgStream, XLPictureFormat.Png)
+                  .MoveTo(ws.Cell(row, 1))
+                  .WithSize(640, 340);
+                row += 18;
+            }
+            else
+            {
+                ws.Cell(row, 1).Value = "(chart not available — no data for current filters)";
+                row += 1;
+            }
+            row += 2;
+        }
+        ws.Column(1).Width = 16;
+    }
+
+    private void BuildProductsSheet(XLWorkbook wb)
+    {
+        var ws = wb.Worksheets.Add("Products");
+        var h1 = ws.Cell(1, 1); h1.Value = "Product"; StyleHeaderCell(h1);
+        var h2 = ws.Cell(1, 2); h2.Value = "Tickets";  StyleHeaderCell(h2);
+        ws.SheetView.FreezeRows(1);
+
+        int row = 2;
+        foreach (var (name, count) in AllProducts)
+        {
+            if (row % 2 == 0) ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+            ws.Cell(row, 1).Value = name;
+            ws.Cell(row, 1).Style.Font.Bold = SelectedProducts.Contains(name);
+            ws.Cell(row, 2).Value = count;
+            row++;
+        }
+        if (AllProducts.Count > 0)
+        {
+            ws.Cell(row, 1).Value = "TOTAL"; ws.Cell(row, 1).Style.Font.Bold = true;
+            ws.Cell(row, 2).Value = AllProducts.Sum(p => p.Count); ws.Cell(row, 2).Style.Font.Bold = true;
+            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
+        }
+        ws.Columns().AdjustToContents();
+        ws.Row(1).Height = 22;
+    }
+
+    private void BuildBugFeatureSheet(XLWorkbook wb)
+    {
+        if (AllBugSplit is null) return;
+        var ws = wb.Worksheets.Add("Bug vs Feature");
+        int row = 1;
+
+        void Meta(string label, string value)
+        {
+            var lc = ws.Cell(row, 1); lc.Value = label; StyleMetaLabel(lc);
+            ws.Cell(row, 2).Value = value;
+            row++;
+        }
+
+        Meta("Bug %", $"{AllBugSplit.BugPct:F0}%");
+        Meta("Bugs", $"{AllBugSplit.BugCount} issues · {AllBugSplit.BugHours:F0}h logged");
+        Meta("Feature / Task", $"{AllBugSplit.FeatureCount} issues · {AllBugSplit.FeatureHours:F0}h logged");
+        if (AllBugOriginSplit is not null && (AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) > 0)
+        {
+            Meta("Support-linked %", $"{AllBugOriginSplit.SupportLinkedPct:F0}%");
+            Meta("JSSUPPORT-linked", $"{AllBugOriginSplit.SupportLinkedCount} bugs · {AllBugOriginSplit.SupportLinkedHours:F0}h logged");
+            Meta("Feature-found", $"{AllBugOriginSplit.FeatureFoundCount} bugs · {AllBugOriginSplit.FeatureFoundHours:F0}h logged");
+        }
+        row++;
+
+        void EpicTable(string title, List<DeliveryHealthCalculator.EpicBreakdownRow> rows)
+        {
+            if (rows.Count == 0) return;
+            var titleCell = ws.Cell(row, 1); titleCell.Value = title; titleCell.Style.Font.Bold = true; titleCell.Style.Font.FontSize = 13;
+            row++;
+            var hc1 = ws.Cell(row, 1); hc1.Value = "Epic";                 StyleHeaderCell(hc1);
+            var hc2 = ws.Cell(row, 2); hc2.Value = "Closed";               StyleHeaderCell(hc2);
+            var hc3 = ws.Cell(row, 3); hc3.Value = "Avg Effort (Closed)";  StyleHeaderCell(hc3);
+            var hc4 = ws.Cell(row, 4); hc4.Value = "Open";                 StyleHeaderCell(hc4);
+            var hc5 = ws.Cell(row, 5); hc5.Value = "Avg Effort (Open)";    StyleHeaderCell(hc5);
+            var hc6 = ws.Cell(row, 6); hc6.Value = "Hours";                StyleHeaderCell(hc6);
+            row++;
+            foreach (var r in rows)
+            {
+                ws.Cell(row, 1).Value = string.IsNullOrEmpty(r.EpicKey) ? r.EpicName : $"{r.EpicKey} {r.EpicName}";
+                ws.Cell(row, 2).Value = r.ClosedCount;
+                if (r.ClosedCount == 0) ws.Cell(row, 3).Value = ""; else ws.Cell(row, 3).Value = Math.Round(r.AvgEffortClosed, 1);
+                ws.Cell(row, 4).Value = r.OpenCount;
+                if (r.OpenCount == 0) ws.Cell(row, 5).Value = ""; else ws.Cell(row, 5).Value = Math.Round(r.AvgEffortOpen, 1);
+                ws.Cell(row, 6).Value = Math.Round(r.HoursLogged, 1);
+                row++;
+            }
+            row++;
+        }
+
+        EpicTable("Bugs by Epic", BugsByEpic);
+        EpicTable("Tasks by Epic", FeaturesByEpic);
+        EpicTable("JSSUPPORT-linked Bugs by Epic", SupportBugsByEpic);
+
+        if (SupportBugTypeSplitStat is not null)
+        {
+            Meta("Avg Effort to Conclude", $"{SupportBugAvgEffortHours:F1}h");
+            Meta("Avg Effort Ongoing (still open)", $"{SupportBugAvgEffortOngoingHours:F1}h");
+            Meta("Bug vs Redesign", $"Bug {SupportBugTypeSplitStat.BugTypeCount} · Redesign {SupportBugTypeSplitStat.RedesignTypeCount}");
+            if (SupportBugPriorityBreakdown.Count > 0)
+                Meta("Priority Breakdown", string.Join(", ", SupportBugPriorityBreakdown.Select(p => $"{p.Priority} ({p.Count})")));
+        }
+
+        ws.Columns().AdjustToContents();
+    }
+
+    private void BuildTicketsSheet(XLWorkbook wb)
+    {
+        var ws = wb.Worksheets.Add("Tickets");
+        var headers = new[] { "Key", "Epic", "Summary", "Product", "Type", "Status", "Assignee", "Priority", "Hours" };
+        for (int i = 0; i < headers.Length; i++) { var hc = ws.Cell(1, i + 1); hc.Value = headers[i]; StyleHeaderCell(hc); }
+        ws.SheetView.FreezeRows(1);
+
+        var baseUrl = Config["Jira:BaseUrl"]?.TrimEnd('/');
+        int row = 2;
+        foreach (var i in FilteredIssues.OrderBy(i => i.EpicName).ThenBy(i => i.Key))
+        {
+            if (row % 2 == 0) ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
+            var keyCell = ws.Cell(row, 1);
+            keyCell.Value = i.Key;
+            if (!string.IsNullOrEmpty(baseUrl)) keyCell.SetHyperlink(new XLHyperlink($"{baseUrl}/browse/{i.Key}"));
+            ws.Cell(row, 2).Value = i.EpicName;
+            ws.Cell(row, 3).Value = i.Summary;
+            ws.Cell(row, 4).Value = ProductOf(i);
+            ws.Cell(row, 5).Value = i.IssueType;
+            ws.Cell(row, 6).Value = i.Status;
+            ws.Cell(row, 7).Value = i.Assignee;
+            ws.Cell(row, 8).Value = i.Priority;
+            ws.Cell(row, 9).Value = Math.Round(IssueWindowHours(i), 1);
+            row++;
+        }
+        ws.Columns().AdjustToContents();
+        ws.Row(1).Height = 22;
+    }
+
+    private static void StyleHeaderCell(IXLCell cell)
+    {
+        cell.Style.Font.Bold = true;
+        cell.Style.Fill.BackgroundColor = XLColor.FromHtml("#1e3a5f");
+        cell.Style.Font.FontColor = XLColor.White;
+        cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+    }
+
+    private static void StyleMetaLabel(IXLCell cell)
+    {
+        cell.Style.Font.Bold = true;
+        cell.Style.Font.FontColor = XLColor.FromHtml("#6c757d");
+    }
+
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (_renderCharts && Report is not null && TaskMetrics is not null && AllMetrics is not null)
@@ -366,8 +1064,8 @@
             await RenderBurndownChart("chart-burndown-all", AllBurndown, AllIdealBurndown);
             await RenderHoursPerDayChart("chart-hours-task", TaskHoursPerDay);
             await RenderHoursPerDayChart("chart-hours-all", AllHoursPerDay);
-            if (TaskScope is not null) await RenderScopeChart("chart-scope-task", TaskScope);
-            if (AllScope is not null) await RenderScopeChart("chart-scope-all", AllScope);
+            await RenderEstimationScatter("chart-estimation-task", TaskEstimationPoints);
+            await RenderEstimationScatter("chart-estimation-all", AllEstimationPoints);
         }
     }
 
@@ -485,35 +1183,105 @@
         });
     }
 
-    private async Task RenderScopeChart(string canvasId, DeliveryHealthCalculator.ScopeComparison scope)
+    private async Task RenderEstimationScatter(string canvasId, List<DeliveryHealthCalculator.EstimationPoint> points)
     {
+        if (points.Count == 0) return;
+        var maxVal = Math.Max(1, points.Select(p => Math.Max(p.PlannedHours, p.ActualHours)).Max());
+        var diagMax = Math.Ceiling(maxVal / 5.0) * 5;
+
         await JS.InvokeVoidAsync("renderChart", canvasId, new
         {
-            type = "bar",
+            type = "scatter",
             data = new
             {
-                labels   = new[] { "Initial Scope", "Added During Sprint" },
                 datasets = new object[]
                 {
-                    new { label = "Done",   data = new[] { scope.Initial.Done,   scope.Added.Done   }, backgroundColor = "rgba(22,163,74,0.85)",  borderRadius = 4 },
-                    new { label = "Active", data = new[] { scope.Initial.Active, scope.Added.Active }, backgroundColor = "rgba(37,99,235,0.85)",  borderRadius = 4 },
-                    new { label = "To Do",  data = new[] { scope.Initial.ToDo,   scope.Added.ToDo   }, backgroundColor = "rgba(148,163,184,0.6)", borderRadius = 4 }
+                    new
+                    {
+                        type = "scatter",
+                        label = "Issues",
+                        data = points.Select(p => new { x = Math.Round(p.PlannedHours, 1), y = Math.Round(p.ActualHours, 1) }).ToArray(),
+                        backgroundColor = "rgba(37,99,235,0.65)",
+                        borderColor = "rgba(29,78,216,0.9)",
+                        pointRadius = 5, pointHoverRadius = 7
+                    },
+                    new
+                    {
+                        type = "line",
+                        label = "Perfect estimate (y = x)",
+                        data = new[] { new { x = 0.0, y = 0.0 }, new { x = diagMax, y = diagMax } },
+                        borderColor = "rgba(148,163,184,0.9)",
+                        backgroundColor = "transparent",
+                        borderDash = new[] { 6, 4 },
+                        pointRadius = 0, borderWidth = 2, fill = false
+                    }
                 }
             },
             options = new
             {
-                indexAxis = "y", responsive = true, maintainAspectRatio = false,
+                responsive = true, maintainAspectRatio = false,
                 plugins = new { legend = new { display = true, position = "top", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 8 } } },
-                scales  = new
+                scales = new
                 {
-                    x = new { stacked = true, beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } },
-                    y = new { stacked = true, grid = new { display = false } }
+                    x = new { type = "linear", beginAtZero = true, title = new { display = true, text = "Planned (h)" }, grid = new { color = "rgba(0,0,0,0.04)" } },
+                    y = new { type = "linear", beginAtZero = true, title = new { display = true, text = "Actual (h)" }, grid = new { color = "rgba(0,0,0,0.04)" } }
                 }
             }
         });
     }
 
-    private RenderFragment RenderSection(string title, string note, DeliveryHealthMetrics m, DeliveryHealthCalculator.ScopeComparison? scope, string idSuffix) =>
+    // Mirrors the sparkline pattern used on delivery-v3's Burn Rate card — kept as a local copy
+    // since the two pages have no shared code path by design (see DeliveryHealthCalculator.cs).
+    private static MarkupString SparklineSvg(List<double> values, string color)
+    {
+        if (values.Count < 2) return new MarkupString("");
+        var max = values.Max();
+        var min = values.Min();
+        var range = Math.Max(0.001, max - min);
+        const double w = 200, h = 36;
+        var step = w / (values.Count - 1);
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        var pts = string.Join(" ", values.Select((v, i) =>
+            $"{(i * step).ToString("F1", inv)},{(h - (v - min) / range * h).ToString("F1", inv)}"));
+        return new MarkupString(
+            $"<svg class=\"v2-spark\" viewBox=\"0 0 {w} {h}\" preserveAspectRatio=\"none\">" +
+            $"<polyline fill=\"none\" stroke=\"{color}\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" points=\"{pts}\"/>" +
+            $"<polyline fill=\"{color}\" fill-opacity=\"0.10\" stroke=\"none\" points=\"0,{h} {pts} {w},{h}\"/>" +
+            $"</svg>");
+    }
+
+    private RenderFragment RenderEpicTable(string title, string note, List<DeliveryHealthCalculator.EpicBreakdownRow> rows, bool skipInHtmlExport = false) =>
+    @<text>
+        <div class="@(skipInHtmlExport ? "dr-export-skip" : "")">
+            <div class="v2-divider"></div>
+            <div class="v2-section-title" style="margin-top:4px"><i class="bi bi-diagram-2" style="color:var(--v2-brand)"></i>@title <span class="v2-section-note">@note</span></div>
+            <div class="v2-table-wrap" style="max-height:260px;overflow-y:auto">
+                <table class="v2-table">
+                    <thead>
+                        <tr>
+                            <th>Epic</th>
+                            <th class="v2-table-num">Closed</th>
+                            <th class="v2-table-num">Open</th>
+                            <th class="v2-table-num">Hours</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var row in rows)
+                        {
+                            <tr>
+                                <td class="v2-truncate" style="max-width:320px" title="@row.EpicName">@(string.IsNullOrEmpty(row.EpicKey) ? row.EpicName : $"{row.EpicKey} {row.EpicName}")</td>
+                                <td class="v2-table-num">@row.ClosedCount@(row.ClosedCount == 0 ? "" : $" ({row.AvgEffortClosed:F1}h avg)")</td>
+                                <td class="v2-table-num">@row.OpenCount@(row.OpenCount == 0 ? "" : $" ({row.AvgEffortOpen:F1}h avg)")</td>
+                                <td class="v2-table-num">@row.HoursLogged.ToString("F0")h</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </text>;
+
+    private RenderFragment RenderSection(string title, string note, DeliveryHealthMetrics m, DeliveryHealthCalculator.ScopeAddedStats? scopeAdded, List<double> velocitySparkline, List<(string Product, int Total, int Done)>? productBreakdown, string idSuffix) =>
     @<text>
         <div class="v2-section-title" style="margin-top:20px"><i class="bi bi-collection"></i>@title <span class="v2-section-note">@note</span></div>
 
@@ -558,44 +1326,43 @@
                     <div class="v2-bar-fill @(m.CompletionBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")" style="width:@Math.Min((int)m.CompletionPct, 100)%"></div>
                 </div>
                 <div class="v2-kpi-sub">@m.DoneCount of @m.TotalCount done · @m.InProgressCount active · @m.ToDoCount pending</div>
+                @if (productBreakdown is { Count: > 0 })
+                {
+                    <div style="display:flex;flex-direction:column;gap:4px;margin-top:10px;padding-top:10px;border-top:1px solid var(--v2-divider)">
+                        @foreach (var p in productBreakdown)
+                        {
+                            <div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--v2-ink-3)">
+                                <span class="v2-truncate" style="max-width:140px">@p.Product</span>
+                                <span style="font-weight:600;color:var(--v2-ink-2)">@p.Done of @p.Total done</span>
+                            </div>
+                        }
+                    </div>
+                }
             </div>
 
-            <div class="v2-kpi @(m.PlanOverCommit ? "v2-kpi-danger" : "")">
-                <div class="v2-kpi-head"><i class="bi bi-clipboard-data"></i>Planned vs Capacity</div>
-                <div class="v2-kpi-value">@($"{m.PlannedHours:F0}h")<span class="v2-kpi-of">of @($"{m.FullSprintCapacityHours:F0}h")</span></div>
+            @{
+                var pwDelta = m.SprintWindowLoggedHours - m.PlannedHours; // positive = over plan, negative = under
+                var pwDeltaPct = m.PlannedHours > 0 ? Math.Abs(pwDelta) / m.PlannedHours * 100 : 0;
+                var pwBand = m.PlannedHours <= 0 ? "neutral"
+                    : m.SprintWindowLoggedHours > m.PlannedHours * 1.15 ? "danger"
+                    : m.SprintWindowLoggedHours > m.PlannedHours ? "warn" : "success";
+            }
+            <div class="v2-kpi @(pwBand == "neutral" ? "v2-kpi-neutral" : $"v2-kpi-{pwBand}")">
+                <div class="v2-kpi-head"><i class="bi bi-clipboard-data"></i>Planned vs Worked</div>
+                <div class="v2-kpi-value">@($"{m.PlannedHours:F0}h")<span class="v2-kpi-of">planned</span></div>
                 <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(m.PlanOverCommit ? "v2-bar-fill-danger" : "v2-bar-fill-success")" style="width:@(m.FullSprintCapacityHours > 0 ? Math.Min((int)(m.PlannedHours / m.FullSprintCapacityHours * 100), 100) : 0)%"></div>
+                    <div class="v2-bar-fill v2-bar-fill-@(pwBand == "neutral" ? "success" : pwBand)" style="width:@(m.PlannedHours > 0 ? Math.Min((int)(m.SprintWindowLoggedHours / m.PlannedHours * 100), 100) : 0)%"></div>
                 </div>
-                <div class="v2-kpi-sub">@(m.PlanOverCommit ? $"⚠ over full-sprint capacity by {(m.PlannedHours - m.FullSprintCapacityHours):F0}h" : "within full-sprint capacity")</div>
-            </div>
-
-            <div class="v2-kpi @(m.OverCapacity ? "v2-kpi-danger" : "v2-kpi-success")">
-                <div class="v2-kpi-head"><i class="bi bi-clock-history"></i>Capacity</div>
-                <div class="v2-kpi-value @(m.OverCapacity ? "v2-text-danger" : "")">@($"{m.CapacityHours:F0}h")<span class="v2-kpi-of">vs @($"{m.RemainingHours:F0}h")</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(m.OverCapacity ? "v2-bar-fill-danger" : "v2-bar-fill-success")" style="width:@(m.CapacityHours > 0 ? Math.Min((int)(m.RemainingHours / m.CapacityHours * 100), 100) : 0)%"></div>
-                </div>
-                <div class="v2-kpi-sub">@(m.OverCapacity ? $"⚠ {(m.RemainingHours - m.CapacityHours):F0}h over capacity" : $"+{(m.CapacityHours - m.RemainingHours):F0}h buffer")</div>
-            </div>
-
-            <div class="v2-kpi v2-kpi-neutral">
-                <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Logged Hours</div>
-                <div class="v2-kpi-value">@($"{m.SprintWindowLoggedHours:F0}h")<span class="v2-kpi-of">logged this sprint</span></div>
-                <div class="v2-kpi-sub">@($"{m.HoursLoggedPerWorkday:F1}h") / workday · projected @($"{m.ProjectedFinishHours:F0}h") by end</div>
-            </div>
-
-            <div class="v2-kpi @(m.IdleActiveCount == 0 ? "v2-kpi-success" : m.IdleActiveCount > m.InProgressCount * 0.5 ? "v2-kpi-danger" : "v2-kpi-warn")">
-                <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Idle Tasks</div>
-                <div class="v2-kpi-value">@m.IdleActiveCount<span class="v2-kpi-of">of @m.InProgressCount active</span></div>
-                <div class="v2-kpi-sub">@m.StaleCount stuck 2d+ without a worklog</div>
+                <div class="v2-kpi-sub">@($"{m.SprintWindowLoggedHours:F0}h") logged · @(pwDelta > 0 ? $"+{pwDelta:F0}h ({pwDeltaPct:F0}% over)" : pwDelta < 0 ? $"{pwDelta:F0}h ({pwDeltaPct:F0}% under)" : "on plan")</div>
             </div>
 
             <div class="v2-kpi @(m.ThroughputBehind ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-speedometer2"></i>Velocity</div>
                 <div class="v2-kpi-value">@m.ThroughputPerDay.ToString("F1")<span class="v2-kpi-of">of @m.NeededThroughputPerDay.ToString("F1") needed / day</span></div>
-                <div class="v2-bar" style="margin-top:8px">
-                    <div class="v2-bar-fill @(m.ThroughputBehind ? "v2-bar-fill-warn" : "v2-bar-fill-success")" style="width:@(m.NeededThroughputPerDay > 0 ? Math.Min((int)(m.ThroughputPerDay / m.NeededThroughputPerDay * 100), 100) : 100)%"></div>
-                </div>
+                @if (velocitySparkline.Count > 1)
+                {
+                    @SparklineSvg(velocitySparkline, m.ThroughputBehind ? "#b45309" : "#16a34a")
+                }
                 <div class="v2-kpi-sub">@(m.ThroughputBehind ? "behind the pace needed to finish" : "on pace to finish")</div>
             </div>
         </div>
@@ -608,15 +1375,25 @@
                 </div>
             </div>
             <div class="v2-card">
-                <div class="v2-section-title"><i class="bi bi-arrows-collapse" style="color:#0ea5e9"></i>Scope Change <span class="v2-section-note">initial vs added during sprint</span></div>
-                <div style="height:240px;position:relative">
-                    <canvas id="chart-scope-@idSuffix"></canvas>
-                </div>
-                @if (scope is not null)
+                <div class="v2-section-title"><i class="bi bi-arrows-collapse" style="color:#0ea5e9"></i>Scope Added <span class="v2-section-note">work added after the sprint started</span></div>
+                @if (scopeAdded is not null)
                 {
-                    <div class="v2-kpi-sub" style="margin-top:8px">
-                        Initial @scope.Initial.CompletionPct.ToString("F0")% done (@scope.Initial.Total) ·
-                        Added @scope.Added.CompletionPct.ToString("F0")% done (@scope.Added.Total)
+                    <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+                        <div class="v2-row">
+                            <span class="v2-chip v2-chip-pri-high">Tasks Added</span>
+                            <span class="v2-row-value">@scopeAdded.AddedCount &middot; @scopeAdded.PctOfSprintScope.ToString("F0")% of sprint scope</span>
+                        </div>
+                        @if (scopeAdded.TypeBreakdown.Count > 0)
+                        {
+                            <div style="display:flex;flex-wrap:wrap;gap:6px">
+                                @foreach (var t in scopeAdded.TypeBreakdown)
+                                {
+                                    <span class="v2-chip v2-chip-@(t.IssueType.ToLower())">@t.IssueType @t.Count</span>
+                                }
+                            </div>
+                        }
+                        <div class="v2-row"><span class="v2-chip v2-chip-story">Added Scope (h)</span><span class="v2-row-value">@($"{scopeAdded.AddedScopeHours:F0}h") planned</span></div>
+                        <div class="v2-row"><span class="v2-chip v2-chip-task">Time Logged</span><span class="v2-row-value">@($"{scopeAdded.TimeLoggedHours:F0}h") logged on added-scope issues</span></div>
                     </div>
                 }
             </div>
@@ -624,7 +1401,10 @@
 
         <div class="v2-grid-2" style="margin-top:12px">
             <div class="v2-card">
-                <div class="v2-section-title"><i class="bi bi-graph-down-arrow" style="color:var(--v2-brand-3)"></i>Delivery Burndown <span class="v2-section-note">remaining estimate — actual vs ideal</span></div>
+                <div class="v2-section-title">
+                    <i class="bi bi-graph-down-arrow" style="color:var(--v2-brand-3)"></i>Delivery Burndown <span class="v2-section-note">remaining estimate — actual vs ideal</span>
+                    <i class="bi bi-info-circle dr-info-icon" title="Remaining = each issue's original estimate minus hours already logged against it (never below zero), dropping to zero once the issue is marked Done. It's not a straight subtraction of total hours logged — an issue's remaining only falls when work is logged on that specific issue, or the issue resolves."></i>
+                </div>
                 <div style="height:240px;position:relative">
                     <canvas id="chart-burndown-@idSuffix"></canvas>
                 </div>
@@ -634,6 +1414,13 @@
                 <div style="height:240px;position:relative">
                     <canvas id="chart-hours-@idSuffix"></canvas>
                 </div>
+            </div>
+        </div>
+
+        <div class="v2-card" style="margin-top:12px">
+            <div class="v2-section-title"><i class="bi bi-graph-up" style="color:var(--v2-brand)"></i>Estimation Accuracy <span class="v2-section-note">planned vs actual hours per issue — above the diagonal = underestimated</span></div>
+            <div style="height:300px;position:relative">
+                <canvas id="chart-estimation-@idSuffix"></canvas>
             </div>
         </div>
     </text>;
@@ -656,4 +1443,17 @@
     .dr-link-btn  { background:none; border:none; cursor:pointer; font-size:11px; font-weight:600; color:var(--v2-brand); padding:0; }
     .dr-link-btn:hover { text-decoration:underline; }
     .dr-dot-sep   { font-size:10px; color:var(--v2-ink-4); }
+
+    .dr-export-btn {
+        background: var(--v2-success-soft); border: 1px solid var(--v2-success-border); cursor: pointer;
+        font-size: 12px; font-weight: 600; color: #15803d;
+        padding: 7px 14px; border-radius: 8px; display: flex; align-items: center; gap: 6px;
+    }
+    .dr-export-btn:hover:not(:disabled) { background: #d1fae5; }
+    .dr-export-btn:disabled { opacity: .5; cursor: default; }
+    .dr-export-btn-compact { background: var(--v2-brand-soft); border-color: var(--v2-brand); color: var(--v2-brand); }
+    .dr-export-btn-compact:hover:not(:disabled) { background: var(--v2-brand-soft); filter: brightness(0.97); }
+
+    .dr-info-icon { color:var(--v2-ink-4); cursor:help; font-size:12px; margin-left:2px; }
+    .dr-info-icon:hover { color:var(--v2-brand); }
 </style>
