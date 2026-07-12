@@ -45,7 +45,7 @@
                 <button class="v2-btn v2-btn-ghost" @onclick="ReloadAsync" disabled="@(_loading || _epicKeys.Count == 0)" title="Reload — closed sprints from the local cache, only recent changes from Jira">
                     @if (_loading) { <span class="v2-spin"></span> } else { <i class="bi bi-arrow-repeat"></i> }
                 </button>
-                <button class="v2-btn v2-btn-ghost" @onclick="ForceReloadAsync" disabled="@(_loading || _epicKeys.Count == 0)" title="Force full re-fetch from Jira (rebuilds the cache — slow)">
+                <button class="v2-btn v2-btn-ghost" @onclick="ForceReloadAsync" disabled="@(_loading || _epicKeys.Count == 0)" title="Force full re-fetch from Jira for the current sprint's epic (rebuilds the cache — slow). Settled/historical epics are frozen and stay protected even with this — their permanent end-of-sprint snapshot is never overwritten.">
                     <i class="bi bi-cloud-arrow-down"></i>
                 </button>
             </div>
@@ -393,12 +393,39 @@
             var redesignTotal = prioRedesigns.Sum(r => r.Total);
             var sprintTotal   = BugsInSprint(s.Name).Count();
             var expanded = _expandedSprints.Contains(s.Name);
+            var cfg = _configs.FirstOrDefault(c => ConfigName(c) == s.Name);
+            var epicKey = cfg?.EpicKey?.Trim().ToUpperInvariant();
+            var epicFrozen = epicKey is not null && _epicFrozen.TryGetValue(epicKey, out var ef) && ef;
             <div class="v2-card st-sprint-card">
-                <button class="st-sprint-head @(expanded ? "open" : "")" @onclick="() => ToggleSprint(s.Name)">
-                    <i class="bi bi-chevron-@(expanded ? "down" : "right") st-sprint-chev"></i>
-                    <span class="st-sprint-name"><i class="bi bi-calendar3"></i> @s.Name</span>
-                    <span class="st-scope">@s.Start.ToString("dd MMM") – @s.End.ToString("dd MMM yy") · @sprintTotal ticket@(sprintTotal == 1 ? "" : "s") · @bugTotal bug@(bugTotal == 1 ? "" : "s") · @redesignTotal redesign@(redesignTotal == 1 ? "" : "s")</span>
-                </button>
+                <div class="st-sprint-head @(expanded ? "open" : "")">
+                    <button style="flex:1;display:inline-flex;align-items:center;gap:10px;background:none;border:none;cursor:pointer;font:inherit;text-align:left;color:inherit;padding:0" @onclick="() => ToggleSprint(s.Name)">
+                        <i class="bi bi-chevron-@(expanded ? "down" : "right") st-sprint-chev"></i>
+                        <span class="st-sprint-name"><i class="bi bi-calendar3"></i> @s.Name</span>
+                        <span class="st-scope">@s.Start.ToString("dd MMM") – @s.End.ToString("dd MMM yy") · @sprintTotal ticket@(sprintTotal == 1 ? "" : "s") · @bugTotal bug@(bugTotal == 1 ? "" : "s") · @redesignTotal redesign@(redesignTotal == 1 ? "" : "s")</span>
+                    </button>
+                    @if (!string.IsNullOrEmpty(epicKey))
+                    {
+                        @if (epicFrozen)
+                        {
+                            <span class="v2-pill v2-pill-info" title="Frozen — this epic's bugs are a permanent snapshot and no longer update from Jira"><i class="bi bi-lock-fill"></i> Frozen</span>
+                            @if (_epicManuallyFrozen.TryGetValue(epicKey, out var mf) && mf)
+                            {
+                                <button class="v2-btn v2-btn-ghost" style="padding:4px 8px" @onclick="() => ReopenEpicSprint(epicKey)" disabled="@_loading"
+                                        title="Reopen — resumes merging live updates from Jira on next reload">
+                                    <i class="bi bi-unlock"></i>
+                                </button>
+                            }
+                        }
+                        else
+                        {
+                            <span class="v2-pill v2-pill-warn" title="Live — Force Reload will fully re-fetch this epic's bugs from Jira, which can silently drop any bug re-parented to a different epic"><i class="bi bi-unlock-fill"></i> Live</span>
+                            <button class="v2-btn v2-btn-ghost" style="padding:4px 8px" @onclick="() => CloseEpicSprint(epicKey)" disabled="@_loading"
+                                    title="Close Sprint — locks in this epic's bugs as a permanent snapshot, so re-parented bugs can't silently disappear">
+                                <i class="bi bi-lock"></i> Close Sprint
+                            </button>
+                        }
+                    }
+                </div>
                 @if (expanded)
                 {
                     var custRows    = SprintByCustomer(s.Name, s.Start, s.End);
@@ -1044,6 +1071,8 @@
 
     private bool _forceReload;
     private DateTime? _oldestSync;
+    private Dictionary<string, bool> _epicFrozen = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, bool> _epicManuallyFrozen = new(StringComparer.OrdinalIgnoreCase);
 
     private Task ReloadAsync() => ReloadCoreAsync(force: false);
 
@@ -1133,6 +1162,8 @@
                 .Max();
             var report = await JiraService.GetSupportEpicBugsAsync(epicKey, sprintEnd, _forceReload);
             TrackSync(report.SyncedAt);
+            _epicManuallyFrozen[epicKey] = report.ManuallyFrozen;
+            _epicFrozen[epicKey] = await JiraService.IsSupportEpicFrozenAsync(epicKey, sprintEnd);
             return report.Issues ?? new();
         }
         catch
@@ -1145,6 +1176,53 @@
             Interlocked.Increment(ref _epicsLoaded);
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    // "Close Sprint" — manually freezes the epicbugs:{epicKey} snapshot in place (no re-sync), so
+    // Force Reload can no longer silently drop a bug that's since been re-parented away from this
+    // epic, ahead of the automatic settle window. See TeamDeliveryV3's CloseSprint for the same
+    // pattern applied to sprint-scoped delivery reports.
+    private async Task CloseEpicSprint(string epicKey)
+    {
+        if (_loading) return;
+
+        var ok = await JS.InvokeAsync<bool>("confirm",
+            "Close this sprint's epic data? Its current bugs become the permanent snapshot for this epic and will stop updating from Jira — including for tasks re-parented to a different epic.");
+        if (!ok) return;
+
+        _loading = true;
+        try
+        {
+            var updated = await JiraService.SetSupportEpicFreezeAsync(epicKey, frozen: true);
+            if (updated is not null) { _epicFrozen[epicKey] = true; _epicManuallyFrozen[epicKey] = true; }
+        }
+        catch (Exception ex) { _error = $"Failed to close epic: {ex.Message}"; }
+        finally { _loading = false; }
+    }
+
+    private async Task ReopenEpicSprint(string epicKey)
+    {
+        if (_loading) return;
+
+        var ok = await JS.InvokeAsync<bool>("confirm",
+            "Reopen this epic? It will resume merging live updates from Jira on the next reload.");
+        if (!ok) return;
+
+        _loading = true;
+        try
+        {
+            var updated = await JiraService.SetSupportEpicFreezeAsync(epicKey, frozen: false);
+            if (updated is not null)
+            {
+                _epicManuallyFrozen[epicKey] = false;
+                var sprintEnd = _configs
+                    .Where(c => string.Equals(c.EpicKey.Trim(), epicKey, StringComparison.OrdinalIgnoreCase))
+                    .Select(c => (DateOnly?)c.EndDate).DefaultIfEmpty(null).Max();
+                _epicFrozen[epicKey] = await JiraService.IsSupportEpicFrozenAsync(epicKey, sprintEnd);
+            }
+        }
+        catch (Exception ex) { _error = $"Failed to reopen epic: {ex.Message}"; }
+        finally { _loading = false; }
     }
 
     private void OnRangeChanged()

@@ -49,8 +49,8 @@
                         else { <i class="bi bi-arrow-repeat"></i> }
                     </button>
                     <button class="v2-btn v2-btn-ghost" @onclick="HardRefresh"
-                            disabled="@IsLoading"
-                            title="@(Report.IsFrozen ? "Force full re-fetch from Jira — WARNING: overwrites this sprint's frozen historical snapshot with today's live Jira state" : "Force full re-fetch from Jira (rebuilds the cache — slow)")">
+                            disabled="@(IsLoading || Report.IsFrozen)"
+                            title="@(Report.IsFrozen ? "This sprint is closed and frozen — its snapshot is permanent and can no longer be overwritten from Jira" : "Force full re-fetch from Jira (rebuilds the cache — slow)")">
                         <i class="bi bi-cloud-arrow-down"></i>
                     </button>
                     @if (Report.IsFrozen)
@@ -58,6 +58,23 @@
                         <span class="v2-pill v2-pill-info" title="Sprint closed — this is its permanent end-of-sprint snapshot, last synced @Report.SyncedAt!.Value.ToLocalTime().ToString("dd-MMM HH:mm")">
                             <i class="bi bi-lock-fill"></i> Frozen
                         </span>
+                        @if (Report.ManuallyFrozen)
+                        {
+                            <button class="v2-btn v2-btn-ghost" @onclick="ReopenSprint" disabled="@IsLoading"
+                                    title="Reopen — resumes merging live updates from Jira on next reload">
+                                <i class="bi bi-unlock"></i>
+                            </button>
+                        }
+                    }
+                    else
+                    {
+                        <span class="v2-pill v2-pill-warn" title="Sprint is still open (or hasn't been synced since it closed) — every load merges the latest state from Jira, so carried-over tasks keep drifting until it freezes">
+                            <i class="bi bi-unlock-fill"></i> Live
+                        </span>
+                        <button class="v2-btn v2-btn-ghost" @onclick="CloseSprint" disabled="@IsLoading"
+                                title="Close Sprint — locks in this exact snapshot as the permanent end-of-sprint record, so carried-over tasks stop drifting">
+                            <i class="bi bi-lock"></i> Close Sprint
+                        </button>
                     }
                     <span class="v2-rag @RagClass">@RagText</span>
                     <span class="v2-pill v2-pill-neutral"><i class="bi bi-calendar3"></i> @Report.DaysRemaining d left</span>
@@ -1288,6 +1305,7 @@
                                     <th class="v2-table-num @SI("Progress", _sortEP, _ascEP)" @onclick='() => SortEP("Progress")'>Progress</th>
                                     <th title="Done / Active / To do">Tasks</th>
                                     <th class="v2-table-num @SI("Bugs", _sortEP, _ascEP)" @onclick='() => SortEP("Bugs")' title="Open bugs">Bugs</th>
+                                    <th class="v2-table-num @SI("BugTime", _sortEP, _ascEP)" @onclick='() => SortEP("BugTime")' title="Bug count for the epic; color reflects bug time logged vs task time logged (green <10%, yellow 10-15%, red >15%)">Bug Load</th>
                                     <th title="Stale · Blocked · Unestimated">Flags</th>
                                     <th class="v2-table-num @SI("Logged", _sortEP, _ascEP)" @onclick='() => SortEP("Logged")' title="Sprint logged / estimated hours">Logged / Est</th>
                                     <th class="v2-table-num @SI("Remaining", _sortEP, _ascEP)" @onclick='() => SortEP("Remaining")'>Rem.</th>
@@ -1342,6 +1360,16 @@
                                             else if (r.BugTotal > 0) { <span class="v2-hint">0</span> }
                                             else { <span class="v2-hint">—</span> }
                                         </td>
+                                        <td class="v2-table-num">
+                                            @if (r.BugTotal > 0)
+                                            {
+                                                <span class="v2-pill @r.BugTimePill" style="font-size:10px;padding:1px 6px" title="@($"{r.BugTimeH:F0}h bug time / {r.TaskTimeH:F0}h task time = {r.BugTimePct:F0}%")">@r.BugTotal · @r.BugTimePct.ToString("F0")%</span>
+                                            }
+                                            else
+                                            {
+                                                <span class="v2-hint">—</span>
+                                            }
+                                        </td>
                                         <td style="white-space:nowrap">
                                             @if (r.Blocked > 0) { <span class="v2-pill v2-pill-danger" style="font-size:10px;padding:1px 5px" title="blocked"><i class="bi bi-slash-circle"></i> @r.Blocked</span> }
                                             @if (r.Stale > 0)   { <span class="v2-pill v2-pill-warn" style="font-size:10px;padding:1px 5px" title="active, no log 2d+"><i class="bi bi-hourglass-split"></i> @r.Stale</span> }
@@ -1367,7 +1395,7 @@
                                     {
                                         var fc = r.Forecast;
                                         <tr class="v2-ep-detail-row">
-                                            <td colspan="10" style="padding:0;background:#fafbff;border-left:3px solid @rowBorder">
+                                            <td colspan="11" style="padding:0;background:#fafbff;border-left:3px solid @rowBorder">
                                                 <div style="padding:14px 18px;display:flex;gap:24px;flex-wrap:wrap">
                                                     <!-- Capacity vs. remaining work -->
                                                     <div style="flex:1;min-width:300px">
@@ -4270,6 +4298,7 @@
         EpicRow Epic, int DonePct,
         int TaskDone, int TaskActive, int TaskToDo,
         int BugOpen, int BugTotal,
+        double BugTimeH, double TaskTimeH, double BugTimePct, string BugTimePill,
         int Stale, int Blocked, int Unest,
         double EstH, double LoggedH, double RemH,
         bool OverBudget, bool WillFinish, double ShortfallH, double ProjectedDonePct,
@@ -4290,6 +4319,11 @@
             var taskActive = taskList.Count(i => i.StatusCategoryKey == "indeterminate");
             var taskToDo   = taskList.Count(i => i.StatusCategoryKey == "new");
             var bugOpen    = bugList.Count(i => i.StatusCategoryKey != "done");
+
+            var bugTimeH   = bugList.Sum(i => i.TimeSpentSeconds) / 3600.0;
+            var taskTimeH  = taskList.Sum(i => i.TimeSpentSeconds) / 3600.0;
+            var bugTimePct = taskTimeH > 0 ? bugTimeH / taskTimeH * 100.0 : (bugTimeH > 0 ? 100.0 : 0.0);
+            var bugTimePill = bugTimePct > 15 ? "v2-pill-danger" : bugTimePct >= 10 ? "v2-pill-warn" : "v2-pill-success";
 
             var stale   = ep.Issues.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);
             var blocked = ep.Issues.Count(IsBlocked);
@@ -4334,6 +4368,7 @@
                 : 0;
 
             return new EpicProgRow(ep, donePct, taskDone, taskActive, taskToDo, bugOpen, bugList.Count,
+                bugTimeH, taskTimeH, bugTimePct, bugTimePill,
                 stale, blocked, unest, ep.EstimateHours, ep.LoggedHours, ep.RemainingHours,
                 overBudget, fc.WillFinish, fc.ShortfallH, fc.ProjectedDonePct,
                 committed, overdue, riskLevel, fLabel, fPill, sLabel, sPill, reasons, fc);
@@ -4352,6 +4387,7 @@
         "Epic"      => _ascEP ? src.OrderBy(r => r.Epic.Name)        : src.OrderByDescending(r => r.Epic.Name),
         "Progress"  => _ascEP ? src.OrderBy(r => r.DonePct)          : src.OrderByDescending(r => r.DonePct),
         "Bugs"      => _ascEP ? src.OrderBy(r => r.BugOpen)          : src.OrderByDescending(r => r.BugOpen),
+        "BugTime"   => _ascEP ? src.OrderBy(r => r.BugTimePct)       : src.OrderByDescending(r => r.BugTimePct),
         "Logged"    => _ascEP ? src.OrderBy(r => r.LoggedH)          : src.OrderByDescending(r => r.LoggedH),
         "Remaining" => _ascEP ? src.OrderBy(r => r.RemH)             : src.OrderByDescending(r => r.RemH),
         "Forecast"  => _ascEP ? src.OrderBy(r => r.WillFinish).ThenByDescending(r => r.ShortfallH)
@@ -5070,12 +5106,53 @@
     // Hard refresh — re-fetch the currently loaded sprint/filter fresh from Jira, bypassing
     // the DB cache (JiraCacheService). LoadData() rebuilds the whole report (issues, epic
     // metadata, full-epic stats) and the bypass forces a live fetch + cache upsert, so the
-    // stored copy is brought up to date too. On a frozen (closed) sprint this is the explicit
-    // escape hatch — it overwrites the permanent historical snapshot with today's Jira state.
+    // stored copy is brought up to date too. Blocked once a sprint is frozen (closed +
+    // synced on/after its end date) — that snapshot is the permanent historical record and
+    // must never be overwritten with later Jira activity, even intentionally.
     private async Task HardRefresh()
     {
-        if (IsLoading) return;
+        if (IsLoading || Report is { IsFrozen: true }) return;
         await LoadData(forceRefresh: true);
+    }
+
+    // "Close Sprint" — manually freezes the currently loaded snapshot in place (no re-sync),
+    // so it stops picking up further Jira activity even though Jira itself may still call the
+    // sprint "active" or the last sync predates its close. Lets a user lock in today's state
+    // right after closing the sprint in Jira, before carried-over tasks drift.
+    private async Task CloseSprint()
+    {
+        if (IsLoading || Report is not { JiraSprintId: not null, IsFrozen: false }) return;
+
+        var ok = await JS.InvokeAsync<bool>("confirm",
+            "Close this sprint? Its current data becomes the permanent end-of-sprint snapshot and will stop updating from Jira, even for tasks carried over to the next sprint.");
+        if (!ok) return;
+
+        IsLoading = true;
+        try
+        {
+            var updated = await JiraService.SetSprintFreezeAsync(Report.JiraSprintId.Value, frozen: true);
+            if (updated is not null) Report = updated;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to close sprint: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    private async Task ReopenSprint()
+    {
+        if (IsLoading || Report is not { JiraSprintId: not null, ManuallyFrozen: true }) return;
+
+        var ok = await JS.InvokeAsync<bool>("confirm",
+            "Reopen this sprint? It will resume merging live updates from Jira on the next reload.");
+        if (!ok) return;
+
+        IsLoading = true;
+        try
+        {
+            var updated = await JiraService.SetSprintFreezeAsync(Report.JiraSprintId.Value, frozen: false);
+            if (updated is not null) Report = updated;
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to reopen sprint: {ex.Message}"; }
+        finally { IsLoading = false; }
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────

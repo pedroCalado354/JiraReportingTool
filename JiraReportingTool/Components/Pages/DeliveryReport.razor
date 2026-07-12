@@ -88,6 +88,7 @@
                 <thead>
                     <tr>
                         <th>Sprint</th>
+                        <th style="width:170px">Status</th>
                         <th style="width:120px">Days</th>
                         <th style="width:140px">Estimated hours</th>
                         <th style="width:160px">Roster hours spent</th>
@@ -99,6 +100,29 @@
                     {
                         <tr>
                             <td>@r.Name</td>
+                            <td>
+                                <div style="display:flex;align-items:center;gap:6px">
+                                    @if (r.IsFrozen)
+                                    {
+                                        <span class="v2-pill v2-pill-info" title="Sprint closed and frozen — this is its permanent end-of-sprint snapshot"><i class="bi bi-lock-fill"></i> Frozen</span>
+                                        @if (r.ManuallyFrozen)
+                                        {
+                                            <button class="v2-btn v2-btn-ghost" style="padding:2px 6px" @onclick="() => ReopenSprint(r)" disabled="@IsLoading"
+                                                    title="Reopen — resumes merging live updates from Jira on next Compare">
+                                                <i class="bi bi-unlock"></i>
+                                            </button>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span class="v2-pill v2-pill-warn" title="Sprint is still open (or not yet synced since it closed) — numbers can still change on next reload"><i class="bi bi-unlock-fill"></i> Live</span>
+                                        <button class="v2-btn v2-btn-ghost" style="padding:2px 6px" @onclick="() => CloseSprint(r)" disabled="@IsLoading"
+                                                title="Close Sprint — locks in this exact snapshot as the permanent end-of-sprint record">
+                                            <i class="bi bi-lock"></i>
+                                        </button>
+                                    }
+                                </div>
+                            </td>
                             <td>@r.TotalSprintDays</td>
                             <td>@r.EstimatedHours.ToString("F0")h</td>
                             <td>@r.RosterHours.ToString("F0")h</td>
@@ -119,7 +143,7 @@
     private string? ErrorMessage;
     private bool _renderCharts;
 
-    private record SprintResult(int SprintId, string Name, int TotalSprintDays, double EstimatedHours, double RosterHours, List<double> Burndown);
+    private record SprintResult(int SprintId, string Name, int TotalSprintDays, double EstimatedHours, double RosterHours, List<double> Burndown, bool IsFrozen, bool ManuallyFrozen);
     private List<SprintResult> _results = [];
 
     protected override async Task OnInitializedAsync()
@@ -229,13 +253,62 @@
                     TotalSprintDays: report.TotalSprintDays,
                     EstimatedHours:  activeIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0,
                     RosterHours:     ComputeRosterHours(report),
-                    Burndown:        ComputeBurndown(report, activeIssues)));
+                    Burndown:        ComputeBurndown(report, activeIssues),
+                    IsFrozen:        report.IsFrozen,
+                    ManuallyFrozen:  report.ManuallyFrozen));
             }
 
             _results = results.OrderBy(r => r.Name).ToList();
             _renderCharts = true;
         }
         catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    // "Close Sprint" — manually freezes the sprint's cached snapshot in place (no re-sync), so
+    // it stops picking up further Jira activity for carried-over tasks. See TeamDeliveryV3's
+    // CloseSprint for the full rationale — this mirrors it for the multi-sprint comparison table.
+    private async Task CloseSprint(SprintResult r)
+    {
+        if (IsLoading) return;
+
+        var ok = await JS.InvokeAsync<bool>("confirm",
+            $"Close {r.Name}? Its current data becomes the permanent end-of-sprint snapshot and will stop updating from Jira, even for tasks carried over to the next sprint.");
+        if (!ok) return;
+
+        IsLoading = true;
+        try
+        {
+            var updated = await JiraService.SetSprintFreezeAsync(r.SprintId, frozen: true);
+            if (updated is not null)
+            {
+                var i = _results.FindIndex(x => x.SprintId == r.SprintId);
+                if (i >= 0) _results[i] = r with { IsFrozen = updated.IsFrozen, ManuallyFrozen = updated.ManuallyFrozen };
+            }
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to close sprint: {ex.Message}"; }
+        finally { IsLoading = false; }
+    }
+
+    private async Task ReopenSprint(SprintResult r)
+    {
+        if (IsLoading) return;
+
+        var ok = await JS.InvokeAsync<bool>("confirm",
+            $"Reopen {r.Name}? It will resume merging live updates from Jira on the next Compare.");
+        if (!ok) return;
+
+        IsLoading = true;
+        try
+        {
+            var updated = await JiraService.SetSprintFreezeAsync(r.SprintId, frozen: false);
+            if (updated is not null)
+            {
+                var i = _results.FindIndex(x => x.SprintId == r.SprintId);
+                if (i >= 0) _results[i] = r with { IsFrozen = updated.IsFrozen, ManuallyFrozen = updated.ManuallyFrozen };
+            }
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to reopen sprint: {ex.Message}"; }
         finally { IsLoading = false; }
     }
 

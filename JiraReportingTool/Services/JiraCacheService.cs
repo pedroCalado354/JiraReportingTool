@@ -143,6 +143,9 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
         return report;
     }
 
+    public Task<SprintReport?> SetSprintFreezeAsync(int sprintId, bool frozen)
+        => repo.SetManualFreezeAsync($"delivery:{sprintId}", frozen);
+
     public async Task<SprintReport> GetAllEpicIssuesAsync(string epicKey)
     {
         var key = $"epicall:{epicKey}";
@@ -169,36 +172,45 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
     {
         var key = $"epicbugs:{epicKey.ToUpperInvariant()}";
 
-        if (_useCache && !forceRefresh)
+        if (_useCache)
         {
             var cached = await repo.GetSprintReportAsync(key);
             if (cached is { SyncedAt: not null } && cached.Issues.Count > 0)
             {
-                // Frozen: the sprint ended more than a hot-window ago AND the stored copy
-                // was synced after that point — its final state is already captured.
-                if (sprintEnd is DateOnly end &&
+                // Frozen: either manually closed (ManuallyFrozen), or the sprint ended more than
+                // a hot-window ago AND the stored copy was synced after that point — its final
+                // state is already captured. This check runs even when forceRefresh is set: a
+                // settled sprint's historical snapshot must never be overwritten with later Jira
+                // activity, not even by an explicit "force reload" click — and in particular must
+                // never silently drop a bug that has since been re-parented to a different epic
+                // (a forced re-fetch is a full "parent = epicKey" replace, not a merge).
+                if (cached.ManuallyFrozen ||
+                    (sprintEnd is DateOnly end &&
                     cached.SyncedAt.Value >= end.ToDateTime(TimeOnly.MinValue).AddDays(_hotWindowDays) &&
-                    DateTime.UtcNow >= end.ToDateTime(TimeOnly.MinValue).AddDays(_hotWindowDays))
+                    DateTime.UtcNow >= end.ToDateTime(TimeOnly.MinValue).AddDays(_hotWindowDays)))
                     return cached;
 
-                // Hot: fetch only recently-updated issues and merge them over the cache.
-                // The window always covers the gap since the last sync, so nothing is missed
-                // even if the page wasn't opened for a while.
-                var sinceDays = HotSinceDays(cached.SyncedAt.Value);
-                var delta = await api.GetEpicBugsUpdatedSinceAsync(epicKey, bugsOnly: false, sinceDays);
-                var merged = MergeIssuesByKey(cached.Issues, delta.Issues);
-                var toStore = new SprintReport
+                if (!forceRefresh)
                 {
-                    ReportIdentifier = key,
-                    ProjectKey  = cached.ProjectKey,
-                    SprintName  = cached.SprintName,
-                    StartDate   = cached.StartDate,
-                    EndDate     = cached.EndDate,
-                    JiraSprintId = cached.JiraSprintId,
-                    Issues      = merged
-                };
-                await repo.UpsertSprintReportAsync(toStore);
-                return toStore;
+                    // Hot: fetch only recently-updated issues and merge them over the cache.
+                    // The window always covers the gap since the last sync, so nothing is
+                    // missed even if the page wasn't opened for a while.
+                    var sinceDays = HotSinceDays(cached.SyncedAt.Value);
+                    var delta = await api.GetEpicBugsUpdatedSinceAsync(epicKey, bugsOnly: false, sinceDays);
+                    var merged = MergeIssuesByKey(cached.Issues, delta.Issues);
+                    var toStore = new SprintReport
+                    {
+                        ReportIdentifier = key,
+                        ProjectKey  = cached.ProjectKey,
+                        SprintName  = cached.SprintName,
+                        StartDate   = cached.StartDate,
+                        EndDate     = cached.EndDate,
+                        JiraSprintId = cached.JiraSprintId,
+                        Issues      = merged
+                    };
+                    await repo.UpsertSprintReportAsync(toStore);
+                    return toStore;
+                }
             }
         }
 
@@ -206,6 +218,22 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
         report.ReportIdentifier = key;
         if (_useCache) await repo.UpsertSprintReportAsync(report);
         return report;
+    }
+
+    public Task<SprintReport?> SetSupportEpicFreezeAsync(string epicKey, bool frozen)
+        => repo.SetManualFreezeAsync($"epicbugs:{epicKey.ToUpperInvariant()}", frozen);
+
+    public async Task<bool> IsSupportEpicFrozenAsync(string epicKey, DateOnly? sprintEnd)
+    {
+        if (!_useCache) return false;
+
+        var cached = await repo.GetSprintReportAsync($"epicbugs:{epicKey.ToUpperInvariant()}");
+        if (cached is not { SyncedAt: not null }) return false;
+        if (cached.ManuallyFrozen) return true;
+        if (sprintEnd is not DateOnly end) return false;
+
+        var settlePoint = end.ToDateTime(TimeOnly.MinValue).AddDays(_hotWindowDays);
+        return cached.SyncedAt.Value >= settlePoint && DateTime.UtcNow >= settlePoint;
     }
 
     public async Task<SprintReport> GetJsSupportLinkedBugsAsync(DateOnly from, DateOnly to, bool forceRefresh = false)

@@ -126,20 +126,32 @@
 
             @if (AvailableSprints.Count > 0 || NoSprintIssueCount > 0)
             {
-                <div class="dr-export-skip" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--v2-divider);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-                    <label class="v2-label" style="margin:0">Sprint</label>
-                    <select class="v2-select v2-input-sm" style="max-width:320px" @onchange="OnSprintFilterChanged">
-                        <option value="">All sprints in this window</option>
+                <div class="dr-export-skip" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--v2-divider)">
+                    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                        <label class="v2-label" style="margin:0">Sprint</label>
+                        <span class="v2-hint">real Jira sprints found on the selected product(s)' issues — narrows further within the window above, or select none for every sprint@(NoSprintIssueCount > 0 ? $"; {NoSprintIssueCount} ticket{(NoSprintIssueCount == 1 ? "" : "s")} logged time here with no sprint at all" : "")</span>
+                    </div>
+                    <div class="dr-chip-row dr-export-skip">
                         @foreach (var s in AvailableSprints)
                         {
-                            <option value="@s.Id" selected="@(SelectedSprintId == s.Id)">@s.Name@(s.StartDate.HasValue ? $" ({s.StartDate:MMM d}–{s.EndDate:MMM d})" : "")</option>
+                            var sid = s.Id;
+                            <button type="button" class="dr-chip @(SelectedSprintIds.Contains(sid) ? "dr-chip-on" : "")" @onclick="() => ToggleSprintFilter(sid)">
+                                @if (SelectedSprintIds.Contains(sid)) { <i class="bi bi-check2"></i> }
+                                @s.Name@(s.StartDate.HasValue ? $" ({s.StartDate:MMM d}–{s.EndDate:MMM d})" : "")
+                            </button>
                         }
                         @if (NoSprintIssueCount > 0)
                         {
-                            <option value="0" selected="@(SelectedSprintId == 0)">No sprint (@NoSprintIssueCount) — never added to a sprint</option>
+                            <button type="button" class="dr-chip @(SelectedSprintIds.Contains(0) ? "dr-chip-on" : "")" @onclick="() => ToggleSprintFilter(0)">
+                                @if (SelectedSprintIds.Contains(0)) { <i class="bi bi-check2"></i> }
+                                No sprint <span class="dr-chip-n">@NoSprintIssueCount</span>
+                            </button>
                         }
-                    </select>
-                    <span class="v2-hint">real Jira sprints found on the selected product(s)' issues — narrows further within the window above@(NoSprintIssueCount > 0 ? $"; {NoSprintIssueCount} ticket{(NoSprintIssueCount == 1 ? "" : "s")} logged time here with no sprint at all" : "")</span>
+                    </div>
+                    <div class="v2-hint" style="margin-top:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                        <span>@(SelectedSprintIds.Count == 0 ? "All sprints in this window" : $"{SelectedSprintIds.Count} sprint{(SelectedSprintIds.Count == 1 ? "" : "s")} selected")</span>
+                        <button type="button" class="dr-link-btn dr-export-skip" @onclick="ClearSprintFilter">All</button>
+                    </div>
                 </div>
             }
         </div>
@@ -297,7 +309,7 @@
                 <div class="v2-modal-head">
                     <div>
                         <div class="v2-modal-title"><i class="bi bi-table"></i> Tickets — @FilteredIssues.Count in current filter</div>
-                        <div class="v2-modal-sub">@SelectedProducts.Count of @AllProducts.Count product(s) selected@(SelectedSprintId.HasValue ? $" · sprint: {SprintFilterLabel()}" : "")</div>
+                        <div class="v2-modal-sub">@SelectedProducts.Count of @AllProducts.Count product(s) selected@(SelectedSprintIds.Count > 0 ? $" · sprint: {SprintFilterLabel()}" : "")</div>
                     </div>
                     <button class="v2-modal-close" @onclick="CloseTicketsModal" title="Close">&times;</button>
                 </div>
@@ -408,9 +420,10 @@
     // DeliveryHealthCalculator.NoProductLabel), populated by LoadProductIssuesAsync.
     private Dictionary<string, List<SprintIssue>> _productIssues = [];
 
-    // Narrows the current product selection down to one real Jira sprint (from the issues'
-    // own sprint history) — null means "every issue in the sprint's date window".
-    private int? SelectedSprintId;
+    // Narrows the current product selection down to one or more real Jira sprints (from the
+    // issues' own sprint history) — empty means "every issue in the sprint's date window".
+    // Id 0 is the "no sprint at all" sentinel (see NoSprintIssueCount below).
+    private HashSet<int> SelectedSprintIds = new();
 
     private static string ProductOf(SprintIssue i) => DeliveryHealthCalculator.ProductOf(i);
 
@@ -455,12 +468,9 @@
 
     // Display label for the current Sprint sub-filter value — handles the "0" sentinel
     // (no-sprint tickets) separately since AvailableSprints excludes Id 0 by construction.
-    private string SprintFilterLabel() => SelectedSprintId switch
-    {
-        null => "All sprints in window",
-        0    => "No sprint",
-        _    => AvailableSprints.FirstOrDefault(s => s.Id == SelectedSprintId)?.Name ?? "—"
-    };
+    private string SprintFilterLabel() => SelectedSprintIds.Count == 0
+        ? "All sprints in window"
+        : string.Join(", ", SelectedSprintIds.Select(id => id == 0 ? "No sprint" : AvailableSprints.FirstOrDefault(s => s.Id == id)?.Name ?? "—"));
 
     protected override async Task OnInitializedAsync()
     {
@@ -493,7 +503,7 @@
 
         IsLoading = true; ErrorMessage = null; Report = null;
         _productIssues.Clear();
-        SelectedSprintId = null;
+        SelectedSprintIds.Clear();
         _loadingStatus = "Loading sprint report…";
         StateHasChanged();
 
@@ -560,8 +570,9 @@
         var combined = _productIssues
             .Where(kv => SelectedProducts.Count == 0 || SelectedProducts.Contains(kv.Key))
             .SelectMany(kv => kv.Value)
-            .Where(i => SelectedSprintId is null
-                || (SelectedSprintId == 0 ? i.Sprints.Count == 0 : i.Sprints.Any(s => s.Id == SelectedSprintId)))
+            .Where(i => SelectedSprintIds.Count == 0
+                || (i.Sprints.Count == 0 && SelectedSprintIds.Contains(0))
+                || i.Sprints.Any(s => SelectedSprintIds.Contains(s.Id)))
             .DistinctBy(i => i.Key)
             .ToList();
 
@@ -609,7 +620,7 @@
     private void ToggleProduct(string name)
     {
         if (!SelectedProducts.Remove(name)) SelectedProducts.Add(name);
-        SelectedSprintId = null; // available sprints depend on the product selection
+        SelectedSprintIds.Clear(); // available sprints depend on the product selection
         RecomputeMetrics();
         _renderCharts = true;
     }
@@ -617,7 +628,7 @@
     private void SelectAllProducts()
     {
         SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
-        SelectedSprintId = null;
+        SelectedSprintIds.Clear();
         RecomputeMetrics();
         _renderCharts = true;
     }
@@ -625,15 +636,21 @@
     private void ClearProducts()
     {
         SelectedProducts.Clear();
-        SelectedSprintId = null;
+        SelectedSprintIds.Clear();
         RecomputeMetrics();
         _renderCharts = true;
     }
 
-    private void OnSprintFilterChanged(ChangeEventArgs e)
+    private void ToggleSprintFilter(int sprintId)
     {
-        var val = e.Value?.ToString();
-        SelectedSprintId = string.IsNullOrEmpty(val) ? null : int.Parse(val);
+        if (!SelectedSprintIds.Remove(sprintId)) SelectedSprintIds.Add(sprintId);
+        RecomputeMetrics();
+        _renderCharts = true;
+    }
+
+    private void ClearSprintFilter()
+    {
+        SelectedSprintIds.Clear();
         RecomputeMetrics();
         _renderCharts = true;
     }
@@ -1331,9 +1348,10 @@
                     <div style="display:flex;flex-direction:column;gap:4px;margin-top:10px;padding-top:10px;border-top:1px solid var(--v2-divider)">
                         @foreach (var p in productBreakdown)
                         {
+                            var pPct = p.Total > 0 ? p.Done * 100 / p.Total : 0;
                             <div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--v2-ink-3)">
                                 <span class="v2-truncate" style="max-width:140px">@p.Product</span>
-                                <span style="font-weight:600;color:var(--v2-ink-2)">@p.Done of @p.Total done</span>
+                                <span style="font-weight:600;color:var(--v2-ink-2)">@pPct% · @p.Done of @p.Total done</span>
                             </div>
                         }
                     </div>

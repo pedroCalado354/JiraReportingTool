@@ -936,6 +936,11 @@ public class JiraService : IJiraService
     public Task<SprintReport> GetJsSupportLinkedBugsAsync(DateOnly from, DateOnly to, bool forceRefresh = false)
         => GetBugsWithLinksAsync(from, to);
 
+    // No DB-backed snapshot to freeze on the live-only path — freezing is a JiraCacheService concept.
+    public Task<SprintReport?> SetSprintFreezeAsync(int sprintId, bool frozen) => Task.FromResult<SprintReport?>(null);
+    public Task<SprintReport?> SetSupportEpicFreezeAsync(string epicKey, bool frozen) => Task.FromResult<SprintReport?>(null);
+    public Task<bool> IsSupportEpicFrozenAsync(string epicKey, DateOnly? sprintEnd) => Task.FromResult(false);
+
     private async Task<SprintReport> GetEpicBugsCoreAsync(string epicKey, bool bugsOnly, int? updatedSinceDays)
     {
         var epicResponse = await _httpClient.GetAsync(

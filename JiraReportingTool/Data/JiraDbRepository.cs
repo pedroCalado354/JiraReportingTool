@@ -106,6 +106,20 @@ public class JiraDbRepository(AppDbContext db)
         await db.SaveChangesAsync();
     }
 
+    // Flips ManuallyFrozen without touching SyncedAt/Issues — used by the "Close Sprint" /
+    // "Reopen Sprint" buttons, which lock or release the snapshot as-is rather than re-syncing it.
+    public async Task<SprintReport?> SetManualFreezeAsync(string reportIdentifier, bool frozen)
+    {
+        var existing = await db.SprintReports
+            .Include(s => s.Issues).ThenInclude(i => i.Worklogs)
+            .FirstOrDefaultAsync(s => s.ReportIdentifier == reportIdentifier);
+        if (existing is null) return null;
+
+        existing.ManuallyFrozen = frozen;
+        await db.SaveChangesAsync();
+        return existing;
+    }
+
     // ── Filters ──────────────────────────────────────────────────────────────
 
     public async Task<List<JiraFilter>> GetFiltersAsync()

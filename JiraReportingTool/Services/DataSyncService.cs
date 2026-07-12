@@ -5,8 +5,44 @@ using JiraReportingTool.Models;
 /// Force-refresh service that always bypasses the cache and re-fetches from the Jira API.
 /// Used by the Sync page to refresh individual reports or the full inventory.
 /// </summary>
-public class DataSyncService(JiraService api, JiraDbRepository repo)
+public class DataSyncService(JiraService api, JiraDbRepository repo, SprintConfigService sprintConfigs, IConfiguration config)
 {
+    private readonly int _hotWindowDays = config.GetValue<int>("Database:TrendsHotWindowDays", 5);
+
+    /// <summary>
+    /// True if this report is a settled historical snapshot that must never be silently
+    /// overwritten by a bulk/automatic refresh sweep — mirrors the freeze checks in
+    /// JiraCacheService (delivery/sprint reports via IsFrozen; Support Trends epic-bugs
+    /// reports via the sprint-end + hot-window settle rule, since those don't carry their
+    /// own SprintState/EndDate). Other report types (epicall, jssupportlinked) have no
+    /// freeze concept and are never protected here. Takes the already-loaded config list so
+    /// callers checking many reports don't hit the DB once per report.
+    /// </summary>
+    private bool IsProtected(SprintReport report, List<SprintConfig> configs)
+    {
+        var id = report.ReportIdentifier ?? "";
+
+        if (id.StartsWith("delivery:") || id.StartsWith("sprint:"))
+            return report.IsFrozen;
+
+        if (id.StartsWith("epicbugs:"))
+        {
+            if (report.ManuallyFrozen) return true;
+
+            var epicKey = id["epicbugs:".Length..];
+            var sprintEnd = configs
+                .Where(c => string.Equals(c.EpicKey.Trim(), epicKey, StringComparison.OrdinalIgnoreCase))
+                .Select(c => (DateOnly?)c.EndDate)
+                .DefaultIfEmpty(null)
+                .Max();
+            if (sprintEnd is not DateOnly end || !report.SyncedAt.HasValue) return false;
+            var settleThreshold = end.ToDateTime(TimeOnly.MinValue).AddDays(_hotWindowDays);
+            return report.SyncedAt.Value >= settleThreshold && DateTime.UtcNow >= settleThreshold;
+        }
+
+        return false;
+    }
+
     public async Task<(List<SprintReport> sprints, List<JiraEpicReport> epics)> GetCachedInventoryAsync()
     {
         var sprints = await repo.GetAllSprintReportsAsync();
@@ -84,6 +120,13 @@ public class DataSyncService(JiraService api, JiraDbRepository repo)
     {
         var (sprints, epics) = await GetCachedInventoryAsync();
         var cutoff = DateTime.UtcNow.AddMinutes(-ttlMinutes);
+
+        // A settled/frozen sprint's SyncedAt is always old (that's the point — it never gets
+        // touched), so it would otherwise look "stale" and get swept up here. Bulk/automatic
+        // refreshes must never silently overwrite a permanent historical snapshot — that's
+        // only ever done through an explicit single-report refresh (RefreshSprintReportAsync).
+        var configs = await sprintConfigs.GetAllAsync();
+        sprints = sprints.Where(s => !IsProtected(s, configs)).ToList();
 
         if (staleOnly)
         {

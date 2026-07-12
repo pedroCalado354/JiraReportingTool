@@ -152,6 +152,7 @@
                                             var a = actual.Sum(x => x.Hours);
                                             var off = _holidaySet.Contains(d) || _timeOffSet.Contains((mem.Id, d));
                                             var elapsed = d <= Today;
+                                            var cv = CellVariance(planned, actual, elapsed);
                                             <td class="sp-cell @(off ? "sp-dayoff" : "") @(d == Today ? "sp-cell-today" : "") @(IsWeekend(d) ? "sp-cell-we" : "")"
                                                 @onclick="() => OpenDetail(mem.Id, d)">
                                                 @if (off && planned.Count == 0 && actual.Count == 0)
@@ -163,7 +164,7 @@
                                                     var chips = actual.Count > 0 ? null : planned;
                                                     <div class="sp-cell-hours">
                                                         <span class="sp-p" title="Planned">P @FormatHours(p)</span>
-                                                        <span class="sp-a @VarianceClass(p, a, elapsed)" title="Logged">A @FormatHours(a)</span>
+                                                        <span class="sp-a @cv.TextClass" title="Logged">A @FormatHours(a)</span>
                                                     </div>
                                                     @if (mem.DailyHours > 0m)
                                                     {
@@ -171,7 +172,7 @@
                                                         var aw = Math.Min(100.0, (double)(a / mem.DailyHours) * 100).ToString("0", CultureInfo.InvariantCulture);
                                                         <div class="sp-cell-bars">
                                                             <div class="sp-minibar"><div class="sp-minibar-fill sp-bar-p" style="width:@(pw)%"></div></div>
-                                                            <div class="sp-minibar"><div class="sp-minibar-fill @BarClass(p, a, elapsed)" style="width:@(aw)%"></div></div>
+                                                            <div class="sp-minibar"><div class="sp-minibar-fill @cv.BarClass" style="width:@(aw)%"></div></div>
                                                         </div>
                                                     }
                                                     <div class="sp-chips">
@@ -179,12 +180,17 @@
                                                         {
                                                             @foreach (var ai in actual.Take(MaxChips))
                                                             {
-                                                                var suffix = !ai.IsUnplanned ? ""
+                                                                var suffix = ai.IsShifted ? $" (planned for {ai.PlannedDate:ddd dd MMM}, {OffsetLabel(ai.DayOffsetDays)})"
+                                                                    : !ai.IsUnplanned ? ""
                                                                     : ai.PlannedForOther ? " (planned for another member)"
                                                                     : " (not in plan)";
-                                                                <span class="sp-chip @(ai.IsUnplanned ? "sp-chip-unplanned" : "")"
+                                                                <span class="sp-chip @(ai.IsUnplanned ? "sp-chip-unplanned" : ai.IsShifted ? "sp-chip-shifted" : "")"
                                                                       title="@($"{ai.IssueKey} — {ai.Summary}{suffix}")">
                                                                     <span class="k">@ai.IssueKey</span><span class="h">@FormatHours(ai.Hours)</span>
+                                                                    @if (ai.IsShifted)
+                                                                    {
+                                                                        <span class="shift">@OffsetLabel(ai.DayOffsetDays)</span>
+                                                                    }
                                                                 </span>
                                                             }
                                                             @if (actual.Count > MaxChips)
@@ -196,9 +202,17 @@
                                                         {
                                                             @foreach (var pi in chips.Take(MaxChips))
                                                             {
-                                                                <span class="sp-chip sp-chip-ghost" style="@(pi.IsCustom ? $"border-color:{pi.Color};color:{pi.Color};" : "")"
-                                                                      title="Planned: @pi.Label">
+                                                                var title = pi.DeliveredElsewhere
+                                                                    ? $"Planned: {pi.Label} — delivered {pi.DeliveredDate:ddd dd MMM} ({OffsetLabel(pi.DeliveredOffsetDays)})"
+                                                                    : $"Planned: {pi.Label}";
+                                                                <span class="sp-chip @(pi.DeliveredElsewhere ? "sp-chip-shifted" : "sp-chip-ghost")"
+                                                                      style="@(pi.IsCustom && !pi.DeliveredElsewhere ? $"border-color:{pi.Color};color:{pi.Color};" : "")"
+                                                                      title="@title">
                                                                     <span class="k">@(pi.JiraKey ?? pi.Label)</span><span class="h">@FormatHours(pi.Hours)</span>
+                                                                    @if (pi.DeliveredElsewhere)
+                                                                    {
+                                                                        <span class="shift">@OffsetLabel(pi.DeliveredOffsetDays)</span>
+                                                                    }
                                                                 </span>
                                                             }
                                                             @if (chips.Count > MaxChips)
@@ -334,9 +348,19 @@
 
     // ── Precomputed lookups (rebuilt in BuildLookups) ──────────
     private sealed record MemberVm(Guid Id, string Name, string Team, decimal DailyHours, bool InRoster);
-    private sealed record PlannedItem(int TaskId, string Label, string? JiraKey, decimal Hours, bool IsCustom, string Color, string EpicKey);
+    // DeliveredElsewhere*: set when this planned task was actually logged on a different day
+    // (still within the sprint) than the day it was scheduled for — "planned, delivered elsewhere".
+    private sealed record PlannedItem(int TaskId, string Label, string? JiraKey, decimal Hours, bool IsCustom, string Color, string EpicKey,
+        bool DeliveredElsewhere = false, DateOnly? DeliveredDate = null, int? DeliveredOffsetDays = null);
     private sealed record WorklogVm(string IssueKey, decimal Hours, string Comment, string Author, DateTime Started);
-    private sealed record ActualItem(string IssueKey, string Summary, decimal Hours, bool IsUnplanned, bool PlannedForOther, List<WorklogVm> Logs);
+    // PlannedDate/DayOffsetDays: set when this logged item belongs to a task planned for the
+    // member elsewhere in the sprint (not today) — "delivered early/late" relative to that date.
+    // DayOffsetDays = PlannedDate - actual day, in days: positive = delivered early, negative = late.
+    private sealed record ActualItem(string IssueKey, string Summary, decimal Hours, bool IsUnplanned, bool PlannedForOther, List<WorklogVm> Logs,
+        DateOnly? PlannedDate = null, int? DayOffsetDays = null)
+    {
+        public bool IsShifted => PlannedDate is not null;
+    }
     private sealed record MemberKpis(decimal PlannedTotal, decimal LoggedTotal, decimal PlannedToDate, decimal LoggedToDate,
         decimal CapacityToDate, double UtilizationPct, double AdherencePct, decimal UnplannedHours,
         int DaysNoLogs, decimal OutsideRangeHours);
@@ -505,6 +529,10 @@
             }
         }
 
+        // All dates a member is scheduled for a given Jira key, across the whole sprint —
+        // used to detect "delivered on a different day than planned" (still in-scope).
+        var plannedDatesByMemberTask = new Dictionary<(Guid, string), List<DateOnly>>();
+
         // Planned cells + planned-key sets.
         if (_plan is not null)
         {
@@ -543,6 +571,11 @@
                     _plannedKeysByMember[a.MemberId] = set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 set.Add(key);
                 _plannedKeysAll.Add(key);
+
+                var dateKey = (a.MemberId, key.ToUpperInvariant());
+                if (!plannedDatesByMemberTask.TryGetValue(dateKey, out var dates))
+                    plannedDatesByMemberTask[dateKey] = dates = new List<DateOnly>();
+                if (!dates.Contains(a.Date)) dates.Add(a.Date);
             }
 
             // Members with a "Support Bug" custom task anywhere in the plan — their logged
@@ -641,6 +674,22 @@
             && issueByKey.TryGetValue(key, out var sbIss)
             && string.Equals(sbIss.EpicKey?.Trim(), _supportBugEpicKey, StringComparison.OrdinalIgnoreCase);
 
+        // All (date, hours) a member actually logged against a Jira key, across the whole
+        // sprint — used both to flag shifted deliveries and to mark planned-elsewhere cells.
+        var loggedDatesByMemberTask = new Dictionary<(Guid, string), List<(DateOnly Date, decimal Hours)>>();
+        foreach (var (cell, byIssue) in cellLogs)
+        {
+            foreach (var (key, logs) in byIssue)
+            {
+                var hrs = logs.Sum(l => l.Hours);
+                if (hrs <= 0m) continue;
+                var dateKey = (cell.Item1, key.ToUpperInvariant());
+                if (!loggedDatesByMemberTask.TryGetValue(dateKey, out var list))
+                    loggedDatesByMemberTask[dateKey] = list = new List<(DateOnly, decimal)>();
+                list.Add((cell.Item2, hrs));
+            }
+        }
+
         foreach (var (cell, byIssue) in cellLogs)
         {
             var plannedSet = _plannedKeysByMember.GetValueOrDefault(cell.Item1);
@@ -652,14 +701,51 @@
                 var isPlanned = plannedSet?.Contains(kv.Key) == true
                     || (coveredBySupportBug && IsSupportBugIssue(kv.Key));
                 var summary = issueByKey.TryGetValue(kv.Key, out var iss) ? iss.Summary : "";
+
+                // Same task planned for this member on a different day within the sprint?
+                // → this is a shifted (early/late) delivery, not a genuinely unplanned one.
+                DateOnly? plannedDate = null; int? offsetDays = null;
+                if (isPlanned
+                    && plannedDatesByMemberTask.TryGetValue((cell.Item1, kv.Key.ToUpperInvariant()), out var pds)
+                    && pds.Count > 0 && !pds.Contains(cell.Item2))
+                {
+                    var nearest = pds.OrderBy(pd => Math.Abs(pd.DayNumber - cell.Item2.DayNumber)).First();
+                    plannedDate = nearest;
+                    offsetDays = nearest.DayNumber - cell.Item2.DayNumber; // >0 = delivered early, <0 = late
+                }
+
                 return new ActualItem(kv.Key, summary, hours,
                     _plan is not null && !isPlanned,
                     !isPlanned && _plannedKeysAll.Contains(kv.Key),
-                    logs);
+                    logs, plannedDate, offsetDays);
             })
             .OrderByDescending(x => x.Hours)
             .ToList();
             _actualByCell[cell] = items;
+        }
+
+        // Mark planned items that were actually delivered on a different day (still in-scope)
+        // so the originally-scheduled cell can show "delivered elsewhere" instead of a bare gap.
+        if (_plan is not null)
+        {
+            foreach (var cellKey in _plannedByCell.Keys.ToList())
+            {
+                var (memberId, date) = cellKey;
+                _plannedByCell[cellKey] = _plannedByCell[cellKey].Select(pi =>
+                {
+                    if (pi.IsCustom || pi.JiraKey is null) return pi;
+                    if (!loggedDatesByMemberTask.TryGetValue((memberId, pi.JiraKey.ToUpperInvariant()), out var logged)) return pi;
+                    var elsewhere = logged.Where(l => l.Date != date).ToList();
+                    if (elsewhere.Count == 0) return pi;
+                    var nearest = elsewhere.OrderBy(l => Math.Abs(l.Date.DayNumber - date.DayNumber)).First();
+                    return pi with
+                    {
+                        DeliveredElsewhere = true,
+                        DeliveredDate = nearest.Date,
+                        DeliveredOffsetDays = date.DayNumber - nearest.Date.DayNumber // >0 = delivered early, <0 = late
+                    };
+                }).ToList();
+            }
         }
 
         _members = members.Concat(externals.OrderBy(x => x.Name)).ToList();
@@ -746,23 +832,50 @@
     private string DayHeaderClass(DateOnly d)
         => d == Today ? "sp-col-today" : _holidaySet.Contains(d) ? "sp-col-holiday" : IsWeekend(d) ? "sp-col-we" : "";
 
-    private static string VarianceClass(decimal p, decimal a, bool elapsed)
+    // Day-cell variance, aware of shifted (delivered-elsewhere) items: a task delivered on a
+    // different day than planned (but still in-scope for this member) never counts toward
+    // "over"/"unplanned" or "under" — it gets its own "shifted" highlight instead.
+    private static (string TextClass, string BarClass) CellVariance(List<PlannedItem> planned, List<ActualItem> actual, bool elapsed)
     {
-        if (!elapsed) return "";
-        if (a <= 0m) return p > 0m ? "sp-a-under" : "";
-        if (p <= 0m) return "sp-a-unplanned";
-        var tol = Math.Max(1m, p * 0.25m);
-        if (a >= p - tol && a <= p + tol) return "sp-a-ok";
-        return a < p ? "sp-a-under" : "sp-a-over";
+        if (!elapsed) return ("", "sp-bar-neutral");
+
+        var pUnsatisfied = planned.Where(x => !x.DeliveredElsewhere).Sum(x => x.Hours);
+        var aOnSchedule = actual.Where(x => !x.IsUnplanned && !x.IsShifted).Sum(x => x.Hours);
+        var aUnplanned = actual.Where(x => x.IsUnplanned).Sum(x => x.Hours);
+        var hasShift = actual.Any(x => x.IsShifted) || planned.Any(x => x.DeliveredElsewhere);
+
+        string baseCls;
+        if (aOnSchedule <= 0m) baseCls = pUnsatisfied > 0m ? "sp-a-under" : "";
+        else if (pUnsatisfied <= 0m) baseCls = "sp-a-unplanned";
+        else
+        {
+            var tol = Math.Max(1m, pUnsatisfied * 0.25m);
+            baseCls = aOnSchedule >= pUnsatisfied - tol && aOnSchedule <= pUnsatisfied + tol ? "sp-a-ok"
+                    : aOnSchedule < pUnsatisfied ? "sp-a-under" : "sp-a-over";
+        }
+
+        var cls = aUnplanned > 0m ? "sp-a-unplanned"
+                : baseCls == "sp-a-over" ? "sp-a-over"
+                : hasShift ? "sp-a-shifted"
+                : baseCls;
+
+        var bar = cls switch
+        {
+            "sp-a-ok" => "sp-bar-ok",
+            "sp-a-under" => "sp-bar-under",
+            "sp-a-over" => "sp-bar-over",
+            "sp-a-unplanned" => "sp-bar-unplanned",
+            "sp-a-shifted" => "sp-bar-shifted",
+            _ => "sp-bar-neutral"
+        };
+        return (cls, bar);
     }
 
-    private static string BarClass(decimal p, decimal a, bool elapsed) => VarianceClass(p, a, elapsed) switch
+    private static string OffsetLabel(int? days) => days switch
     {
-        "sp-a-ok" => "sp-bar-ok",
-        "sp-a-under" => "sp-bar-under",
-        "sp-a-over" => "sp-bar-over",
-        "sp-a-unplanned" => "sp-bar-unplanned",
-        _ => "sp-bar-neutral"
+        > 0 => $"{days}d early",
+        < 0 => $"{-days}d late",
+        _ => ""
     };
 
     private static string FormatHours(decimal h)
@@ -790,6 +903,7 @@
         var isOff = _timeOffSet.Contains((memberId, d));
         var isWe = IsWeekend(d);
         var elapsed = d <= Today;
+        var cv = CellVariance(planned, actual, elapsed);
 
         <div class="sp-day-card @(d == Today ? "sp-day-today" : "") @(isHoliday || isOff || isWe ? "sp-day-offday" : "")">
             <div class="sp-day-head">
@@ -811,7 +925,7 @@
                     <span class="v2-pill v2-pill-neutral">Weekend</span>
                 }
                 <span class="sp-day-totals">
-                    Planned @FormatHours(p) · Logged <span class="@VarianceClass(p, a, elapsed)">@FormatHours(a)</span>
+                    Planned @FormatHours(p) · Logged <span class="@cv.TextClass">@FormatHours(a)</span>
                 </span>
             </div>
             <div class="sp-day-cols">
@@ -841,6 +955,12 @@
                                     <span class="sp-plan-label" title="@pi.Label">@Truncate(pi.Label, 70)</span>
                                 }
                                 <span class="sp-plan-hours">@FormatHours(pi.Hours)</span>
+                                @if (pi.DeliveredElsewhere)
+                                {
+                                    <span class="sp-pill-shift" title="Logged on @pi.DeliveredDate?.ToString("ddd dd MMM") instead of the planned day">
+                                        Delivered @pi.DeliveredDate?.ToString("dd MMM") · @OffsetLabel(pi.DeliveredOffsetDays)
+                                    </span>
+                                }
                             </div>
                         }
                     }
@@ -849,7 +969,8 @@
                     <div class="sp-col-head">Logged</div>
                     @if (actual.Count == 0)
                     {
-                        var missing = elapsed && !isHoliday && !isOff && !isWe;
+                        var missing = elapsed && !isHoliday && !isOff && !isWe
+                            && !(planned.Count > 0 && planned.All(x => x.DeliveredElsewhere));
                         <div class="sp-empty @(missing ? "sp-empty-danger" : "")">No time logged</div>
                     }
                     else
@@ -865,6 +986,12 @@
                                     {
                                         <span class="v2-pill v2-pill-warn"
                                               title="@(ai.PlannedForOther ? "Planned for another member" : "Not in the sprint plan")">Unplanned</span>
+                                    }
+                                    @if (ai.IsShifted)
+                                    {
+                                        <span class="sp-pill-shift" title="Originally planned for @ai.PlannedDate?.ToString("ddd dd MMM")">
+                                            @OffsetLabel(ai.DayOffsetDays)
+                                        </span>
                                     }
                                 </div>
                                 @foreach (var log in ai.Logs.Where(l => !string.IsNullOrWhiteSpace(l.Comment)))
@@ -970,6 +1097,7 @@
     .sp-a-under { color: var(--warning); }
     .sp-a-over { color: var(--danger); }
     .sp-a-unplanned { color: #b45309; }
+    .sp-a-shifted { color: #7c3aed; }
 
     .sp-cell-bars { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; }
     .sp-minibar { height: 3px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
@@ -980,6 +1108,7 @@
     .sp-bar-under { background: var(--warning); }
     .sp-bar-over { background: var(--danger); }
     .sp-bar-unplanned { background: #f59e0b; }
+    .sp-bar-shifted { background: #7c3aed; }
 
     .sp-chips { display: flex; flex-direction: column; gap: 2px; }
     .sp-chip {
@@ -989,9 +1118,17 @@
     }
     .sp-chip .k { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .sp-chip .h { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .sp-chip .shift { font-size: 9px; font-weight: 600; white-space: nowrap; margin-left: 3px; opacity: .85; }
     .sp-chip-unplanned { background: #fef3c7; border: 1px dashed #f59e0b; color: #92400e; }
     .sp-chip-ghost { background: transparent; border: 1px dashed #cbd5e1; color: var(--txt-3); }
+    .sp-chip-shifted { background: #f3e8ff; border: 1px dashed #a855f7; color: #6b21a8; }
     .sp-chip-more { justify-content: center; background: transparent; border: none; color: var(--txt-4); padding: 0; }
+
+    .sp-pill-shift {
+        display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 600;
+        padding: 1.5px 6px; border-radius: 10px; margin-left: 6px; white-space: nowrap;
+        background: #f3e8ff; border: 1px solid #d8b4fe; color: #6b21a8;
+    }
 
     /* ── Drilldown ───────────────────────────────────────── */
     .sp-member-head { display: flex; align-items: center; gap: 12px; }

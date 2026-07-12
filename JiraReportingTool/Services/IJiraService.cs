@@ -97,4 +97,29 @@ public interface IJiraService
     /// Fetches development status (branches, commits, PRs with URLs, builds) for a Jira issue.
     /// </summary>
     Task<IssueDevStatus> GetDevStatusAsync(string jiraId);
+
+    /// <summary>
+    /// Manually freezes (or reopens) the cached delivery report for a sprint — the "Close Sprint"
+    /// button on delivery-v3 / delivery-report. Freezing locks the snapshot exactly as currently
+    /// stored (no re-sync) so it stops picking up further Jira activity, e.g. carried-over tasks
+    /// continuing to move in the next sprint. Returns null if the sprint has never been synced yet.
+    /// </summary>
+    Task<SprintReport?> SetSprintFreezeAsync(int sprintId, bool frozen);
+
+    /// <summary>
+    /// Manually freezes (or reopens) the cached Support Trends epic-bugs report for one epic — the
+    /// "Close Sprint" button on Support Trends. Unlike a sprint's delivery report, an epic's bugs
+    /// are queried by current epic link ("parent = epicKey"), which is not historical, so a Force
+    /// Reload before the automatic settle window can silently drop a bug that's since been
+    /// re-parented to a different epic. Freezing locks the snapshot in place to prevent that.
+    /// Returns null if the epic has never been synced yet.
+    /// </summary>
+    Task<SprintReport?> SetSupportEpicFreezeAsync(string epicKey, bool frozen);
+
+    /// <summary>
+    /// True if the Support Trends epic-bugs report for this epic is currently frozen — either
+    /// manually via <see cref="SetSupportEpicFreezeAsync"/>, or automatically because the epic's
+    /// sprint ended more than the hot window ago and the stored copy was synced after that point.
+    /// </summary>
+    Task<bool> IsSupportEpicFrozenAsync(string epicKey, DateOnly? sprintEnd);
 }

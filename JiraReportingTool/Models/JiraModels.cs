@@ -65,16 +65,25 @@ public class SprintReport
     public List<SprintIssue> Issues { get; set; } = new();
 
     /// <summary>
-    /// True once this sprint's history is permanently settled: Jira reports it closed, and the
-    /// stored snapshot was last synced on or after the sprint's final day. From that point on the
-    /// cache serves this report straight from the DB with no further Jira calls — carried-over
-    /// tasks keep their true end-of-sprint state instead of picking up the next sprint's activity.
+    /// Set via the "Close Sprint" button (delivery-v3 / delivery-report) to freeze this snapshot
+    /// on demand, ahead of (or regardless of) Jira reporting the sprint closed — lets a user lock
+    /// in today's state right after closing the sprint in Jira, before carried-over tasks drift.
+    /// </summary>
+    public bool ManuallyFrozen { get; set; }
+
+    /// <summary>
+    /// True once this sprint's history is permanently settled — either a user explicitly closed it
+    /// (<see cref="ManuallyFrozen"/>), or Jira reports it closed and the stored snapshot was last
+    /// synced on or after the sprint's final day. From that point on the cache serves this report
+    /// straight from the DB with no further Jira calls — carried-over tasks keep their true
+    /// end-of-sprint state instead of picking up the next sprint's activity.
     /// </summary>
     [NotMapped]
     public bool IsFrozen =>
-        string.Equals(SprintState, "closed", StringComparison.OrdinalIgnoreCase) &&
+        ManuallyFrozen ||
+        (string.Equals(SprintState, "closed", StringComparison.OrdinalIgnoreCase) &&
         SyncedAt.HasValue && EndDate.HasValue &&
-        SyncedAt.Value.Date >= EndDate.Value.Date;
+        SyncedAt.Value.Date >= EndDate.Value.Date);
 
     [NotMapped] public int TotalIssues => Issues.Count;
     [NotMapped] public int DoneCount => Issues.Count(i => i.StatusCategoryKey == "done");
