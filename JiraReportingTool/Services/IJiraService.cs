@@ -88,6 +88,15 @@ public interface IJiraService
     Task<SprintReport> GetJsSupportLinkedBugsAsync(DateOnly from, DateOnly to, bool forceRefresh = false);
 
     /// <summary>
+    /// DB-cached variant of GetBugsWithLinksAsync for the JSSUPPORT browser tab: an
+    /// on-demand, user-triggered fetch over a user-chosen date range. Cached per exact
+    /// date range (no incremental delta-merge) — kept separate from
+    /// GetJsSupportLinkedBugsAsync so an ad-hoc wide-range browse can't overwrite the
+    /// narrower cached report the main Support Trends pool relies on.
+    /// </summary>
+    Task<SprintReport> GetJsSupportBugsBrowseAsync(DateOnly from, DateOnly to, bool forceRefresh = false);
+
+    /// <summary>
     /// Fetches bugs from a raw JQL string, additionally resolving the "JS Project" (Product) radio-button field.
     /// Used by the SLA dashboard so tickets can be grouped by both customer and product.
     /// </summary>

@@ -138,26 +138,39 @@ window.downloadBase64File = (base64, fileName, mimeType) => {
     document.body.removeChild(link);
 };
 
-// Snapshots one element as a standalone .html file: clones the subtree, drops anything
-// marked .dr-export-skip (interactive controls that wouldn't do anything in a static file),
-// swaps each listed chart canvas for a static PNG (canvas pixels aren't part of the DOM so a
-// plain clone would leave them blank), and points at this page's own stylesheets so it keeps
-// the same look when opened with network access.
-window.exportElementAsHtml = (elementId, fileName, chartIds, title) => {
-    const root = document.getElementById(elementId);
-    if (!root) return;
+// Snapshots a specific set of elements (by id) as a standalone .html file, each wrapped in
+// its own card: swaps each listed chart canvas for a static PNG (canvas pixels aren't part
+// of the DOM so a plain clone would leave them blank), and points at this page's own
+// stylesheets so it keeps the same look when opened with network access.
+window.exportSectionsAsHtml = (sectionIds, fileName, chartIds, title) => {
+    const container = document.createElement('div');
+    container.className = 'v2-root';
 
-    const clone = root.cloneNode(true);
-    clone.querySelectorAll('.dr-export-skip').forEach(el => el.remove());
+    (sectionIds || []).forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const clone = el.cloneNode(true);
 
-    (chartIds || []).forEach(id => {
-        const chart = _charts[id];
-        if (!chart) return;
-        const img = document.createElement('img');
-        img.src = chart.toBase64Image('image/png', 1);
-        img.style.maxWidth = '100%';
-        const canvasInClone = clone.querySelector('#' + id);
-        if (canvasInClone) canvasInClone.replaceWith(img);
+        (chartIds || []).forEach(cid => {
+            const chart = _charts[cid];
+            const canvasInClone = clone.querySelector('#' + cid);
+            if (!chart || !canvasInClone) return;
+            const img = document.createElement('img');
+            img.src = chart.toBase64Image('image/png', 1);
+            img.style.maxWidth = '100%';
+            canvasInClone.replaceWith(img);
+        });
+
+        if (clone.classList.contains('v2-card')) {
+            clone.style.marginBottom = '16px';
+            container.appendChild(clone);
+        } else {
+            const card = document.createElement('div');
+            card.className = 'v2-card';
+            card.style.marginBottom = '16px';
+            card.appendChild(clone);
+            container.appendChild(card);
+        }
     });
 
     const styleLinks = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
@@ -173,7 +186,7 @@ ${styleLinks}
 <style>body{background:#f8fafc;padding:24px;} .v2-root{max-width:1400px;margin:0 auto;}</style>
 </head>
 <body>
-${clone.outerHTML}
+${container.outerHTML}
 </body>
 </html>`;
 

@@ -160,16 +160,18 @@
     @if (Report is not null && AllBugSplit is not null)
     {
         <div class="v2-card" style="margin-top:16px">
-            <div class="v2-section-title"><i class="bi bi-bug-fill" style="color:var(--v2-danger)"></i>Bug vs Feature Split <span class="v2-section-note">firefighting vs building — All Issue Types, current product filter</span></div>
-            <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
-                <div class="v2-donut v2-donut-lg" style="--p:@(AllBugSplit.BugPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
-                    <span>@AllBugSplit.BugPct.ToString("F0")%</span>
+            <div id="html-export-bugsplit">
+                <div class="v2-section-title"><i class="bi bi-bug-fill" style="color:var(--v2-danger)"></i>Bug vs Feature Split <span class="v2-section-note">firefighting vs building — All Issue Types, current product filter</span></div>
+                <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
+                    <div class="v2-donut v2-donut-lg" style="--p:@(AllBugSplit.BugPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
+                        <span>@AllBugSplit.BugPct.ToString("F0")%</span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:8px">
+                        <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@AllBugSplit.BugCount issues &middot; @AllBugSplit.BugHours.ToString("F0")h logged</span></div>
+                        <div class="v2-row"><span class="v2-chip v2-chip-story">Feature / Task</span><span class="v2-row-value">@AllBugSplit.FeatureCount issues &middot; @AllBugSplit.FeatureHours.ToString("F0")h logged</span></div>
+                    </div>
+                    <div class="v2-hint" style="max-width:260px">@(AllBugSplit.BugPct >= 40 ? "A large share of logged time is going to bugs — the team may be firefighting more than building." : "Most logged time is going toward feature/task work.")</div>
                 </div>
-                <div style="display:flex;flex-direction:column;gap:8px">
-                    <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@AllBugSplit.BugCount issues &middot; @AllBugSplit.BugHours.ToString("F0")h logged</span></div>
-                    <div class="v2-row"><span class="v2-chip v2-chip-story">Feature / Task</span><span class="v2-row-value">@AllBugSplit.FeatureCount issues &middot; @AllBugSplit.FeatureHours.ToString("F0")h logged</span></div>
-                </div>
-                <div class="v2-hint" style="max-width:260px">@(AllBugSplit.BugPct >= 40 ? "A large share of logged time is going to bugs — the team may be firefighting more than building." : "Most logged time is going toward feature/task work.")</div>
             </div>
 
             @if (BugsByEpic.Count > 0)
@@ -184,19 +186,21 @@
             @if (AllBugOriginSplit is not null && (AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) > 0)
             {
                 <div class="v2-divider"></div>
-                <div class="v2-section-title" style="margin-top:4px">
-                    <i class="bi bi-pie-chart-fill" style="color:var(--v2-info)"></i>Bug Origin
-                    <span class="v2-section-note">JSSUPPORT-linked vs feature-found, of the @(AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) bugs above</span>
-                </div>
-                <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
-                    <div class="v2-donut v2-donut-lg" style="--p:@(AllBugOriginSplit.SupportLinkedPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
-                        <span>@AllBugOriginSplit.SupportLinkedPct.ToString("F0")%</span>
+                <div id="html-export-bugorigin">
+                    <div class="v2-section-title" style="margin-top:4px">
+                        <i class="bi bi-pie-chart-fill" style="color:var(--v2-info)"></i>Bug Origin
+                        <span class="v2-section-note">JSSUPPORT-linked vs feature-found, of the @(AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) bugs above</span>
                     </div>
-                    <div style="display:flex;flex-direction:column;gap:8px">
-                        <div class="v2-row"><span class="v2-chip v2-chip-bug">JSSUPPORT-linked</span><span class="v2-row-value">@AllBugOriginSplit.SupportLinkedCount bugs &middot; @AllBugOriginSplit.SupportLinkedHours.ToString("F0")h logged</span></div>
-                        <div class="v2-row"><span class="v2-chip v2-chip-task">Feature-found</span><span class="v2-row-value">@AllBugOriginSplit.FeatureFoundCount bugs &middot; @AllBugOriginSplit.FeatureFoundHours.ToString("F0")h logged</span></div>
+                    <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
+                        <div class="v2-donut v2-donut-lg" style="--p:@(AllBugOriginSplit.SupportLinkedPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
+                            <span>@AllBugOriginSplit.SupportLinkedPct.ToString("F0")%</span>
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:8px">
+                            <div class="v2-row"><span class="v2-chip v2-chip-bug">JSSUPPORT-linked</span><span class="v2-row-value">@AllBugOriginSplit.SupportLinkedCount bugs &middot; @AllBugOriginSplit.SupportLinkedHours.ToString("F0")h logged</span></div>
+                            <div class="v2-row"><span class="v2-chip v2-chip-task">Feature-found</span><span class="v2-row-value">@AllBugOriginSplit.FeatureFoundCount bugs &middot; @AllBugOriginSplit.FeatureFoundHours.ToString("F0")h logged</span></div>
+                        </div>
+                        <div class="v2-hint" style="max-width:260px">@AllBugOriginSplit.SupportLinkedPct.ToString("F0")% of bugs trace back to a customer-reported JSSUPPORT ticket rather than being found during feature work.</div>
                     </div>
-                    <div class="v2-hint" style="max-width:260px">@AllBugOriginSplit.SupportLinkedPct.ToString("F0")% of bugs trace back to a customer-reported JSSUPPORT ticket rather than being found during feature work.</div>
                 </div>
 
                 @if (SupportBugsByEpic.Count > 0)
@@ -209,14 +213,30 @@
                     <div class="v2-kpi-grid" style="margin-top:12px;margin-bottom:0">
                         <div class="v2-kpi v2-kpi-neutral">
                             <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Avg Effort per Issue</div>
-                            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
-                                <div>
-                                    <div class="v2-kpi-value" style="font-size:22px">@SupportBugAvgEffortHours.ToString("F1")h</div>
-                                    <div class="v2-kpi-sub">to conclude (closed)</div>
+                            <div style="margin-top:6px">
+                                <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)">JSSUPPORT-linked</div>
+                                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
+                                    <div>
+                                        <div class="v2-kpi-value" style="font-size:20px">@SupportBugAvgEffortHours.ToString("F1")h</div>
+                                        <div class="v2-kpi-sub">to conclude · @SupportBugClosedCount closed</div>
+                                    </div>
+                                    <div>
+                                        <div class="v2-kpi-value" style="font-size:20px">@SupportBugAvgEffortOngoingHours.ToString("F1")h</div>
+                                        <div class="v2-kpi-sub">ongoing (still open)</div>
+                                    </div>
                                 </div>
-                                <div>
-                                    <div class="v2-kpi-value" style="font-size:22px">@SupportBugAvgEffortOngoingHours.ToString("F1")h</div>
-                                    <div class="v2-kpi-sub">ongoing (still open)</div>
+                            </div>
+                            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--v2-divider)">
+                                <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)">Feature-found</div>
+                                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
+                                    <div>
+                                        <div class="v2-kpi-value" style="font-size:20px">@FeatureFoundBugAvgEffortHours.ToString("F1")h</div>
+                                        <div class="v2-kpi-sub">to conclude (closed)</div>
+                                    </div>
+                                    <div>
+                                        <div class="v2-kpi-value" style="font-size:20px">@FeatureFoundBugAvgEffortOngoingHours.ToString("F1")h</div>
+                                        <div class="v2-kpi-sub">ongoing (still open)</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -385,7 +405,9 @@
     private List<DeliveryHealthCalculator.EstimationPoint> AllEstimationPoints = [];
     private List<double> TaskVelocitySparkline = [];
     private List<double> AllVelocitySparkline = [];
-    private List<(string Product, int Total, int Done)> TaskProductBreakdown = [];
+    private record ProductSprintBreakdownRow(string SprintName, int Total, int Done);
+    private record ProductBreakdownRow(string Product, int Total, int Done, List<ProductSprintBreakdownRow> BySprint);
+    private List<ProductBreakdownRow> TaskProductBreakdown = [];
     private DeliveryHealthCalculator.BugFeatureSplit? AllBugSplit;
     private DeliveryHealthCalculator.BugOriginSplit? AllBugOriginSplit;
     // Bug vs Feature Split detail: per-epic breakdown of the Bug (Bug ∪ Redesign) and Feature
@@ -398,6 +420,9 @@
     private List<DeliveryHealthCalculator.EpicBreakdownRow> SupportBugsByEpic = [];
     private double SupportBugAvgEffortHours;
     private double SupportBugAvgEffortOngoingHours;
+    private int SupportBugClosedCount;
+    private double FeatureFoundBugAvgEffortHours;
+    private double FeatureFoundBugAvgEffortOngoingHours;
     private List<DeliveryHealthCalculator.PriorityCount> SupportBugPriorityBreakdown = [];
     private DeliveryHealthCalculator.BugTypeSplit? SupportBugTypeSplitStat;
 
@@ -426,6 +451,40 @@
     private HashSet<int> SelectedSprintIds = new();
 
     private static string ProductOf(SprintIssue i) => DeliveryHealthCalculator.ProductOf(i);
+
+    // Per-product Done/Total breakdown for the Completion KPI. When more than one sprint is
+    // selected in the Sprint sub-filter, each product row also gets a per-sprint breakdown
+    // underneath it so "tickets closed per product per sprint" is visible at a glance.
+    private List<ProductBreakdownRow> ComputeProductBreakdown(List<SprintIssue> issues)
+    {
+        var showSprintSplit = SelectedSprintIds.Count > 1;
+        var sprintOrder = AvailableSprints
+            .Where(s => SelectedSprintIds.Contains(s.Id))
+            .Select(s => (s.Id, s.Name))
+            .ToList();
+        if (SelectedSprintIds.Contains(0)) sprintOrder.Add((0, "No sprint"));
+
+        return issues
+            .GroupBy(ProductOf)
+            .Select(g =>
+            {
+                var bySprint = new List<ProductSprintBreakdownRow>();
+                if (showSprintSplit)
+                {
+                    foreach (var sp in sprintOrder)
+                    {
+                        var matched = sp.Id == 0
+                            ? g.Where(i => i.Sprints.Count == 0).ToList()
+                            : g.Where(i => i.Sprints.Any(s => s.Id == sp.Id)).ToList();
+                        if (matched.Count > 0)
+                            bySprint.Add(new ProductSprintBreakdownRow(sp.Name, matched.Count, matched.Count(i => i.StatusCategoryKey == "done")));
+                    }
+                }
+                return new ProductBreakdownRow(g.Key, g.Count(), g.Count(i => i.StatusCategoryKey == "done"), bySprint);
+            })
+            .OrderByDescending(r => r.Total)
+            .ToList();
+    }
 
     private List<(string Name, int Count)> AllProducts => _productIssues
         .Select(kv => (Name: kv.Key, Count: kv.Value.Count))
@@ -471,6 +530,30 @@
     private string SprintFilterLabel() => SelectedSprintIds.Count == 0
         ? "All sprints in window"
         : string.Join(", ", SelectedSprintIds.Select(id => id == 0 ? "No sprint" : AvailableSprints.FirstOrDefault(s => s.Id == id)?.Name ?? "—"));
+
+    // Short code for a sprint name (e.g. "Pro 26.13 (Jul 6-Jul 17)" -> "26.13"), for compact
+    // file names — falls back to a filename-sanitized version of the full name.
+    private static string SprintCode(string name)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(name, @"\d+(?:\.\d+)?");
+        return m.Success ? m.Value : name.Replace(" ", "_").Replace("/", "-").Replace(",", "");
+    }
+
+    // File-name label for the sprint(s) in scope: the sprint sub-filter when one or more is
+    // selected (joined with "_" for multiple, e.g. "26.12_26.13"), otherwise the main sprint.
+    private string ExportSprintLabel()
+    {
+        if (SelectedSprintIds.Count > 0)
+        {
+            var codes = SelectedSprintIds
+                .OrderBy(id => id)
+                .Select(id => id == 0 ? "NoSprint" : SprintCode(AvailableSprints.FirstOrDefault(s => s.Id == id)?.Name ?? "Sprint"))
+                .Distinct();
+            return string.Join("_", codes);
+        }
+        var sprintLabel = Report!.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}";
+        return sprintLabel.Replace(" ", "_").Replace("/", "-").Replace(",", "");
+    }
 
     protected override async Task OnInitializedAsync()
     {
@@ -580,11 +663,7 @@
         var allIssues  = combined;
         FilteredIssues = combined;
 
-        TaskProductBreakdown = taskIssues
-            .GroupBy(ProductOf)
-            .Select(g => (Product: g.Key, Total: g.Count(), Done: g.Count(i => i.StatusCategoryKey == "done")))
-            .OrderByDescending(g => g.Total)
-            .ToList();
+        TaskProductBreakdown = ComputeProductBreakdown(taskIssues);
 
         TaskMetrics = DeliveryHealthCalculator.ComputeForIssues(report, taskIssues, effectiveDaysRemaining, isTaskOnly: true, _roster, _vacations);
         AllMetrics  = DeliveryHealthCalculator.ComputeForIssues(report, allIssues, effectiveDaysRemaining, isTaskOnly: false, _roster, _vacations);
@@ -610,9 +689,13 @@
         FeaturesByEpic = DeliveryHealthCalculator.ComputeIssuesByEpic(report, featuresInScope);
 
         var supportLinkedBugs = bugsInScope.Where(DeliveryHealthCalculator.IsSupportLinkedBug).ToList();
+        var featureFoundBugs  = bugsInScope.Where(i => !DeliveryHealthCalculator.IsSupportLinkedBug(i)).ToList();
         SupportBugsByEpic           = DeliveryHealthCalculator.ComputeIssuesByEpic(report, supportLinkedBugs);
         SupportBugAvgEffortHours    = DeliveryHealthCalculator.AvgHoursToConclude(report, supportLinkedBugs);
         SupportBugAvgEffortOngoingHours = DeliveryHealthCalculator.AvgHoursOngoing(report, supportLinkedBugs);
+        SupportBugClosedCount       = supportLinkedBugs.Count(i => i.StatusCategoryKey == "done");
+        FeatureFoundBugAvgEffortHours = DeliveryHealthCalculator.AvgHoursToConclude(report, featureFoundBugs);
+        FeatureFoundBugAvgEffortOngoingHours = DeliveryHealthCalculator.AvgHoursOngoing(report, featureFoundBugs);
         SupportBugPriorityBreakdown = DeliveryHealthCalculator.ComputePriorityBreakdown(supportLinkedBugs);
         SupportBugTypeSplitStat     = DeliveryHealthCalculator.ComputeBugVsRedesignSplit(supportLinkedBugs);
     }
@@ -712,9 +795,13 @@
         finally { IsExporting = false; }
     }
 
-    // Snapshots the report body (everything but the sprint/product/sprint-filter controls,
-    // marked with the dr-export-skip class) as a standalone .html file — charts are swapped
-    // for static PNGs client-side since a <canvas> element's pixels aren't part of the DOM.
+    // Snapshots just the Bug vs Feature Split, Bug Origin, Delivery Work's Completion /
+    // Planned vs Worked KPIs, and Delivery Burndown (Delivery Work / Task issue type only)
+    // sections as a standalone .html file — the burndown chart is swapped for a static PNG
+    // client-side since a <canvas> element's pixels aren't part of the DOM.
+    private static readonly string[] HtmlExportSectionIds =
+        ["html-export-bugsplit", "html-export-bugorigin", "html-export-delivery-kpis", "html-export-burndown"];
+
     private async Task ExportToHtml()
     {
         if (Report is null) return;
@@ -723,10 +810,9 @@
         try
         {
             var sprintLabel = Report.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}";
-            var fileLabel = sprintLabel.Replace(" ", "_").Replace("/", "-").Replace(",", "");
-            var fileName = $"DeliveryReport_{fileLabel}_{DateTime.Today:yyyyMMdd}.html";
-            await JS.InvokeVoidAsync("exportElementAsHtml", "dr-report-root", fileName,
-                ChartExports.Select(c => c.CanvasId).ToArray(), $"Delivery Report — {sprintLabel}");
+            var fileName = $"DeliveryReport_{ExportSprintLabel()}_{DateTime.Today:yyyyMMdd}.html";
+            await JS.InvokeVoidAsync("exportSectionsAsHtml", HtmlExportSectionIds, fileName,
+                new[] { "chart-burndown-task" }, $"Delivery Report — {sprintLabel}");
         }
         catch (Exception ex) { ErrorMessage = $"HTML export failed: {ex.Message}"; }
         finally { IsExportingHtml = false; }
@@ -1298,7 +1384,7 @@
         </div>
     </text>;
 
-    private RenderFragment RenderSection(string title, string note, DeliveryHealthMetrics m, DeliveryHealthCalculator.ScopeAddedStats? scopeAdded, List<double> velocitySparkline, List<(string Product, int Total, int Done)>? productBreakdown, string idSuffix) =>
+    private RenderFragment RenderSection(string title, string note, DeliveryHealthMetrics m, DeliveryHealthCalculator.ScopeAddedStats? scopeAdded, List<double> velocitySparkline, List<ProductBreakdownRow>? productBreakdown, string idSuffix) =>
     @<text>
         <div class="v2-section-title" style="margin-top:20px"><i class="bi bi-collection"></i>@title <span class="v2-section-note">@note</span></div>
 
@@ -1336,6 +1422,7 @@
         </div>
 
         <div class="v2-kpi-grid">
+            <div id="@(idSuffix == "task" ? "html-export-delivery-kpis" : null)" style="display:contents">
             <div class="v2-kpi @(m.CompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Completion</div>
                 <div class="v2-kpi-value">@((int)m.CompletionPct)%</div>
@@ -1349,10 +1436,22 @@
                         @foreach (var p in productBreakdown)
                         {
                             var pPct = p.Total > 0 ? p.Done * 100 / p.Total : 0;
+                            var hasSprintSplit = p.BySprint.Count > 0;
                             <div style="display:flex;justify-content:space-between;gap:8px;font-size:11.5px;color:var(--v2-ink-3)">
-                                <span class="v2-truncate" style="max-width:140px">@p.Product</span>
+                                <span class="v2-truncate" style="max-width:140px;@(hasSprintSplit ? "font-weight:600;color:var(--v2-ink-2)" : "")">@p.Product</span>
                                 <span style="font-weight:600;color:var(--v2-ink-2)">@pPct% · @p.Done of @p.Total done</span>
                             </div>
+                            @if (hasSprintSplit)
+                            {
+                                @foreach (var sp in p.BySprint)
+                                {
+                                    var spPct = sp.Total > 0 ? sp.Done * 100 / sp.Total : 0;
+                                    <div style="display:flex;justify-content:space-between;gap:8px;font-size:11px;color:var(--v2-ink-4);padding-left:14px">
+                                        <span class="v2-truncate" style="max-width:130px">@sp.SprintName</span>
+                                        <span>@spPct% · @sp.Done of @sp.Total done</span>
+                                    </div>
+                                }
+                            }
                         }
                     </div>
                 }
@@ -1372,6 +1471,7 @@
                     <div class="v2-bar-fill v2-bar-fill-@(pwBand == "neutral" ? "success" : pwBand)" style="width:@(m.PlannedHours > 0 ? Math.Min((int)(m.SprintWindowLoggedHours / m.PlannedHours * 100), 100) : 0)%"></div>
                 </div>
                 <div class="v2-kpi-sub">@($"{m.SprintWindowLoggedHours:F0}h") logged · @(pwDelta > 0 ? $"+{pwDelta:F0}h ({pwDeltaPct:F0}% over)" : pwDelta < 0 ? $"{pwDelta:F0}h ({pwDeltaPct:F0}% under)" : "on plan")</div>
+            </div>
             </div>
 
             <div class="v2-kpi @(m.ThroughputBehind ? "v2-kpi-warn" : "v2-kpi-success")">
@@ -1418,7 +1518,7 @@
         </div>
 
         <div class="v2-grid-2" style="margin-top:12px">
-            <div class="v2-card">
+            <div class="v2-card" id="@(idSuffix == "task" ? "html-export-burndown" : null)">
                 <div class="v2-section-title">
                     <i class="bi bi-graph-down-arrow" style="color:var(--v2-brand-3)"></i>Delivery Burndown <span class="v2-section-note">remaining estimate — actual vs ideal</span>
                     <i class="bi bi-info-circle dr-info-icon" title="Remaining = each issue's original estimate minus hours already logged against it (never below zero), dropping to zero once the issue is marked Done. It's not a straight subtraction of total hours logged — an issue's remaining only falls when work is logged on that specific issue, or the issue resolves."></i>
@@ -1469,8 +1569,10 @@
     }
     .dr-export-btn:hover:not(:disabled) { background: #d1fae5; }
     .dr-export-btn:disabled { opacity: .5; cursor: default; }
+    .dr-export-btn .v2-spin { border-color: rgba(21,128,61,0.25); border-top-color: #15803d; }
     .dr-export-btn-compact { background: var(--v2-brand-soft); border-color: var(--v2-brand); color: var(--v2-brand); }
     .dr-export-btn-compact:hover:not(:disabled) { background: var(--v2-brand-soft); filter: brightness(0.97); }
+    .dr-export-btn-compact .v2-spin { border-color: rgba(99,102,241,0.25); border-top-color: var(--v2-brand); }
 
     .dr-info-icon { color:var(--v2-ink-4); cursor:help; font-size:12px; margin-left:2px; }
     .dr-info-icon:hover { color:var(--v2-brand); }

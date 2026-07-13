@@ -936,6 +936,9 @@ public class JiraService : IJiraService
     public Task<SprintReport> GetJsSupportLinkedBugsAsync(DateOnly from, DateOnly to, bool forceRefresh = false)
         => GetBugsWithLinksAsync(from, to);
 
+    public Task<SprintReport> GetJsSupportBugsBrowseAsync(DateOnly from, DateOnly to, bool forceRefresh = false)
+        => GetBugsWithLinksAsync(from, to);
+
     // No DB-backed snapshot to freeze on the live-only path — freezing is a JiraCacheService concept.
     public Task<SprintReport?> SetSprintFreezeAsync(int sprintId, bool frozen) => Task.FromResult<SprintReport?>(null);
     public Task<SprintReport?> SetSupportEpicFreezeAsync(string epicKey, bool frozen) => Task.FromResult<SprintReport?>(null);
@@ -1080,7 +1083,7 @@ public class JiraService : IJiraService
             + (customerFieldId != null ? $",{customerFieldId}" : "")
             + (jsProjectFieldId != null ? $",{jsProjectFieldId}" : "");
         var jql = Uri.EscapeDataString(
-            $"project = JM AND issuetype = Bug AND (" +
+            $"project = JM AND issuetype in (Bug, Redesign) AND (" +
             $"(createdDate >= \"{createdFrom:yyyy-MM-dd}\" AND createdDate <= \"{createdTo:yyyy-MM-dd}\") OR " +
             $"updated >= \"{createdFrom:yyyy-MM-dd}\"" +
             $") ORDER BY created DESC");

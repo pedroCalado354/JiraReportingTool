@@ -1305,7 +1305,7 @@
                                     <th class="v2-table-num @SI("Progress", _sortEP, _ascEP)" @onclick='() => SortEP("Progress")'>Progress</th>
                                     <th title="Done / Active / To do">Tasks</th>
                                     <th class="v2-table-num @SI("Bugs", _sortEP, _ascEP)" @onclick='() => SortEP("Bugs")' title="Open bugs">Bugs</th>
-                                    <th class="v2-table-num @SI("BugTime", _sortEP, _ascEP)" @onclick='() => SortEP("BugTime")' title="Bug count for the epic; color reflects bug time logged vs task time logged (green <10%, yellow 10-15%, red >15%)">Bug Load</th>
+                                    <th class="v2-table-num @SI("BugTime", _sortEP, _ascEP)" @onclick='() => SortEP("BugTime")' title="Bug count for the epic; color reflects bug time logged as a share of total hours logged in the epic this sprint (green <10%, yellow 10-15%, red >15%)">Bug Load</th>
                                     <th title="Stale · Blocked · Unestimated">Flags</th>
                                     <th class="v2-table-num @SI("Logged", _sortEP, _ascEP)" @onclick='() => SortEP("Logged")' title="Sprint logged / estimated hours">Logged / Est</th>
                                     <th class="v2-table-num @SI("Remaining", _sortEP, _ascEP)" @onclick='() => SortEP("Remaining")'>Rem.</th>
@@ -1363,7 +1363,7 @@
                                         <td class="v2-table-num">
                                             @if (r.BugTotal > 0)
                                             {
-                                                <span class="v2-pill @r.BugTimePill" style="font-size:10px;padding:1px 6px" title="@($"{r.BugTimeH:F0}h bug time / {r.TaskTimeH:F0}h task time = {r.BugTimePct:F0}%")">@r.BugTotal · @r.BugTimePct.ToString("F0")%</span>
+                                                <span class="v2-pill @r.BugTimePill" style="font-size:10px;padding:1px 6px" title="@($"{r.BugTimeH:F0}h bug time of {r.LoggedH:F0}h total logged this sprint = {r.BugTimePct:F0}%")">@r.BugTotal · @r.BugTimePct.ToString("F0")%</span>
                                             }
                                             else
                                             {
@@ -4320,9 +4320,12 @@
             var taskToDo   = taskList.Count(i => i.StatusCategoryKey == "new");
             var bugOpen    = bugList.Count(i => i.StatusCategoryKey != "done");
 
-            var bugTimeH   = bugList.Sum(i => i.TimeSpentSeconds) / 3600.0;
-            var taskTimeH  = taskList.Sum(i => i.TimeSpentSeconds) / 3600.0;
-            var bugTimePct = taskTimeH > 0 ? bugTimeH / taskTimeH * 100.0 : (bugTimeH > 0 ? 100.0 : 0.0);
+            var bugTimeH   = bugList.SelectMany(i => i.Worklogs)
+                             .Where(w => Report?.StartDate == null || w.Started.Date >= Report.StartDate.Value.Date)
+                             .Where(w => Report?.EndDate   == null || w.Started.Date <= Report.EndDate.Value.Date)
+                             .Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
+            var taskTimeH  = ep.LoggedHours - bugTimeH;
+            var bugTimePct = ep.LoggedHours > 0 ? bugTimeH / ep.LoggedHours * 100.0 : 0.0;
             var bugTimePill = bugTimePct > 15 ? "v2-pill-danger" : bugTimePct >= 10 ? "v2-pill-warn" : "v2-pill-success";
 
             var stale   = ep.Issues.Count(i => i.StatusCategoryKey == "indeterminate" && i.DaysSinceLastWorklog >= 2);

@@ -347,10 +347,10 @@
                 <table class="v2-table">
                     <thead><tr>
                         <th>Sprint</th><th>Window</th>
-                        <th class="v2-table-num" title="All tickets in this sprint's epic (matches Jira parent = epic)">In Sprint</th>
+                        <th class="v2-table-num" title="All tickets tagged to this sprint (matches Jira sprint = <id>)">In Sprint</th>
                         <th class="v2-table-num" title="First appeared in this sprint — not carried from an earlier one">New</th>
                         <th class="v2-table-num" title="Also lived in an earlier sprint (per the Jira sprint field)">Carried In</th>
-                        <th class="v2-table-num" title="Done tickets in this sprint's epic (matches Jira parent = epic AND status = Done)">Done</th>
+                        <th class="v2-table-num" title="Done tickets tagged to this sprint (matches Jira sprint = <id> AND status = Done)">Done</th>
                         <th class="v2-table-num" title="Also appears in a later sprint — work continued past this one">Spilled</th>
                         <th class="v2-table-num" title="Bugs in no configured sprint with activity (worklog, created, resolved or updated) inside this window">No Sprint</th>
                         <th class="v2-table-num" title="Done ÷ In Sprint">Compl.</th>
@@ -428,20 +428,30 @@
                 </div>
                 @if (expanded)
                 {
-                    var custRows    = SprintByCustomer(s.Name, s.Start, s.End);
-                    var labelRows   = SprintByLabel(s.Name, s.Start, s.End);
-                    var workedRows  = SprintWorkedBy(s.Name, s.Start, s.End);
+                    // Worklog-date bound follows the Window filter — per its own tooltip, Window
+                    // is the page's "does this event count toward the hours-logged stats" control
+                    // and (unlike Working Date) never removes a ticket, only shapes which worklogs
+                    // count. Matches how Breakdowns' "Logged (window)" column already works.
+                    var custRows    = SprintByCustomer(s.Name, _rangeStart, _rangeEnd);
+                    var labelRows   = SprintByLabel(s.Name, _rangeStart, _rangeEnd);
+                    var workedRows  = SprintWorkedBy(s.Name, _rangeStart, _rangeEnd);
                     var workedTotal = workedRows.Sum(w => w.LoggedSeconds);
                     <div class="st-sprint-body">
+                        <div class="st-sprint-export">
+                            <button class="btn small" @onclick="() => ExportSprintBreakdownAsync(s.Name, prioBugs, prioRedesigns, custRows, labelRows, workedRows)"
+                                    title="Export this sprint's breakdown tables to Excel">
+                                <i class="bi bi-file-earmark-excel"></i> Export
+                            </button>
+                        </div>
                         <!-- By priority, split by issue type: Bugs vs Redesign -->
                         <div class="v2-grid-2">
                             <div class="st-sprint-sub">
                                 <div class="st-card-title"><i class="bi bi-bug"></i> By priority — Bugs <span class="st-scope">@bugTotal ticket@(bugTotal == 1 ? "" : "s")</span></div>
-                                @SprintPriorityTable(prioBugs, bugTotal, "Bugs")
+                                @SprintPriorityTable(prioBugs, bugTotal, "Bugs", s.Name)
                             </div>
                             <div class="st-sprint-sub">
                                 <div class="st-card-title"><i class="bi bi-pencil-square"></i> By priority — Redesign <span class="st-scope">@redesignTotal ticket@(redesignTotal == 1 ? "" : "s")</span></div>
-                                @SprintPriorityTable(prioRedesigns, redesignTotal, "Redesigns")
+                                @SprintPriorityTable(prioRedesigns, redesignTotal, "Redesigns", s.Name)
                             </div>
                         </div>
 
@@ -477,7 +487,12 @@
             <div class="v2-card">
                 <div class="st-card-title st-bk-head">
                     <span><i class="bi bi-building"></i> By customer</span>
-                    <input class="st-bk-search" placeholder="Filter customers…" @bind="_custFilter" @bind:event="oninput" />
+                    <div class="st-bk-head-tools">
+                        <input class="st-bk-search" placeholder="Filter customers…" @bind="_custFilter" @bind:event="oninput" />
+                        <button class="btn small" @onclick="ExportByCustomerAsync" title="Export this table to Excel">
+                            <i class="bi bi-file-earmark-excel"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="v2-table-wrap st-bk-scroll" style="margin:0">
                     <table class="v2-table" style="font-size:12px">
@@ -498,7 +513,7 @@
                                     <td class="v2-table-num v2-text-success">@c.Closed</td>
                                     <td class="v2-table-num">@FmtHM(c.LoggedSeconds)</td>
                                     <td class="v2-table-num">@(c.AvgResolve.HasValue ? $"{c.AvgResolve:0.0}d" : "—")</td>
-                                    <td class="v2-table-num">@ShareCell(c.Total, _bugs.Count)</td>
+                                    <td class="v2-table-num">@ShareCell(c.Total, PoolBySprintAndProduct.Count())</td>
                                 </tr>
                             }
                             @if (!SortFilterGroups(ByCustomer, _custSortCol, _custAsc, _custFilter).Any()) { <tr><td colspan="6" class="st-muted-cell">No customer data</td></tr> }
@@ -511,7 +526,12 @@
             <div class="v2-card">
                 <div class="st-card-title st-bk-head">
                     <span><i class="bi bi-tags"></i> By label</span>
-                    <input class="st-bk-search" placeholder="Filter labels…" @bind="_labelFilter" @bind:event="oninput" />
+                    <div class="st-bk-head-tools">
+                        <input class="st-bk-search" placeholder="Filter labels…" @bind="_labelFilter" @bind:event="oninput" />
+                        <button class="btn small" @onclick="ExportByLabelAsync" title="Export this table to Excel">
+                            <i class="bi bi-file-earmark-excel"></i>
+                        </button>
+                    </div>
                 </div>
                 <div class="v2-table-wrap st-bk-scroll" style="margin:0">
                     <table class="v2-table" style="font-size:12px">
@@ -532,7 +552,7 @@
                                     <td class="v2-table-num v2-text-success">@l.Closed</td>
                                     <td class="v2-table-num">@FmtHM(l.LoggedSeconds)</td>
                                     <td class="v2-table-num">@(l.AvgResolve.HasValue ? $"{l.AvgResolve:0.0}d" : "—")</td>
-                                    <td class="v2-table-num">@ShareCell(l.Total, _bugs.Count)</td>
+                                    <td class="v2-table-num">@ShareCell(l.Total, PoolBySprintAndProduct.Count())</td>
                                 </tr>
                             }
                             @if (!SortFilterGroups(ByLabel, _labelSortCol, _labelAsc, _labelFilter).Any()) { <tr><td colspan="6" class="st-muted-cell">No labels</td></tr> }
@@ -546,7 +566,12 @@
         <div class="v2-card" style="margin-top:16px">
             <div class="st-card-title st-bk-head">
                 <span><i class="bi bi-person-workspace"></i> Worked by <span class="st-scope">who actually logged work — by worklog author, not assignee</span></span>
-                <input class="st-bk-search" placeholder="Filter members…" @bind="_workedFilter" @bind:event="oninput" />
+                <div class="st-bk-head-tools">
+                    <input class="st-bk-search" placeholder="Filter members…" @bind="_workedFilter" @bind:event="oninput" />
+                    <button class="btn small" @onclick="ExportWorkedByAsync" title="Export this table to Excel">
+                        <i class="bi bi-file-earmark-excel"></i>
+                    </button>
+                </div>
             </div>
             @{
                 var workedTotalLogged = WorkedBy.Sum(w => w.LoggedSeconds);
@@ -767,6 +792,130 @@
             </div>
         </div>
         }
+
+        @if (_tab == "jssupport")
+        {
+        <!-- ═══ 7. JSSUPPORT BROWSER (on-demand, not part of the main pool) ══════ -->
+        <div class="v2-section">
+            <span class="v2-section-title"><i class="bi bi-link-45deg"></i> JSSUPPORT Browser <span class="st-scope">every ticket linked to a JSSUPPORT request in the range below · fetched on demand · Product/Sprint/Window filters above don't apply here</span></span>
+        </div>
+
+        <div class="v2-card" style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px;padding:14px 16px">
+            <div class="st-tool-group">
+                <span class="st-tool-label">From</span>
+                <InputDate TValue="DateOnly?" class="st-input" @bind-Value="_jsFrom" />
+            </div>
+            <div class="st-tool-group">
+                <span class="st-tool-label">To</span>
+                <InputDate TValue="DateOnly?" class="st-input" @bind-Value="_jsTo" />
+            </div>
+            <label class="st-work-chk" title="Bypass the cache and re-fetch from Jira">
+                <input type="checkbox" @bind="_jsForce" /> Force refresh
+            </label>
+            <button class="btn primary" disabled="@_jsLoading" @onclick="LoadJsSupportBrowseAsync">
+                @if (_jsLoading) { <span class="v2-spin" style="margin-right:6px"></span> }
+                Fetch
+            </button>
+            @if (_jsLoadedOnce)
+            {
+                <input class="st-bug-search" style="margin-left:auto" placeholder="Filter key or summary…" @bind="_jsSearch" @bind:event="oninput" />
+                <button class="btn small" disabled="@(!JsFiltered.Any())" @onclick="ExportJsSupportAsync" title="Export to Excel">
+                    <i class="bi bi-file-earmark-excel"></i> Export
+                </button>
+            }
+        </div>
+
+        @if (!string.IsNullOrEmpty(_jsError))
+        {
+            <div class="st-banner st-banner-danger" style="margin-top:12px"><i class="bi bi-exclamation-triangle"></i> @_jsError</div>
+        }
+
+        @if (!_jsLoadedOnce && !_jsLoading)
+        {
+            <div class="st-empty" style="margin-top:12px">
+                <i class="bi bi-link-45deg"></i>
+                <p>Pick a date range and press Fetch to pull every JSSUPPORT-linked ticket in it — independent of the sprint pool above.</p>
+            </div>
+        }
+        else if (_jsLoadedOnce)
+        {
+            <div class="v2-card" style="margin-top:12px">
+                <div class="st-card-title">@JsFiltered.Count() of @_jsResults.Count ticket@(_jsResults.Count == 1 ? "" : "s")</div>
+                <div class="v2-table-wrap" style="margin:0">
+                    <table class="v2-table" style="font-size:12px">
+                        <thead><tr>
+                            <th>Key</th><th>Summary</th><th>Customer</th><th>Product</th><th>Type</th><th>Priority</th><th>Status</th>
+                            <th class="v2-table-num">Logged</th><th>JSSUPPORT</th><th>Resolved</th>
+                        </tr></thead>
+                        <tbody>
+                            @foreach (var b in JsFiltered)
+                            {
+                                var jsKeys = string.Join(", ", b.LinkedIssueKeys.Where(k => k.StartsWith("JSSUPPORT", StringComparison.OrdinalIgnoreCase)));
+                                <tr>
+                                    <td><a class="st-bug-key" href="@JiraUrl(b.Key)" target="_blank" rel="noopener">@b.Key</a></td>
+                                    <td class="st-trunc" style="max-width:320px" title="@b.Summary">@b.Summary</td>
+                                    <td class="st-trunc" style="max-width:160px" title="@b.Customer">@(string.IsNullOrWhiteSpace(b.Customer) ? "—" : b.Customer)</td>
+                                    <td class="st-trunc" style="max-width:140px" title="@ProductOf(b)">@ProductOf(b)</td>
+                                    <td>@b.IssueType</td>
+                                    <td><span class="v2-pill @PriorityPill(b.Priority)">@b.Priority</span></td>
+                                    <td><span class="st-status @(IsDone(b) ? "st-status-done" : "st-status-open")">@b.Status</span></td>
+                                    <td class="v2-table-num">@(b.TimeSpentSeconds > 0 ? FmtHM(b.TimeSpentSeconds) : "—")</td>
+                                    <td class="st-trunc" style="max-width:160px" title="@jsKeys">@jsKeys</td>
+                                    <td>@(b.ResolutionDate.HasValue ? b.ResolutionDate.Value.ToString("dd MMM yy") : "—")</td>
+                                </tr>
+                            }
+                            @if (!JsFiltered.Any()) { <tr><td colspan="10" class="st-muted-cell">No tickets match this filter.</td></tr> }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        }
+        }
+    }
+
+    @if (_showPriorityModal)
+    {
+        <div class="v2-modal-overlay" @onclick="ClosePriorityModal">
+            <div class="v2-modal" style="max-width:1000px" @onclick:stopPropagation="true">
+                <div class="v2-modal-head">
+                    <div>
+                        <div class="v2-modal-title"><i class="bi bi-list-ul"></i> @_priorityModalTitle</div>
+                        <div class="v2-modal-sub">@_priorityModalRows.Count ticket@(_priorityModalRows.Count == 1 ? "" : "s")</div>
+                    </div>
+                    <button class="v2-modal-close" @onclick="ClosePriorityModal" title="Close">&times;</button>
+                </div>
+                <div class="v2-modal-body">
+                    @if (_priorityModalRows.Count == 0)
+                    {
+                        <div class="st-muted-cell" style="padding:6px 2px">No tickets in this bucket.</div>
+                    }
+                    else
+                    {
+                        <div class="v2-table-wrap" style="margin:0">
+                            <table class="v2-table" style="font-size:12px">
+                                <thead><tr>
+                                    <th>Key</th><th>Summary</th><th>Customer</th><th>Product</th>
+                                    <th>Status</th><th class="v2-table-num">Logged</th>
+                                </tr></thead>
+                                <tbody>
+                                    @foreach (var b in _priorityModalRows)
+                                    {
+                                        <tr>
+                                            <td><a class="v2-table-key v2-key-link" href="@JiraUrl(b.Key)" target="_blank" rel="noopener">@b.Key</a></td>
+                                            <td class="st-trunc" style="max-width:340px" title="@b.Summary">@b.Summary</td>
+                                            <td class="st-trunc" style="max-width:160px" title="@b.Customer">@(string.IsNullOrWhiteSpace(b.Customer) ? "—" : b.Customer)</td>
+                                            <td class="st-trunc" style="max-width:140px" title="@ProductOf(b)">@ProductOf(b)</td>
+                                            <td><span class="st-status @(IsDone(b) ? "st-status-done" : "st-status-open")">@b.Status</span></td>
+                                            <td class="v2-table-num">@(b.TimeSpentSeconds > 0 ? FmtHM(b.TimeSpentSeconds) : "—")</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
     }
 </div>
 
@@ -820,19 +969,38 @@
     private static string FallbackSprintName(SprintIssue b) =>
         string.IsNullOrWhiteSpace(b.SprintName) ? NoSprintLabel : b.SprintName;
 
+    // A sprint (configured or a fallback Jira sprint name) is offered in the dropdown only
+    // if it was open at some point during the Window range — unknown dates are kept rather
+    // than hidden. "No Sprint" is never date-filtered; it's always offered.
+    private bool SprintOverlapsWindow(DateTime? start, DateTime? end)
+    {
+        if (!start.HasValue && !end.HasValue) return true;
+        var s = start.HasValue ? DateOnly.FromDateTime(start.Value) : DateOnly.MinValue;
+        var e = end.HasValue ? DateOnly.FromDateTime(end.Value) : DateOnly.MaxValue;
+        return s <= _rangeEnd && e >= _rangeStart;
+    }
+
     private List<(string Name, int Count)> AllSprintOptions
     {
         get
         {
             var configOptions = _configs
+                .Where(c => SprintOverlapsWindow(c.StartDate.ToDateTime(TimeOnly.MinValue), c.EndDate.ToDateTime(TimeOnly.MinValue)))
                 .OrderByDescending(c => c.StartDate)
                 .Select(c => (Name: ConfigName(c), Count: _allBugsPool.Count(b => BugInConfigSprint(b, c))));
 
             var unconfigured = _allBugsPool.Where(b => !InAnyConfigSprint(b)).ToList();
+            var fallbackDates = unconfigured
+                .SelectMany(b => b.Sprints)
+                .Where(sp => !string.IsNullOrWhiteSpace(sp.Name))
+                .GroupBy(sp => sp.Name)
+                .ToDictionary(g => g.Key, g => g.First());
+
             var extraOptions = unconfigured
                 .Select(FallbackSprintName)
                 .Where(n => n != NoSprintLabel)
                 .Distinct()
+                .Where(n => !fallbackDates.TryGetValue(n, out var sp) || SprintOverlapsWindow(sp.StartDate, sp.EndDate))
                 .Select(n => (Name: n, Count: unconfigured.Count(b => FallbackSprintName(b) == n)))
                 .OrderByDescending(g => g.Count);
 
@@ -843,15 +1011,13 @@
         }
     }
 
-    private bool BugInConfigSprint(SprintIssue b, SprintConfig c) =>
-        (!string.IsNullOrWhiteSpace(c.EpicKey) &&
-         string.Equals(b.EpicKey?.Trim(), c.EpicKey.Trim(), StringComparison.OrdinalIgnoreCase))
-        || b.Sprints.Any(js => SprintMatches(js, c));
+    private static bool BugInConfigSprint(SprintIssue b, SprintConfig c) =>
+        b.Sprints.Any(js => SprintMatches(js, c));
 
     private bool InAnyConfigSprint(SprintIssue b) => _configs.Any(c => BugInConfigSprint(b, c));
 
-    // Bug Explorer "Sprint" column — resolves each bug to its owning config sprint (epic-scoped)
-    // first, then falls back to its real Jira sprint name when it isn't under a configured epic.
+    // Bug Explorer "Sprint" column — resolves each bug to its owning config sprint (matched via
+    // the Jira Sprint field) first, then falls back to its real Jira sprint name otherwise.
     private string SprintNameFor(SprintIssue b)
     {
         var cfg = _configs.FirstOrDefault(c => BugInConfigSprint(b, c));
@@ -981,6 +1147,7 @@
         new("sprints",    "Sprints",    "bi-calendar3"),
         new("breakdowns", "Breakdowns", "bi-diagram-3"),
         new("bugs",       "Bugs",       "bi-bug"),
+        new("jssupport",  "JSSUPPORT",  "bi-link-45deg"),
     };
 
     private void SetTab(string t)
@@ -990,6 +1157,76 @@
     }
 
     private void SetBugFilter(string f) { _bugFilter = f; _chartsNeedRender = true; }
+
+    // ── Priority drill-down modal (per-sprint "By priority" tables) ───────────
+    private bool _showPriorityModal;
+    private string _priorityModalTitle = "";
+    private List<SprintIssue> _priorityModalRows = new();
+
+    private void OpenPriorityModal(string title, IReadOnlyList<SprintIssue> issues)
+    {
+        _priorityModalTitle = title;
+        _priorityModalRows = issues.OrderByDescending(b => b.TimeSpentSeconds).ToList();
+        _showPriorityModal = true;
+    }
+
+    private void ClosePriorityModal() => _showPriorityModal = false;
+
+    // ── JSSUPPORT tab: on-demand, unfiltered browse of every JSSUPPORT-linked ticket in
+    // the date range the user picks — separate from the main pool (no activity-recency
+    // narrowing), only fetched when the user presses Fetch. ──
+    private DateOnly? _jsFrom;
+    private DateOnly? _jsTo;
+    private bool _jsForce;
+    private bool _jsLoading;
+    private bool _jsLoadedOnce;
+    private string _jsError = "";
+    private string _jsSearch = "";
+    private List<SprintIssue> _jsResults = new();
+
+    private IEnumerable<SprintIssue> JsFiltered =>
+        string.IsNullOrWhiteSpace(_jsSearch)
+            ? _jsResults
+            : _jsResults.Where(b =>
+                b.Key.Contains(_jsSearch.Trim(), StringComparison.OrdinalIgnoreCase) ||
+                b.Summary.Contains(_jsSearch.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private async Task LoadJsSupportBrowseAsync()
+    {
+        if (_jsFrom is not DateOnly from || _jsTo is not DateOnly to) { _jsError = "Pick a From and To date."; return; }
+        if (to < from) (from, to) = (to, from);
+
+        _jsLoading = true;
+        _jsError = "";
+        StateHasChanged();
+        try
+        {
+            var report = await JiraService.GetJsSupportBugsBrowseAsync(from, to, _jsForce);
+            _jsResults = (report.Issues ?? new())
+                .Where(b => b.LinkedIssueKeys.Any(k => k.StartsWith("JSSUPPORT", StringComparison.OrdinalIgnoreCase)))
+                .OrderByDescending(b => b.Created)
+                .ToList();
+            _jsLoadedOnce = true;
+        }
+        catch (Exception ex)
+        {
+            _jsError = $"Failed to load JSSUPPORT bugs: {ex.Message}";
+        }
+        finally
+        {
+            _jsLoading = false;
+        }
+    }
+
+    private async Task ExportJsSupportAsync()
+    {
+        var rows = JsFiltered.ToList();
+        if (rows.Count == 0) return;
+        using var wb = new XLWorkbook();
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddBugSheet(wb, usedNames, "JSSUPPORT Bugs", rows);
+        await DownloadWorkbookAsync(wb, "support-trends-jssupport");
+    }
 
     // Bugs-tab analytics charts are collapsed by default; their canvases only exist
     // in the DOM while expanded, so re-render is requested on expand.
@@ -1064,6 +1301,8 @@
             _fullEnd   = _configs.Max(c => c.EndDate);
             _rangeStart = _fullStart;
             _rangeEnd   = _fullEnd;
+            _jsFrom = _fullStart;
+            _jsTo   = _fullEnd;
         }
 
         if (_epicKeys.Count > 0) await ReloadAsync();
@@ -1093,41 +1332,37 @@
         try
         {
             // Sequential on purpose: the cached fetches share the circuit's scoped DbContext,
-            // which is not thread-safe. Closed sprints come straight from the DB, so only the
-            // current sprint's hot window actually hits Jira on a normal reload.
-            var results = new List<List<SprintIssue>>();
+            // which is not thread-safe. Epics no longer feed the bug pool (a ticket silently
+            // moving to a different sprint's epic used to make it vanish from here) — this
+            // loop now only resolves each configured sprint's Frozen/Live badge.
             foreach (var epicKey in _epicKeys)
-                results.Add(await FetchEpicAsync(epicKey));
+                await FetchEpicFreezeStatusAsync(epicKey);
 
-            // Pool + de-dupe by issue key (an issue could surface under more than one epic).
-            var pool = results
-                .SelectMany(r => r)
-                .GroupBy(b => b.Key)
-                .Select(g => g.First())
-                .ToList();
-
-            // JSSUPPORT-linked bugs outside the configured epics — same set as the Support
-            // Bugs page's "JSSUPPORT Linked" tab: linked to a JSSUPPORT ticket, with worklog
-            // activity since the full window start OR resolved within the window (bugs can
-            // be closed without anyone logging time on them).
+            // The bug pool = every ticket linked to a JSSUPPORT ticket, full stop — not epic
+            // parentage. Sprint membership (26.12, 26.11, ...) is resolved separately per
+            // ticket via the Jira Sprint field (see BugInConfigSprint/SprintMatches).
             _linkedFetchFailed = false;
+            List<SprintIssue> pool;
             try
             {
                 var linked = await JiraService.GetJsSupportLinkedBugsAsync(_fullStart, _fullEnd, _forceReload);
                 TrackSync(linked.SyncedAt);
-                var known = pool.Select(b => b.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var startAt = _fullStart.ToDateTime(TimeOnly.MinValue);
                 var endAt = _fullEnd.AddDays(1).ToDateTime(TimeOnly.MinValue);
-                var extra = (linked.Issues ?? new())
-                    .Where(b => !known.Contains(b.Key))
+                pool = (linked.Issues ?? new())
                     .Where(b => b.LinkedIssueKeys.Any(k => k.StartsWith("JSSUPPORT", StringComparison.OrdinalIgnoreCase)))
                     .Where(b => b.Worklogs.Any(w => w.TimeSpentSeconds > 0 && w.Started >= startAt)
                              || (b.ResolutionDate >= startAt && b.ResolutionDate < endAt))
+                    .GroupBy(b => b.Key)
+                    .Select(g => g.First())
                     .ToList();
-                foreach (var b in extra) b.EpicName = "JSSUPPORT Linked";   // origin marker
-                pool.AddRange(extra);
             }
-            catch { _linkedFetchFailed = true; }
+            catch (Exception ex)
+            {
+                _linkedFetchFailed = true;
+                pool = new();
+                _error = $"Failed to load JSSUPPORT-linked bugs: {ex.Message}";
+            }
 
             _allBugsPool = pool;
             ApplyPoolFilters();
@@ -1148,13 +1383,13 @@
             _oldestSync = syncedAt;
     }
 
-    private async Task<List<SprintIssue>> FetchEpicAsync(string epicKey)
+    // Resolves a configured epic's Frozen/Live + Close-Sprint badge only — its issues no
+    // longer feed the bug pool (see ReloadCoreAsync), so the fetched report is discarded
+    // once the freeze metadata is read.
+    private async Task FetchEpicFreezeStatusAsync(string epicKey)
     {
         try
         {
-            // Cached fetch (includes every child type under the epic, so logged hours
-            // reconcile with a Jira "parent = EPIC" total). Closed sprints are served from
-            // the DB; the current sprint merges a delta of recently-updated issues.
             var sprintEnd = _configs
                 .Where(c => string.Equals(c.EpicKey.Trim(), epicKey, StringComparison.OrdinalIgnoreCase))
                 .Select(c => (DateOnly?)c.EndDate)
@@ -1164,12 +1399,10 @@
             TrackSync(report.SyncedAt);
             _epicManuallyFrozen[epicKey] = report.ManuallyFrozen;
             _epicFrozen[epicKey] = await JiraService.IsSupportEpicFrozenAsync(epicKey, sprintEnd);
-            return report.Issues ?? new();
         }
         catch
         {
             _failedEpics.Add(epicKey);
-            return new();
         }
         finally
         {
@@ -1357,10 +1590,10 @@
     private static readonly string[] PriorityOrder = { "Critical", "Highest", "High", "Medium", "Low", "Lowest" };
 
     // ── Tickets by priority (all-time counts) ─────────────────────────────────
-    private record PriorityCount(string Name, int Total, int Open, int Closed, double? AvgFixHours);
+    private record PriorityCount(string Name, int Total, int Open, int Closed, double? AvgFixHours, IReadOnlyList<SprintIssue> Issues);
     private IEnumerable<PriorityCount> ByPriority =>
         _bugs.GroupBy(b => string.IsNullOrWhiteSpace(b.Priority) ? "Medium" : b.Priority)
-             .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g)))
+             .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g), g.ToList()))
              .OrderBy(p => { var i = Array.IndexOf(PriorityOrder, p.Name); return i < 0 ? 99 : i; });
 
     // Same priority breakdown as ByPriority, but scoped to the tickets that belonged to one
@@ -1373,7 +1606,7 @@
             src = src.Where(b => string.Equals(b.IssueType, issueType, StringComparison.OrdinalIgnoreCase));
         return src
              .GroupBy(b => string.IsNullOrWhiteSpace(b.Priority) ? "Medium" : b.Priority)
-             .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g)))
+             .Select(g => new PriorityCount(g.Key, g.Count(), g.Count(b => !IsDone(b)), g.Count(IsDone), AvgDevReadyToDoneHoursOf(g), g.ToList()))
              .OrderBy(p => { var i = Array.IndexOf(PriorityOrder, p.Name); return i < 0 ? 99 : i; });
     }
 
@@ -1507,12 +1740,128 @@
         if (noSprint.Count > 0)
             AddBugSheet(wb, usedNames, "S - No sprint", rows.Where(noSprint.Contains).ToList());
 
+        await DownloadWorkbookAsync(wb, "support-trends-bugs");
+    }
+
+    private async Task DownloadWorkbookAsync(XLWorkbook wb, string fileNameBase)
+    {
         using var ms = new MemoryStream();
         wb.SaveAs(ms);
         await JS.InvokeVoidAsync("downloadBase64File",
             Convert.ToBase64String(ms.ToArray()),
-            $"support-trends-bugs-{DateTime.Today:yyyy-MM-dd}.xlsx",
+            $"{fileNameBase}-{DateTime.Today:yyyy-MM-dd}.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    }
+
+    // ── Breakdowns tab exports (By customer / By label / Worked by) ─────────
+    private async Task ExportByCustomerAsync()
+    {
+        var rows = SortFilterGroups(ByCustomer, _custSortCol, _custAsc, _custFilter).ToList();
+        if (rows.Count == 0) return;
+        using var wb = new XLWorkbook();
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddGroupStatSheet(wb, usedNames, "By Customer", "Customer", rows, PoolBySprintAndProduct.Count(), shareByLogged: false);
+        await DownloadWorkbookAsync(wb, "support-trends-by-customer");
+    }
+
+    private async Task ExportByLabelAsync()
+    {
+        var rows = SortFilterGroups(ByLabel, _labelSortCol, _labelAsc, _labelFilter).ToList();
+        if (rows.Count == 0) return;
+        using var wb = new XLWorkbook();
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddGroupStatSheet(wb, usedNames, "By Label", "Label", rows, PoolBySprintAndProduct.Count(), shareByLogged: false);
+        await DownloadWorkbookAsync(wb, "support-trends-by-label");
+    }
+
+    private async Task ExportWorkedByAsync()
+    {
+        var rows = SortFilterGroups(WorkedBy, _workedSortCol, _workedAsc, _workedFilter).ToList();
+        if (rows.Count == 0) return;
+        var workedTotalLogged = WorkedBy.Sum(w => w.LoggedSeconds);
+        using var wb = new XLWorkbook();
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        AddGroupStatSheet(wb, usedNames, "Worked By", "Member", rows, workedTotalLogged, shareByLogged: true);
+        await DownloadWorkbookAsync(wb, "support-trends-worked-by");
+    }
+
+    private static void AddGroupStatSheet(XLWorkbook wb, HashSet<string> usedNames, string sheetName,
+        string nameCol, IReadOnlyList<GroupStat> rows, int shareWhole, bool shareByLogged)
+    {
+        var ws = wb.Worksheets.Add(SheetName(usedNames, sheetName));
+        var headers = new[] { nameCol, "Bugs", "Closed", "Open", "Logged", "Logged (window)", "Avg Resolve (d)", "Share" };
+        for (var c = 0; c < headers.Length; c++)
+        {
+            ws.Cell(1, c + 1).Value = headers[c];
+            ws.Cell(1, c + 1).Style.Font.Bold = true;
+        }
+
+        var r = 2;
+        foreach (var g in rows)
+        {
+            ws.Cell(r, 1).Value = g.Name;
+            ws.Cell(r, 2).Value = g.Total;
+            ws.Cell(r, 3).Value = g.Closed;
+            ws.Cell(r, 4).Value = g.Open;
+            SetHoursCell(ws.Cell(r, 5), g.LoggedSeconds > 0 ? g.LoggedSeconds : null);
+            SetHoursCell(ws.Cell(r, 6), g.WindowLoggedSeconds > 0 ? g.WindowLoggedSeconds : null);
+            if (g.AvgResolve.HasValue) ws.Cell(r, 7).Value = Math.Round(g.AvgResolve.Value, 1);
+            ws.Cell(r, 8).Value = ShareCell(shareByLogged ? g.LoggedSeconds : g.Total, shareWhole);
+            r++;
+        }
+        ws.SheetView.FreezeRows(1);
+        ws.Columns().AdjustToContents();
+    }
+
+    private static void AddPriorityCountSheet(XLWorkbook wb, HashSet<string> usedNames, string sheetName, IReadOnlyList<PriorityCount> rows)
+    {
+        var ws = wb.Worksheets.Add(SheetName(usedNames, sheetName));
+        var headers = new[] { "Priority", "Total", "Open", "Closed", "Avg Fix (h)" };
+        for (var c = 0; c < headers.Length; c++)
+        {
+            ws.Cell(1, c + 1).Value = headers[c];
+            ws.Cell(1, c + 1).Style.Font.Bold = true;
+        }
+
+        var r = 2;
+        foreach (var p in rows)
+        {
+            ws.Cell(r, 1).Value = p.Name;
+            ws.Cell(r, 2).Value = p.Total;
+            ws.Cell(r, 3).Value = p.Open;
+            ws.Cell(r, 4).Value = p.Closed;
+            if (p.AvgFixHours.HasValue) ws.Cell(r, 5).Value = Math.Round(p.AvgFixHours.Value, 1);
+            r++;
+        }
+        ws.SheetView.FreezeRows(1);
+        ws.Columns().AdjustToContents();
+    }
+
+    // ── Sprints tab: export one sprint's whole breakdown (priority/customer/label/worked-by) ──
+    private async Task ExportSprintBreakdownAsync(string sprintName, List<PriorityCount> prioBugs,
+        List<PriorityCount> prioRedesigns, List<GroupStat> custRows, List<GroupStat> labelRows, List<GroupStat> workedRows)
+    {
+        if (prioBugs.Count == 0 && prioRedesigns.Count == 0 && custRows.Count == 0 && labelRows.Count == 0 && workedRows.Count == 0)
+            return;
+
+        var sprintTotal = BugsInSprint(sprintName).Count();
+        var workedTotal = workedRows.Sum(w => w.LoggedSeconds);
+
+        using var wb = new XLWorkbook();
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (prioBugs.Count > 0) AddPriorityCountSheet(wb, usedNames, "Priority - Bugs", prioBugs);
+        if (prioRedesigns.Count > 0) AddPriorityCountSheet(wb, usedNames, "Priority - Redesigns", prioRedesigns);
+        if (custRows.Count > 0) AddGroupStatSheet(wb, usedNames, "By Customer", "Customer", custRows, sprintTotal, shareByLogged: false);
+        if (labelRows.Count > 0) AddGroupStatSheet(wb, usedNames, "By Label", "Label", labelRows, sprintTotal, shareByLogged: false);
+        if (workedRows.Count > 0) AddGroupStatSheet(wb, usedNames, "Worked By", "Member", workedRows, workedTotal, shareByLogged: true);
+
+        await DownloadWorkbookAsync(wb, $"support-trends-sprint-{SanitizeFileNamePart(sprintName)}");
+    }
+
+    private static string SanitizeFileNamePart(string raw)
+    {
+        foreach (var ch in Path.GetInvalidFileNameChars()) raw = raw.Replace(ch, '-');
+        return raw.Trim();
     }
 
     private static void AddBugSheet(XLWorkbook wb, HashSet<string> usedNames, string name, List<SprintIssue> rows)
@@ -1622,8 +1971,19 @@
     private record GroupStat(string Name, int Total, int Closed, int Open, int LoggedSeconds, int WindowLoggedSeconds, double? AvgResolve,
         int LoggedDoneSeconds = 0);   // logged (in window) on Done tickets only — filled by the Sprints-tab breakdowns
 
+    // Sprint + Product filtered, but deliberately NOT gated by Working Date. Working Date
+    // is a real, page-wide filter by design (it removes bugs based on last-updated) — but
+    // that makes it drop still-open tickets from these per-person/customer/label tables
+    // even when they were actively worked on, which doesn't reconcile with a live Jira
+    // `sprint = <id> and worklogDate ...` JQL. Window (not Working Date) is the control
+    // meant to shape "hours logged" style stats without removing tickets — see its tooltip.
+    private IEnumerable<SprintIssue> PoolBySprintAndProduct =>
+        _allBugsPool.Where(b =>
+            (_selectedProducts.Count == 0 || _selectedProducts.Contains(ProductOf(b))) &&
+            MatchesSprintFilter(b));
+
     private IEnumerable<GroupStat> ByCustomer =>
-        _bugs.Where(b => !string.IsNullOrWhiteSpace(b.Customer))
+        PoolBySprintAndProduct.Where(b => !string.IsNullOrWhiteSpace(b.Customer))
              .GroupBy(b => b.Customer)
              .Select(g => new GroupStat(g.Key, g.Count(), g.Count(IsDone), g.Count(b => !IsDone(b)),
                  g.Sum(b => b.TimeSpentSeconds),
@@ -1631,7 +1991,7 @@
                  AvgResolveOf(g)));
 
     private IEnumerable<GroupStat> ByLabel =>
-        _bugs.SelectMany(b => (b.Labels ?? new()).Select(l => (Label: l, Bug: b)))
+        PoolBySprintAndProduct.SelectMany(b => (b.Labels ?? new()).Select(l => (Label: l, Bug: b)))
              .Where(x => !string.IsNullOrWhiteSpace(x.Label))
              .GroupBy(x => x.Label)
              .Select(g => new GroupStat(g.Key, g.Count(), g.Count(x => IsDone(x.Bug)), g.Count(x => !IsDone(x.Bug)),
@@ -1643,7 +2003,7 @@
     // Mirrors the Metrics tab "Worklog effort by author" chart (same logged-hours totals),
     // but as a sortable/filterable table with the bugs they touched.
     private IEnumerable<GroupStat> WorkedBy =>
-        _bugs.SelectMany(b => b.Worklogs
+        PoolBySprintAndProduct.SelectMany(b => b.Worklogs
                  .Where(w => !string.IsNullOrWhiteSpace(w.Author))
                  .Select(w => (Author: w.Author, Bug: b, Sec: w.TimeSpentSeconds,
                                WinSec: InRange(w.Started) ? w.TimeSpentSeconds : 0)))
@@ -1708,12 +2068,12 @@
              .OrderByDescending(g => g.TotalHours)
              .ToList();
 
-    // ── Sprint-over-sprint (epic-scoped, with sprint-field carry-over) ─────────
-    // Each configured sprint owns one planning epic (e.g. 26.12 → JM-18265), so a
-    // sprint's tickets = that epic's children — this reconciles exactly with Jira's
-    // `parent = <epic>` count. The Jira sprint field (customfield_10020, captured as
-    // issue.Sprints) is then used *only* to detect movement: whether a ticket also
-    // lived in an earlier or later configured sprint.
+    // ── Sprint-over-sprint (matched via Jira's own Sprint field) ───────────────
+    // A sprint's tickets = whichever bugs carry that Jira Sprint (customfield_10020,
+    // captured as issue.Sprints) in their sprint history — reconciles exactly with a
+    // live `sprint = <id>` JQL, including tickets that were worked on during the sprint
+    // but have since been re-parented to a later sprint's epic (epic parentage is no
+    // longer used for sprint membership at all — see ReloadCoreAsync).
 
     private string ConfigName(SprintConfig c) => string.IsNullOrWhiteSpace(c.Name) ? c.EpicKey : c.Name;
 
@@ -1724,11 +2084,6 @@
         (cfg.SprintId == 0 && js.Id == 0 &&
          !string.IsNullOrWhiteSpace(cfg.Name) && !string.IsNullOrWhiteSpace(js.Name) &&
          js.Name.Contains(cfg.Name.Trim(), StringComparison.OrdinalIgnoreCase));
-
-    // Tickets belonging to a configured sprint = the children of its planning epic.
-    private IEnumerable<SprintIssue> EpicBugsFor(SprintConfig c) =>
-        _bugs.Where(b => !string.IsNullOrWhiteSpace(c.EpicKey) &&
-                         string.Equals(b.EpicKey?.Trim(), c.EpicKey.Trim(), StringComparison.OrdinalIgnoreCase));
 
     // Ordinals (chronological index) of every configured sprint this ticket's Jira sprint
     // history touches. Used to tell carried-in (was in an earlier sprint) from spilled
@@ -1742,11 +2097,22 @@
         return set.ToList();
     }
 
-    // Bugs of the sprint whose display name is `sprintName` (epic-scoped).
+    // Product-filtered view of the full pool, deliberately independent of the page's
+    // Working Date filter — that filter's default mode keeps a bug only if its last
+    // Jira *update* falls in range, which drops still-open tickets that keep getting
+    // touched after the window (unrelated to whether work was logged in-window). The
+    // Sprints tab wants ticket/hour totals that reconcile with a live Jira
+    // `sprint = <id> and worklogDate >= X and worklogDate <= Y` JQL, so date-window
+    // narrowing here happens only at the worklog level (see InWin below), not by
+    // dropping whole tickets from the pool first.
+    private IEnumerable<SprintIssue> SprintScopedPool =>
+        _selectedProducts.Count == 0 ? _allBugsPool : _allBugsPool.Where(b => _selectedProducts.Contains(ProductOf(b)));
+
+    // Bugs of the sprint whose display name is `sprintName`, matched via Jira's own Sprint field.
     private IEnumerable<SprintIssue> BugsInSprint(string sprintName)
     {
         var c = _configs.FirstOrDefault(x => ConfigName(x) == sprintName);
-        return c == null ? Enumerable.Empty<SprintIssue>() : EpicBugsFor(c);
+        return c == null ? Enumerable.Empty<SprintIssue>() : SprintScopedPool.Where(b => b.Sprints.Any(js => SprintMatches(js, c)));
     }
 
     private record SprintStat(string Name, DateOnly Start, DateOnly End,
@@ -1767,11 +2133,11 @@
         get
         {
             var ordered = _configs.OrderBy(c => c.StartDate).ToList();
-            var noSprintBugs = _bugs.Where(b => !InAnyConfigSprint(b)).ToList();
+            var noSprintBugs = SprintScopedPool.Where(b => !InAnyConfigSprint(b)).ToList();
             return ordered.Select((c, ord) =>
             {
                 var s = c.StartDate; var e = c.EndDate;
-                var epicBugs = EpicBugsFor(c).ToList();
+                var epicBugs = SprintScopedPool.Where(b => b.Sprints.Any(js => SprintMatches(js, c))).ToList();
                 var inSprint = epicBugs.Count;
                 var done     = epicBugs.Count(IsDone);
                 int isNew = 0, carriedIn = 0, spilled = 0, qa = 0;
@@ -2214,7 +2580,8 @@
 
     // Per-sprint priority table for one issue type (Bugs / Redesign on the Sprints tab).
     // Share is computed within the subset, so each table reads as 100% of its own type.
-    private RenderFragment SprintPriorityTable(IReadOnlyList<PriorityCount> rows, int total, string unitLabel) => @<text>
+    // Rows are clickable — opens a modal listing the exact tickets behind that priority's counts.
+    private RenderFragment SprintPriorityTable(IReadOnlyList<PriorityCount> rows, int total, string unitLabel, string sprintName) => @<text>
         @if (total == 0)
         {
             <div class="st-muted-cell" style="padding:6px 2px">No @unitLabel.ToLowerInvariant() belonged to this sprint.</div>
@@ -2226,17 +2593,19 @@
                     <thead><tr>
                         <th>Priority</th><th class="v2-table-num">@unitLabel</th><th class="v2-table-num">Open</th>
                         <th class="v2-table-num">Done</th><th class="v2-table-num" title="Avg logged effort from first Dev Ready → Done">Avg Fix</th><th class="v2-table-num">Share</th>
+                        <th></th>
                     </tr></thead>
                     <tbody>
                         @foreach (var p in rows)
                         {
-                            <tr>
+                            <tr class="st-clickable-row" title="Click to view the @p.Total.ToString() ticket@(p.Total == 1 ? "" : "s") behind this row" @onclick='() => OpenPriorityModal($"{sprintName} · {p.Name} priority {unitLabel}", p.Issues)'>
                                 <td><span class="v2-pill @PriorityPill(p.Name)">@p.Name</span></td>
                                 <td class="v2-table-num">@p.Total</td>
                                 <td class="v2-table-num">@p.Open</td>
                                 <td class="v2-table-num v2-text-success">@p.Closed</td>
                                 <td class="v2-table-num">@(p.AvgFixHours.HasValue ? $"{p.AvgFixHours:0.0}h" : "—")</td>
                                 <td class="v2-table-num">@ShareCell(p.Total, total)</td>
+                                <td class="v2-table-num" style="width:24px"><i class="bi bi-list-ul st-row-view-icon"></i></td>
                             </tr>
                         }
                     </tbody>
@@ -2370,10 +2739,12 @@
     .st-sprint-chev { font-size: 12px; color: var(--v2-ink-3); width: 12px; flex-shrink: 0; }
     .st-sprint-name { font-size: 13px; font-weight: 700; display: inline-flex; align-items: center; gap: 6px; }
     .st-sprint-body { padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+    .st-sprint-export { display: flex; justify-content: flex-end; margin-bottom: -6px; }
     .st-sprint-sub .st-card-title { margin-bottom: 8px; }
 
     /* Breakdowns: filter input + sortable, scrollable tables */
     .st-bk-head { justify-content: space-between; }
+    .st-bk-head-tools { display: flex; align-items: center; gap: 8px; }
     .st-bk-scroll { max-height: 380px; overflow-y: auto; }
     .st-bk-search, .st-bug-search {
         text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 12px;
@@ -2453,6 +2824,12 @@
     .st-status { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; white-space: nowrap; }
     .st-status-done { background: #dcfce7; color: #15803d; }
     .st-status-open { background: #f1f5f9; color: #475569; }
+
+    /* ── Per-sprint priority tables: rows drill down into a ticket-list modal ── */
+    .st-clickable-row { cursor: pointer; }
+    .st-clickable-row:hover { background: var(--v2-surface-2, #f8fafc); }
+    .st-row-view-icon { color: var(--v2-ink-3); }
+    .st-clickable-row:hover .st-row-view-icon { color: var(--v2-brand); }
 
     .st-text-warn { color: #b45309 !important; font-weight: 600; }
 

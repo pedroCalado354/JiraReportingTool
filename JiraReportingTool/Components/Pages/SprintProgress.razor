@@ -97,12 +97,14 @@
                     <span class="sp-chip sp-chip-demo"><span class="k">KEY-1</span><span class="h">2h</span></span> logged (planned)
                     <span class="sp-chip sp-chip-unplanned sp-chip-demo"><span class="k">KEY-2</span><span class="h">1h</span></span> logged (unplanned)
                     <span class="sp-chip sp-chip-ghost sp-chip-demo"><span class="k">KEY-3</span><span class="h">4h</span></span> planned, nothing logged
-                    <span class="sp-legend-hint">Click a cell for the day's detail.</span>
+                    <span class="sp-chip-overspent sp-chip-demo-overspent">KEY-4</span> logged well over its Jira estimate
+                    <span class="sp-legend-hint">Progress = planned tasks completed; red = at risk. Click a cell for the day's detail.</span>
                 </div>
                 <div class="sp-scroll">
                     <table class="sp-table">
                         <colgroup>
                             <col class="sp-col-member" />
+                            <col class="sp-col-progress" />
                             @foreach (var d in _visibleDates)
                             {
                                 <col class="sp-col-date" />
@@ -111,6 +113,7 @@
                         <thead>
                             <tr>
                                 <th class="sp-corner">Member</th>
+                                <th class="sp-corner sp-corner-progress" title="Completed vs planned sprint tasks">Progress</th>
                                 @foreach (var d in _visibleDates)
                                 {
                                     <th class="sp-date-th @DayHeaderClass(d)">
@@ -129,10 +132,12 @@
                             @foreach (var team in _members.GroupBy(m => m.Team))
                             {
                                 <tr class="sp-team-row">
-                                    <td class="sp-team-label" colspan="@(_visibleDates.Count + 1)">@team.Key</td>
+                                    <td class="sp-team-label" colspan="@(_visibleDates.Count + 2)">@team.Key</td>
                                 </tr>
                                 @foreach (var mem in team)
                                 {
+                                    var memKpi = _kpis.TryGetValue(mem.Id, out var mk0) ? mk0 : null;
+                                    var progCls = ProgressClass(memKpi?.TasksDone ?? 0, memKpi?.TasksTotal ?? 0);
                                     <tr>
                                         <td class="sp-sticky-col">
                                             <div class="sp-member-name">@mem.Name</div>
@@ -143,6 +148,26 @@
                                                     <span> · logged @FormatHours(mk.LoggedTotal)</span>
                                                 }
                                             </div>
+                                        </td>
+                                        <td class="sp-sticky-progress @progCls">
+                                            @if (_plan is null || memKpi is null || memKpi.TasksTotal <= 0)
+                                            {
+                                                <div class="sp-prog-none-label">—</div>
+                                            }
+                                            else
+                                            {
+                                                var pct = ProgressPct(memKpi.TasksDone, memKpi.TasksTotal);
+                                                var barCls = pct >= 75 ? "sp-bar-ok" : pct >= 50 ? "sp-bar-under" : "sp-bar-over";
+                                                <div class="sp-prog-pct">@(pct.ToString("0", CultureInfo.InvariantCulture))%</div>
+                                                <div class="sp-prog-frac">@memKpi.TasksDone/@memKpi.TasksTotal tasks</div>
+                                                <div class="sp-minibar sp-prog-bar"><div class="sp-minibar-fill @barCls" style="width:@(pct.ToString("0", CultureInfo.InvariantCulture))%"></div></div>
+                                            }
+                                            @if (_overspentByMember.TryGetValue(mem.Id, out var overList) && overList.Count > 0)
+                                            {
+                                                <div class="sp-prog-overspent" title="@OverspentTooltip(overList)">
+                                                    @overList.Count ticket@(overList.Count == 1 ? "" : "s") over est.
+                                                </div>
+                                            }
                                         </td>
                                         @foreach (var d in _visibleDates)
                                         {
@@ -184,8 +209,8 @@
                                                                     : !ai.IsUnplanned ? ""
                                                                     : ai.PlannedForOther ? " (planned for another member)"
                                                                     : " (not in plan)";
-                                                                <span class="sp-chip @(ai.IsUnplanned ? "sp-chip-unplanned" : ai.IsShifted ? "sp-chip-shifted" : "")"
-                                                                      title="@($"{ai.IssueKey} — {ai.Summary}{suffix}")">
+                                                                <span class="sp-chip @(ai.IsUnplanned ? "sp-chip-unplanned" : ai.IsShifted ? "sp-chip-shifted" : "") @(IsOverspent(mem.Id, ai.IssueKey) ? "sp-chip-overspent" : "")"
+                                                                      title="@($"{ai.IssueKey} — {ai.Summary}{suffix}{(IsOverspent(mem.Id, ai.IssueKey) ? " (logged over Jira estimate)" : "")}")">
                                                                     <span class="k">@ai.IssueKey</span><span class="h">@FormatHours(ai.Hours)</span>
                                                                     @if (ai.IsShifted)
                                                                     {
@@ -202,10 +227,11 @@
                                                         {
                                                             @foreach (var pi in chips.Take(MaxChips))
                                                             {
-                                                                var title = pi.DeliveredElsewhere
+                                                                var pOverspent = pi.JiraKey is not null && IsOverspent(mem.Id, pi.JiraKey);
+                                                                var title = (pi.DeliveredElsewhere
                                                                     ? $"Planned: {pi.Label} — delivered {pi.DeliveredDate:ddd dd MMM} ({OffsetLabel(pi.DeliveredOffsetDays)})"
-                                                                    : $"Planned: {pi.Label}";
-                                                                <span class="sp-chip @(pi.DeliveredElsewhere ? "sp-chip-shifted" : "sp-chip-ghost")"
+                                                                    : $"Planned: {pi.Label}") + (pOverspent ? " (logged over Jira estimate)" : "");
+                                                                <span class="sp-chip @(pi.DeliveredElsewhere ? "sp-chip-shifted" : "sp-chip-ghost") @(pOverspent ? "sp-chip-overspent" : "")"
                                                                       style="@(pi.IsCustom && !pi.DeliveredElsewhere ? $"border-color:{pi.Color};color:{pi.Color};" : "")"
                                                                       title="@title">
                                                                     <span class="k">@(pi.JiraKey ?? pi.Label)</span><span class="h">@FormatHours(pi.Hours)</span>
@@ -264,6 +290,11 @@
                             <div class="v2-kpi-head">Plan adherence</div>
                             <div class="v2-kpi-value">@(_plan is null ? "—" : $"{k.AdherencePct:0}%")</div>
                             <div class="v2-kpi-sub">of logged time on planned tickets</div>
+                        </div>
+                        <div class="v2-kpi @(_plan is null || k.TasksTotal <= 0 ? "v2-kpi-neutral" : ProgressClass(k.TasksDone, k.TasksTotal) switch { "sp-prog-good" => "v2-kpi-success", "sp-prog-warn" => "v2-kpi-warn", _ => "v2-kpi-danger" })">
+                            <div class="v2-kpi-head">Task completion</div>
+                            <div class="v2-kpi-value">@(_plan is null || k.TasksTotal <= 0 ? "—" : $"{ProgressPct(k.TasksDone, k.TasksTotal):0}%")</div>
+                            <div class="v2-kpi-sub">@(_plan is null || k.TasksTotal <= 0 ? "no planned tasks" : $"{k.TasksDone}/{k.TasksTotal} planned tasks done")</div>
                         </div>
                         <div class="v2-kpi @(k.UnplannedHours > 0m ? "v2-kpi-warn" : "v2-kpi-neutral")">
                             <div class="v2-kpi-head">Unplanned work</div>
@@ -338,6 +369,10 @@
     private List<SprintConfig> _sprintConfigs = [];
     private string? _supportBugEpicKey;
     private HashSet<Guid> _supportBugPlannedMembers = [];
+    // Per-member set of epic keys picked on that member's custom tasks (e.g. a "Feature Bug"
+    // task with epic JM-12741) — logged work on any real ticket under one of these epics
+    // counts as fulfilling that custom task, same treatment as the Support Bug epic match.
+    private Dictionary<Guid, HashSet<string>> _memberCustomTaskEpics = new();
 
     private DateOnly _sprintStart, _sprintEnd;
     private List<DateOnly> _visibleDates = [];
@@ -363,7 +398,8 @@
     }
     private sealed record MemberKpis(decimal PlannedTotal, decimal LoggedTotal, decimal PlannedToDate, decimal LoggedToDate,
         decimal CapacityToDate, double UtilizationPct, double AdherencePct, decimal UnplannedHours,
-        int DaysNoLogs, decimal OutsideRangeHours);
+        int DaysNoLogs, decimal OutsideRangeHours, int TasksDone, int TasksTotal);
+    private sealed record OverspentTaskInfo(string IssueKey, decimal LoggedHours, decimal EstimateHours);
 
     private List<MemberVm> _members = [];
     private Dictionary<(Guid, DateOnly), List<PlannedItem>> _plannedByCell = new();
@@ -374,6 +410,12 @@
     private HashSet<(Guid, DateOnly)> _timeOffSet = [];
     private Dictionary<Guid, MemberKpis> _kpis = new();
     private Dictionary<Guid, decimal> _outsideRange = new();
+    // (MemberId, JiraKey upper) pairs where the member's total logged time on that ticket
+    // exceeds its Jira original estimate by a meaningful margin.
+    private HashSet<(Guid MemberId, string Key)> _overspentTasks = new();
+    // Same data, grouped per member with the actual/estimate hours — surfaced on the
+    // Progress column so an overspend is visible without opening every day cell.
+    private Dictionary<Guid, List<OverspentTaskInfo>> _overspentByMember = new();
 
     // ── Init & load ────────────────────────────────────────────
     protected override async Task OnInitializedAsync()
@@ -387,13 +429,47 @@
                            ?? _plans.FirstOrDefault())?.Id;
 
         _sprintConfigs = await SprintConfig.GetAllAsync();
-        var cfg = _sprintConfigs.FirstOrDefault(c => c.StartDate <= Today && c.EndDate >= Today);
+
+        // Prefer the Jira sprint id that matches the default-selected plan; fall back to
+        // whichever Sprint Configuration covers today if the plan doesn't resolve to one.
+        var selectedPlan = _plans.FirstOrDefault(p => p.Id == _selectedPlanId);
+        var cfg = (selectedPlan is not null ? ResolveConfigForPlan(selectedPlan) : null)
+                  ?? _sprintConfigs.FirstOrDefault(c => c.StartDate <= Today && c.EndDate >= Today);
         _sprintIdInput = cfg?.SprintId;
         _cfgStart = cfg?.StartDate;
         _cfgEnd = cfg?.EndDate;
 
         if (_sprintIdInput is > 0)
             await LoadAsync(false);
+    }
+
+    // Matches a sprint plan to a Jira Sprint Configuration so the "Jira sprint id" field can
+    // auto-fill when a plan is picked, instead of the user having to look it up by hand.
+    // Tries an exact date match first, then a same-name config, then whichever config
+    // overlaps the plan's date range the most.
+    private SprintConfig? ResolveConfigForPlan(SprintPlanHeader plan)
+    {
+        var withId = _sprintConfigs.Where(c => c.SprintId != 0).ToList();
+        if (withId.Count == 0) return null;
+
+        var exact = withId.FirstOrDefault(c => c.StartDate == plan.SprintStart && c.EndDate == plan.SprintEnd);
+        if (exact is not null) return exact;
+
+        var byName = withId.FirstOrDefault(c => !string.IsNullOrWhiteSpace(c.Name)
+            && string.Equals(c.Name.Trim(), plan.Name.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (byName is not null) return byName;
+
+        return withId
+            .Where(c => c.StartDate <= plan.SprintEnd && c.EndDate >= plan.SprintStart)
+            .OrderByDescending(c => OverlapDays(c.StartDate, c.EndDate, plan.SprintStart, plan.SprintEnd))
+            .FirstOrDefault();
+    }
+
+    private static int OverlapDays(DateOnly aStart, DateOnly aEnd, DateOnly bStart, DateOnly bEnd)
+    {
+        var start = aStart > bStart ? aStart : bStart;
+        var end = aEnd < bEnd ? aEnd : bEnd;
+        return end >= start ? end.DayNumber - start.DayNumber + 1 : 0;
     }
 
     private async Task LoadAsync(bool bypassCache)
@@ -421,6 +497,18 @@
     private async Task OnPlanChanged(ChangeEventArgs e)
     {
         _selectedPlanId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+
+        // Auto-fill the Jira sprint id from the matching Sprint Configuration so switching
+        // plans doesn't require manually looking up and retyping the sprint id.
+        var selectedPlan = _plans.FirstOrDefault(p => p.Id == _selectedPlanId);
+        var cfg = selectedPlan is not null ? ResolveConfigForPlan(selectedPlan) : null;
+        if (cfg is not null)
+        {
+            _sprintIdInput = cfg.SprintId;
+            _cfgStart = cfg.StartDate;
+            _cfgEnd = cfg.EndDate;
+        }
+
         if (!_loadedOnce) return;
         _plan = _selectedPlanId is int pid ? await PlanService.GetAsync(pid) : null;
         BuildAxis();
@@ -481,6 +569,9 @@
         _kpis = new();
         _outsideRange = new();
         _supportBugPlannedMembers = new();
+        _memberCustomTaskEpics = new();
+        _overspentTasks = new();
+        _overspentByMember = new();
 
         // Support Bug Epic for the loaded sprint (Dashboard Config → Sprint Configurations):
         // prefer the config row matching the loaded Jira sprint id, else the current row.
@@ -533,6 +624,12 @@
         // used to detect "delivered on a different day than planned" (still in-scope).
         var plannedDatesByMemberTask = new Dictionary<(Guid, string), List<DateOnly>>();
 
+        // Same idea, but for a custom task's epic (e.g. a "Feature Bug" task tied to
+        // JM-15907): the dates that member actually has that epic's custom task allocated
+        // on — so a matching ticket logged on some other day is flagged as shifted
+        // (early/late) instead of silently counting as on-schedule for that day.
+        var plannedDatesByMemberEpic = new Dictionary<(Guid MemberId, string EpicKey), List<DateOnly>>();
+
         // Planned cells + planned-key sets.
         if (_plan is not null)
         {
@@ -552,7 +649,10 @@
                         customById.TryGetValue(first.TaskId, out var ct);
                         var label = ct is not null ? $"{ct.Category}: {ct.Name}" : first.TaskLabel;
                         var color = string.IsNullOrWhiteSpace(ct?.Color) ? "#64748b" : ct!.Color;
-                        list.Add(new PlannedItem(first.TaskId, label, null, hours, true, color, first.EpicKey));
+                        // Custom-task allocations never carry their own EpicKey (only real Jira
+                        // tasks do) — the epic picked for e.g. a "Feature Bug" task lives on the
+                        // custom task template itself.
+                        list.Add(new PlannedItem(first.TaskId, label, null, hours, true, color, ct?.EpicKey ?? ""));
                     }
                     else
                     {
@@ -587,6 +687,22 @@
                          || a.TaskLabel.StartsWith("Support Bug", StringComparison.OrdinalIgnoreCase))
                 .Select(a => a.MemberId)
                 .ToHashSet();
+
+            // Any custom task carrying its own epic (e.g. a "Feature Bug" task with an epic
+            // key entered on the board) — logged work on tickets under that epic counts as
+            // fulfilling that member's custom task, regardless of which specific ticket it is.
+            foreach (var a in _plan.Allocations.Where(x => x.TaskId < 0))
+            {
+                if (!customById.TryGetValue(a.TaskId, out var ct) || string.IsNullOrWhiteSpace(ct.EpicKey)) continue;
+                if (!_memberCustomTaskEpics.TryGetValue(a.MemberId, out var epics))
+                    _memberCustomTaskEpics[a.MemberId] = epics = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                epics.Add(ct.EpicKey.Trim());
+
+                var epicDateKey = (a.MemberId, ct.EpicKey.Trim().ToUpperInvariant());
+                if (!plannedDatesByMemberEpic.TryGetValue(epicDateKey, out var epicDates))
+                    plannedDatesByMemberEpic[epicDateKey] = epicDates = new List<DateOnly>();
+                if (!epicDates.Contains(a.Date)) epicDates.Add(a.Date);
+            }
         }
 
         // Actual cells: one pass over all worklogs; author→member memoized per identity.
@@ -674,6 +790,25 @@
             && issueByKey.TryGetValue(key, out var sbIss)
             && string.Equals(sbIss.EpicKey?.Trim(), _supportBugEpicKey, StringComparison.OrdinalIgnoreCase);
 
+        // A ticket under an epic picked on one of this member's own custom tasks (e.g. a
+        // "Feature Bug" task with epic JM-12741) counts as planned for that member.
+        bool IsUnderMemberCustomTaskEpic(Guid memberId, string key) =>
+            _memberCustomTaskEpics.TryGetValue(memberId, out var epics)
+            && issueByKey.TryGetValue(key, out var iss)
+            && !string.IsNullOrWhiteSpace(iss.EpicKey)
+            && epics.Contains(iss.EpicKey.Trim());
+
+        // Dates that member's matching custom task (by epic) is actually allocated on — used
+        // to flag an epic-matched ticket logged on some other day as shifted (early/late)
+        // rather than letting it silently count as on-schedule for that day.
+        bool TryGetEpicPlannedDates(Guid memberId, string key, out List<DateOnly> dates)
+        {
+            dates = null!;
+            return issueByKey.TryGetValue(key, out var iss)
+                && !string.IsNullOrWhiteSpace(iss.EpicKey)
+                && plannedDatesByMemberEpic.TryGetValue((memberId, iss.EpicKey.Trim().ToUpperInvariant()), out dates!);
+        }
+
         // All (date, hours) a member actually logged against a Jira key, across the whole
         // sprint — used both to flag shifted deliveries and to mark planned-elsewhere cells.
         var loggedDatesByMemberTask = new Dictionary<(Guid, string), List<(DateOnly Date, decimal Hours)>>();
@@ -690,6 +825,24 @@
             }
         }
 
+        // Flag (member, ticket) pairs where total logged time meaningfully exceeds the
+        // ticket's Jira original estimate — surfaced as a highlighted chip/pill in the UI.
+        const decimal OverspendTolerance = 1.25m;
+        foreach (var (dateKey, list) in loggedDatesByMemberTask)
+        {
+            if (!issueByKey.TryGetValue(dateKey.Item2, out var iss) || iss.OriginalEstimateSeconds <= 0) continue;
+            var estHours = iss.OriginalEstimateSeconds / 3600m;
+            var loggedHours = list.Sum(x => x.Hours);
+            if (loggedHours <= estHours * OverspendTolerance) continue;
+
+            _overspentTasks.Add(dateKey);
+            if (!_overspentByMember.TryGetValue(dateKey.Item1, out var memberList))
+                _overspentByMember[dateKey.Item1] = memberList = new();
+            memberList.Add(new OverspentTaskInfo(iss.Key, loggedHours, estHours));
+        }
+        foreach (var list in _overspentByMember.Values)
+            list.Sort((a, b) => (b.LoggedHours - b.EstimateHours).CompareTo(a.LoggedHours - a.EstimateHours));
+
         foreach (var (cell, byIssue) in cellLogs)
         {
             var plannedSet = _plannedKeysByMember.GetValueOrDefault(cell.Item1);
@@ -699,7 +852,8 @@
                 var logs = kv.Value.OrderBy(l => l.Started).ToList();
                 var hours = logs.Sum(l => l.Hours);
                 var isPlanned = plannedSet?.Contains(kv.Key) == true
-                    || (coveredBySupportBug && IsSupportBugIssue(kv.Key));
+                    || (coveredBySupportBug && IsSupportBugIssue(kv.Key))
+                    || IsUnderMemberCustomTaskEpic(cell.Item1, kv.Key);
                 var summary = issueByKey.TryGetValue(kv.Key, out var iss) ? iss.Summary : "";
 
                 // Same task planned for this member on a different day within the sprint?
@@ -712,6 +866,19 @@
                     var nearest = pds.OrderBy(pd => Math.Abs(pd.DayNumber - cell.Item2.DayNumber)).First();
                     plannedDate = nearest;
                     offsetDays = nearest.DayNumber - cell.Item2.DayNumber; // >0 = delivered early, <0 = late
+                }
+                // Same check for a ticket that's only "planned" via its epic matching one of
+                // this member's custom tasks (e.g. a Feature Bug task) — the custom task itself
+                // is only allocated on specific days, so logging the epic's ticket on some other
+                // day is a shift too, not flatly on-schedule for that day.
+                else if (isPlanned
+                    && plannedSet?.Contains(kv.Key) != true
+                    && TryGetEpicPlannedDates(cell.Item1, kv.Key, out var epicDates)
+                    && epicDates.Count > 0 && !epicDates.Contains(cell.Item2))
+                {
+                    var nearest = epicDates.OrderBy(pd => Math.Abs(pd.DayNumber - cell.Item2.DayNumber)).First();
+                    plannedDate = nearest;
+                    offsetDays = nearest.DayNumber - cell.Item2.DayNumber;
                 }
 
                 return new ActualItem(kv.Key, summary, hours,
@@ -782,8 +949,16 @@
             }
             var util = capToDate > 0m ? (double)(loggedToDate / capToDate) * 100 : 0;
             var adher = loggedTotal > 0m ? (double)(plannedLogged / loggedTotal) * 100 : 0;
+
+            // Task-level progress: planned (real Jira) tasks for this member vs. how many are Done.
+            var plannedKeys = _plannedKeysByMember.GetValueOrDefault(m.Id);
+            var tasksTotal = plannedKeys?.Count ?? 0;
+            var tasksDone = plannedKeys is null ? 0
+                : plannedKeys.Count(k => issueByKey.TryGetValue(k, out var iss) && iss.StatusCategoryKey == "done");
+
             _kpis[m.Id] = new MemberKpis(plannedTotal, loggedTotal, plannedToDate, loggedToDate,
-                capToDate, util, adher, unplanned, daysNoLogs, _outsideRange.GetValueOrDefault(m.Id));
+                capToDate, util, adher, unplanned, daysNoLogs, _outsideRange.GetValueOrDefault(m.Id),
+                tasksDone, tasksTotal);
         }
     }
 
@@ -800,6 +975,19 @@
 
     private List<ActualItem> Actual(Guid memberId, DateOnly d)
         => _actualByCell.TryGetValue((memberId, d), out var l) ? l : [];
+
+    private bool IsOverspent(Guid memberId, string jiraKey)
+        => _overspentTasks.Contains((memberId, jiraKey.ToUpperInvariant()));
+
+    private static double ProgressPct(int done, int total) => total > 0 ? (double)done / total * 100 : 0;
+
+    // Critical/at-risk highlight: red below 50%, amber below 75%, green otherwise.
+    private static string ProgressClass(int done, int total)
+    {
+        if (total <= 0) return "sp-prog-none";
+        var pct = ProgressPct(done, total);
+        return pct >= 75 ? "sp-prog-good" : pct >= 50 ? "sp-prog-warn" : "sp-prog-bad";
+    }
 
     // Stable, deterministic Guid from member name+team — must match the planning page
     // so plan allocations and this page's rows land on the same member id.
@@ -889,6 +1077,9 @@
         return h < 0m ? "-" + s : s;
     }
 
+    private static string OverspentTooltip(List<OverspentTaskInfo> items) => string.Join("\n",
+        items.Select(i => $"{i.IssueKey}: {FormatHours(i.LoggedHours)} logged vs {FormatHours(i.EstimateHours)} est (+{FormatHours(i.LoggedHours - i.EstimateHours)})"));
+
     private static string Truncate(string s, int max)
         => string.IsNullOrEmpty(s) || s.Length <= max ? s : s[..max].TrimEnd() + "…";
 
@@ -961,6 +1152,10 @@
                                         Delivered @pi.DeliveredDate?.ToString("dd MMM") · @OffsetLabel(pi.DeliveredOffsetDays)
                                     </span>
                                 }
+                                @if (pi.JiraKey is not null && IsOverspent(memberId, pi.JiraKey))
+                                {
+                                    <span class="v2-pill v2-pill-danger" title="Total logged time on this ticket exceeds its Jira original estimate">Over estimate</span>
+                                }
                             </div>
                         }
                     }
@@ -992,6 +1187,10 @@
                                         <span class="sp-pill-shift" title="Originally planned for @ai.PlannedDate?.ToString("ddd dd MMM")">
                                             @OffsetLabel(ai.DayOffsetDays)
                                         </span>
+                                    }
+                                    @if (IsOverspent(memberId, ai.IssueKey))
+                                    {
+                                        <span class="v2-pill v2-pill-danger" title="Total logged time on this ticket exceeds its Jira original estimate">Over estimate</span>
                                     }
                                 </div>
                                 @foreach (var log in ai.Logs.Where(l => !string.IsNullOrWhiteSpace(l.Comment)))
@@ -1044,12 +1243,18 @@
     .sp-scroll { overflow: auto; max-height: calc(100vh - 280px); border: 1px solid var(--border); border-radius: 8px; }
     .sp-table { border-collapse: separate; border-spacing: 0; table-layout: fixed; width: max-content; min-width: 100%; }
     .sp-col-member { width: 180px; }
+    .sp-col-progress { width: 92px; }
     .sp-col-date { width: 148px; }
 
     .sp-corner {
         position: sticky; left: 0; top: 0; z-index: 5;
         background: var(--surface-2); border-bottom: 2px solid var(--border); border-right: 1px solid var(--border);
         font-size: 12px; color: var(--txt-3); text-align: left; padding: 8px 10px;
+    }
+    .sp-corner-progress {
+        position: sticky; left: 180px; top: 0; z-index: 4;
+        background: var(--surface-2); border-bottom: 2px solid var(--border); border-right: 1px solid var(--border);
+        font-size: 12px; color: var(--txt-3); text-align: center; padding: 8px 6px;
     }
     .sp-date-th {
         position: sticky; top: 0; z-index: 3;
@@ -1077,6 +1282,27 @@
     }
     .sp-member-name { font-size: 13px; font-weight: 600; color: var(--txt-1); }
     .sp-member-sub { font-size: 11px; color: var(--txt-4); }
+
+    /* ── Progress column (planned tasks completed) ───────── */
+    .sp-sticky-progress {
+        position: sticky; left: 180px; z-index: 2;
+        background: var(--surface); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
+        padding: 6px 6px; text-align: center; vertical-align: middle;
+    }
+    .sp-prog-pct { font-size: 15px; font-weight: 800; color: var(--txt-1); line-height: 1.15; }
+    .sp-prog-frac { font-size: 10.5px; color: var(--txt-3); margin-top: 1px; }
+    .sp-prog-bar { margin-top: 4px; }
+    .sp-prog-none-label { font-size: 13px; color: var(--txt-4); }
+    .sp-prog-overspent {
+        margin-top: 4px; font-size: 10px; font-weight: 700; color: var(--danger);
+        border: 1px solid var(--danger); border-radius: 3px; padding: 1px 4px; white-space: nowrap;
+    }
+    .sp-prog-good { background: #f0fdf4; }
+    .sp-prog-good .sp-prog-pct { color: var(--success); }
+    .sp-prog-warn { background: #fffbeb; }
+    .sp-prog-warn .sp-prog-pct { color: var(--warning); }
+    .sp-prog-bad { background: #fef2f2; }
+    .sp-prog-bad .sp-prog-pct { color: var(--danger); }
 
     .sp-cell {
         border-right: 1px solid var(--border); border-bottom: 1px solid var(--border);
@@ -1123,6 +1349,12 @@
     .sp-chip-ghost { background: transparent; border: 1px dashed #cbd5e1; color: var(--txt-3); }
     .sp-chip-shifted { background: #f3e8ff; border: 1px dashed #a855f7; color: #6b21a8; }
     .sp-chip-more { justify-content: center; background: transparent; border: none; color: var(--txt-4); padding: 0; }
+    .sp-chip-overspent { border: 2px solid var(--danger); font-weight: 700; }
+    .sp-chip-overspent .k, .sp-chip-overspent .h { color: var(--danger); }
+    .sp-chip-demo-overspent {
+        display: inline-flex; font-size: 10.5px; font-weight: 700; padding: 1.5px 5px; border-radius: 4px;
+        border: 2px solid var(--danger); color: var(--danger); pointer-events: none;
+    }
 
     .sp-pill-shift {
         display: inline-flex; align-items: center; font-size: 10.5px; font-weight: 600;

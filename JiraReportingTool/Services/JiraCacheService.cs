@@ -272,6 +272,28 @@ public class JiraCacheService(JiraService api, JiraDbRepository repo, IConfigura
         return report;
     }
 
+    // Simple exact-range cache (no incremental delta-merge) for the on-demand JSSUPPORT
+    // browser tab — kept on its own key per date range so it never overwrites the
+    // narrower report GetJsSupportLinkedBugsAsync maintains for the main pool.
+    public async Task<SprintReport> GetJsSupportBugsBrowseAsync(DateOnly from, DateOnly to, bool forceRefresh = false)
+    {
+        var key = $"jssupportbrowse:JM:{from:yyyyMMdd}-{to:yyyyMMdd}";
+
+        if (_useCache && !forceRefresh)
+        {
+            var cached = await repo.GetSprintReportAsync(key);
+            if (cached is { SyncedAt: not null } && cached.Issues.Count > 0)
+                return cached;
+        }
+
+        var report = await api.GetBugsWithLinksAsync(from, to);
+        report.ReportIdentifier = key;
+        report.StartDate = from.ToDateTime(TimeOnly.MinValue);
+        report.EndDate   = to.ToDateTime(TimeOnly.MinValue);
+        if (_useCache) await repo.UpsertSprintReportAsync(report);
+        return report;
+    }
+
     /// <summary>Delta window in days: at least the hot window, stretched to cover the gap since the last sync.</summary>
     private int HotSinceDays(DateTime syncedAtUtc)
         => Math.Max(_hotWindowDays, (int)Math.Ceiling((DateTime.UtcNow - syncedAtUtc).TotalDays) + 1);
