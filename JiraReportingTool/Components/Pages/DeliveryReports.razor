@@ -28,6 +28,10 @@
                         {
                             <span> · @Report.StartDate.Value.ToString("MMM d") – @Report.EndDate.Value.ToString("MMM d, yyyy")</span>
                         }
+                        @if (Report.SyncedAt.HasValue)
+                        {
+                            <span> · data as of @Report.SyncedAt.Value.ToLocalTime().ToString("dd-MMM HH:mm")</span>
+                        }
                     }
                     else
                     {
@@ -38,7 +42,26 @@
             <div class="v2-hero-spacer"></div>
             @if (Report is not null)
             {
-                <span class="v2-pill v2-pill-neutral"><i class="bi bi-calendar3"></i> @Report.DaysRemaining d left</span>
+                <div class="v2-hero-actions">
+                    <button class="v2-btn v2-btn-ghost" @onclick="Reload"
+                            disabled="@(IsLoading || Report.IsFrozen)"
+                            title="@(Report.IsFrozen ? "This sprint is closed and frozen — its snapshot is permanent, nothing to reload" : "Reload — merges only recently-updated issues from Jira over the stored snapshot")">
+                        @if (IsLoading) { <span class="v2-spin"></span> }
+                        else { <i class="bi bi-arrow-repeat"></i> }
+                    </button>
+                    <button class="v2-btn v2-btn-ghost" @onclick="HardRefresh"
+                            disabled="@(IsLoading || Report.IsFrozen)"
+                            title="@(Report.IsFrozen ? "This sprint is closed and frozen — its snapshot is permanent and can no longer be overwritten from Jira" : "Force full re-fetch from Jira (rebuilds the cache — slow)")">
+                        <i class="bi bi-cloud-arrow-down"></i>
+                    </button>
+                    @if (Report.IsFrozen)
+                    {
+                        <span class="v2-pill v2-pill-info" title="Sprint closed — this is its permanent end-of-sprint snapshot, last synced @Report.SyncedAt!.Value.ToLocalTime().ToString("dd-MMM HH:mm")">
+                            <i class="bi bi-lock-fill"></i> Frozen
+                        </span>
+                    }
+                    <span class="v2-pill v2-pill-neutral"><i class="bi bi-calendar3"></i> @Report.DaysRemaining d left</span>
+                </div>
             }
         </div>
     </div>
@@ -160,104 +183,168 @@
     @if (Report is not null && AllBugSplit is not null)
     {
         <div class="v2-card" style="margin-top:16px">
-            <div id="html-export-bugsplit">
-                <div class="v2-section-title"><i class="bi bi-bug-fill" style="color:var(--v2-danger)"></i>Bug vs Feature Split <span class="v2-section-note">firefighting vs building — All Issue Types, current product filter</span></div>
-                <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
-                    <div class="v2-donut v2-donut-lg" style="--p:@(AllBugSplit.BugPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
-                        <span>@AllBugSplit.BugPct.ToString("F0")%</span>
+            <div class="v2-grid-2">
+                <div id="html-export-bugsplit">
+                    <div class="v2-section-title"><i class="bi bi-bug-fill" style="color:var(--v2-danger)"></i>Bug vs Feature Split <span class="v2-section-note">firefighting vs building — All Issue Types, current product filter</span></div>
+                    <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+                        <div class="v2-donut v2-donut-lg" style="--p:@(AllBugSplit.BugPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
+                            <span>@AllBugSplit.BugPct.ToString("F0")%</span>
+                        </div>
+                        <div style="display:flex;flex-direction:column;gap:8px">
+                            <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@AllBugSplit.BugCount issues &middot; @AllBugSplit.BugHours.ToString("F0")h logged</span></div>
+                            <div class="v2-row"><span class="v2-chip v2-chip-story">Feature / Task</span><span class="v2-row-value">@AllBugSplit.FeatureCount issues &middot; @AllBugSplit.FeatureHours.ToString("F0")h logged</span></div>
+                        </div>
                     </div>
-                    <div style="display:flex;flex-direction:column;gap:8px">
-                        <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@AllBugSplit.BugCount issues &middot; @AllBugSplit.BugHours.ToString("F0")h logged</span></div>
-                        <div class="v2-row"><span class="v2-chip v2-chip-story">Feature / Task</span><span class="v2-row-value">@AllBugSplit.FeatureCount issues &middot; @AllBugSplit.FeatureHours.ToString("F0")h logged</span></div>
-                    </div>
-                    <div class="v2-hint" style="max-width:260px">@(AllBugSplit.BugPct >= 40 ? "A large share of logged time is going to bugs — the team may be firefighting more than building." : "Most logged time is going toward feature/task work.")</div>
+                    <div class="v2-hint" style="margin-top:8px">@(AllBugSplit.BugPct >= 40 ? "A large share of logged time is going to bugs — the team may be firefighting more than building." : "Most logged time is going toward feature/task work.")</div>
                 </div>
+
+                @if (AllBugOriginSplit is not null && (AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) > 0)
+                {
+                    <div id="html-export-bugorigin">
+                        <div class="v2-section-title">
+                            <i class="bi bi-pie-chart-fill" style="color:var(--v2-info)"></i>Bug Origin
+                            <span class="v2-section-note">JSSUPPORT-linked vs feature-found, of the @(AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) bugs above</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+                            <div class="v2-donut v2-donut-lg" style="--p:@(AllBugOriginSplit.SupportLinkedPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
+                                <span>@AllBugOriginSplit.SupportLinkedPct.ToString("F0")%</span>
+                            </div>
+                            <div style="display:flex;flex-direction:column;gap:10px">
+                                <div>
+                                    <div class="v2-row"><span class="v2-chip v2-chip-bug">JSSUPPORT-linked</span><span class="v2-row-value">@AllBugOriginSplit.SupportLinkedCount bugs &middot; @AllBugOriginSplit.SupportLinkedHours.ToString("F0")h logged</span></div>
+                                    @if (SupportLinkedOriginBreakdown is not null)
+                                    {
+                                        <div class="v2-hint" style="margin-top:-2px">@SupportLinkedOriginBreakdown.ClosedCount closed &middot; Bug @SupportLinkedOriginBreakdown.BugHours.ToString("F0")h &middot; Redesign @SupportLinkedOriginBreakdown.RedesignHours.ToString("F0")h</div>
+                                    }
+                                </div>
+                                <div>
+                                    <div class="v2-row"><span class="v2-chip v2-chip-task">Feature-found</span><span class="v2-row-value">@AllBugOriginSplit.FeatureFoundCount bugs &middot; @AllBugOriginSplit.FeatureFoundHours.ToString("F0")h logged</span></div>
+                                    @if (FeatureFoundOriginBreakdown is not null)
+                                    {
+                                        <div class="v2-hint" style="margin-top:-2px">@FeatureFoundOriginBreakdown.ClosedCount closed &middot; Bug @FeatureFoundOriginBreakdown.BugHours.ToString("F0")h &middot; Redesign @FeatureFoundOriginBreakdown.RedesignHours.ToString("F0")h</div>
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
             </div>
 
             @if (BugsByEpic.Count > 0)
             {
-                @RenderEpicTable("Bugs by Epic", "closed this sprint vs still open, avg effort per issue", BugsByEpic, skipInHtmlExport: true)
+                @RenderEpicTable("Bugs by Epic", "closed this sprint vs still open, avg effort per issue", BugsByEpic, BugsByEpicIssues, skipInHtmlExport: true)
             }
             @if (FeaturesByEpic.Count > 0)
             {
-                @RenderEpicTable("Tasks by Epic", "closed this sprint vs still open, avg effort per issue", FeaturesByEpic, skipInHtmlExport: true)
+                @RenderEpicTable("Tasks by Epic", "closed this sprint vs still open, avg effort per issue", FeaturesByEpic, FeaturesByEpicIssues, skipInHtmlExport: true)
             }
 
-            @if (AllBugOriginSplit is not null && (AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) > 0)
+            @if (SupportBugTypeSplitStat is not null && (SupportBugTypeSplitStat.BugTypeCount + SupportBugTypeSplitStat.RedesignTypeCount) > 0)
             {
+                var supportBugRedesignTotal = SupportBugTypeSplitStat.BugTypeCount + SupportBugTypeSplitStat.RedesignTypeCount;
+                var supportBugTypePct = supportBugRedesignTotal > 0 ? SupportBugTypeSplitStat.BugTypeCount * 100.0 / supportBugRedesignTotal : 0;
                 <div class="v2-divider"></div>
-                <div id="html-export-bugorigin">
+                <div id="html-export-bugorigin-jssupport">
                     <div class="v2-section-title" style="margin-top:4px">
-                        <i class="bi bi-pie-chart-fill" style="color:var(--v2-info)"></i>Bug Origin
-                        <span class="v2-section-note">JSSUPPORT-linked vs feature-found, of the @(AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) bugs above</span>
+                        <i class="bi bi-pie-chart-fill" style="color:var(--v2-danger)"></i>Bug Origin JSSUPPORT
+                        <span class="v2-section-note">Bug vs Redesign, of the @supportBugRedesignTotal JSSUPPORT-linked bugs above</span>
                     </div>
-                    <div style="display:flex;align-items:center;gap:28px;flex-wrap:wrap">
-                        <div class="v2-donut v2-donut-lg" style="--p:@(AllBugOriginSplit.SupportLinkedPct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
-                            <span>@AllBugOriginSplit.SupportLinkedPct.ToString("F0")%</span>
+                    <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+                        <div class="v2-donut v2-donut-lg" style="--p:@(supportBugTypePct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
+                            <span>@supportBugTypePct.ToString("F0")%</span>
                         </div>
-                        <div style="display:flex;flex-direction:column;gap:8px">
-                            <div class="v2-row"><span class="v2-chip v2-chip-bug">JSSUPPORT-linked</span><span class="v2-row-value">@AllBugOriginSplit.SupportLinkedCount bugs &middot; @AllBugOriginSplit.SupportLinkedHours.ToString("F0")h logged</span></div>
-                            <div class="v2-row"><span class="v2-chip v2-chip-task">Feature-found</span><span class="v2-row-value">@AllBugOriginSplit.FeatureFoundCount bugs &middot; @AllBugOriginSplit.FeatureFoundHours.ToString("F0")h logged</span></div>
+                        <div style="display:flex;flex-direction:column;gap:10px">
+                            <div>
+                                <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@SupportBugTypeSplitStat.BugTypeCount issues</span></div>
+                            </div>
+                            <div>
+                                <div class="v2-row"><span class="v2-chip" style="background:#f3e8ff;color:#7c3aed">Redesign</span><span class="v2-row-value">@SupportBugTypeSplitStat.RedesignTypeCount issues</span></div>
+                            </div>
                         </div>
-                        <div class="v2-hint" style="max-width:260px">@AllBugOriginSplit.SupportLinkedPct.ToString("F0")% of bugs trace back to a customer-reported JSSUPPORT ticket rather than being found during feature work.</div>
+                        @if (SupportBugPriorityBreakdown.Count > 0)
+                        {
+                            <div style="display:flex;flex-direction:column;gap:6px">
+                                <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)"><i class="bi bi-flag"></i> Priority Breakdown</div>
+                                <div style="display:flex;flex-wrap:wrap;gap:6px;max-width:220px">
+                                    @foreach (var p in SupportBugPriorityBreakdown)
+                                    {
+                                        <span class="v2-chip v2-chip-pri-@(p.Priority.ToLower())">@p.Priority (@p.Count)</span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                        @if (SupportBugsByProductType.Count > 0)
+                        {
+                            <div style="flex:0 0 auto;width:370px">
+                                <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3);margin-bottom:6px"><i class="bi bi-people"></i> By Product</div>
+                                <div class="v2-table-wrap" style="margin:0;max-height:200px;overflow:auto">
+                                    <table class="v2-table dr-product-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Product</th>
+                                                <th>Type</th>
+                                                <th class="v2-table-num" title="Distinct assignees">Staff</th>
+                                                <th class="v2-table-num">Logged</th>
+                                                <th class="v2-table-num">Closed</th>
+                                                <th class="v2-table-num" title="Avg hours logged to close, among closed issues">Avg</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var r in SupportBugsByProductType)
+                                            {
+                                                <tr>
+                                                    <td class="v2-truncate" style="max-width:90px" title="@r.Product">@r.Product</td>
+                                                    <td><span class="v2-chip @(r.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase) ? "v2-chip-bug" : "")" style="@(r.IssueType.Equals("Bug", StringComparison.OrdinalIgnoreCase) ? "" : "background:#f3e8ff;color:#7c3aed")">@r.IssueType</span></td>
+                                                    <td class="v2-table-num">@r.StaffCount</td>
+                                                    <td class="v2-table-num">@r.LoggedHours.ToString("F0")h</td>
+                                                    <td class="v2-table-num" title="@r.ClosedCount of @r.TotalCount closed">@r.ClosedCount/@r.TotalCount</td>
+                                                    <td class="v2-table-num">@(r.ClosedCount > 0 ? $"{r.AvgHoursToClose:F1}h" : "—")</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        }
                     </div>
                 </div>
 
                 @if (SupportBugsByEpic.Count > 0)
                 {
-                    @RenderEpicTable("JSSUPPORT-linked Bugs by Epic", "closed this sprint vs still open, hours logged, avg effort per issue", SupportBugsByEpic)
+                    @RenderEpicTable("JSSUPPORT-linked Bugs by Epic", "closed this sprint vs still open, hours logged, avg effort per issue", SupportBugsByEpic, SupportBugsByEpicIssues)
                 }
 
-                @if (SupportBugTypeSplitStat is not null)
-                {
-                    <div class="v2-kpi-grid" style="margin-top:12px;margin-bottom:0">
-                        <div class="v2-kpi v2-kpi-neutral">
-                            <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Avg Effort per Issue</div>
-                            <div style="margin-top:6px">
-                                <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)">JSSUPPORT-linked</div>
-                                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
-                                    <div>
-                                        <div class="v2-kpi-value" style="font-size:20px">@SupportBugAvgEffortHours.ToString("F1")h</div>
-                                        <div class="v2-kpi-sub">to conclude · @SupportBugClosedCount closed</div>
-                                    </div>
-                                    <div>
-                                        <div class="v2-kpi-value" style="font-size:20px">@SupportBugAvgEffortOngoingHours.ToString("F1")h</div>
-                                        <div class="v2-kpi-sub">ongoing (still open)</div>
-                                    </div>
+                <div class="v2-kpi-grid" style="margin-top:12px;margin-bottom:0">
+                    <div class="v2-kpi v2-kpi-neutral">
+                        <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Avg Effort per Issue</div>
+                        <div style="margin-top:6px">
+                            <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)">JSSUPPORT-linked</div>
+                            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
+                                <div>
+                                    <div class="v2-kpi-value" style="font-size:20px">@SupportBugAvgEffortHours.ToString("F1")h</div>
+                                    <div class="v2-kpi-sub">to conclude · @SupportBugClosedCount closed</div>
                                 </div>
-                            </div>
-                            <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--v2-divider)">
-                                <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)">Feature-found</div>
-                                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
-                                    <div>
-                                        <div class="v2-kpi-value" style="font-size:20px">@FeatureFoundBugAvgEffortHours.ToString("F1")h</div>
-                                        <div class="v2-kpi-sub">to conclude (closed)</div>
-                                    </div>
-                                    <div>
-                                        <div class="v2-kpi-value" style="font-size:20px">@FeatureFoundBugAvgEffortOngoingHours.ToString("F1")h</div>
-                                        <div class="v2-kpi-sub">ongoing (still open)</div>
-                                    </div>
+                                <div>
+                                    <div class="v2-kpi-value" style="font-size:20px">@SupportBugAvgEffortOngoingHours.ToString("F1")h</div>
+                                    <div class="v2-kpi-sub">ongoing (still open)</div>
                                 </div>
                             </div>
                         </div>
-                        <div class="v2-kpi v2-kpi-neutral">
-                            <div class="v2-kpi-head"><i class="bi bi-flag"></i>Priority Breakdown</div>
-                            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:6px">
-                                @foreach (var p in SupportBugPriorityBreakdown)
-                                {
-                                    <span class="v2-chip v2-chip-pri-@(p.Priority.ToLower())">@p.Priority (@p.Count)</span>
-                                }
-                            </div>
-                        </div>
-                        <div class="v2-kpi v2-kpi-neutral">
-                            <div class="v2-kpi-head"><i class="bi bi-bug"></i>Bug vs Redesign</div>
-                            <div style="display:flex;gap:8px;margin-top:6px;flex-wrap:wrap">
-                                <span class="v2-chip v2-chip-bug">Bug (@SupportBugTypeSplitStat.BugTypeCount)</span>
-                                <span class="v2-chip" style="background:#f3e8ff;color:#7c3aed">Redesign (@SupportBugTypeSplitStat.RedesignTypeCount)</span>
+                        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--v2-divider)">
+                            <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)">Feature-found</div>
+                            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
+                                <div>
+                                    <div class="v2-kpi-value" style="font-size:20px">@FeatureFoundBugAvgEffortHours.ToString("F1")h</div>
+                                    <div class="v2-kpi-sub">to conclude (closed)</div>
+                                </div>
+                                <div>
+                                    <div class="v2-kpi-value" style="font-size:20px">@FeatureFoundBugAvgEffortOngoingHours.ToString("F1")h</div>
+                                    <div class="v2-kpi-sub">ongoing (still open)</div>
+                                </div>
                             </div>
                         </div>
                     </div>
-                }
+                </div>
             }
         </div>
     }
@@ -377,6 +464,62 @@
             </div>
         </div>
     }
+
+    @if (_showEpicModal)
+    {
+        <div class="v2-modal-overlay dr-export-skip" @onclick="CloseEpicModal">
+            <div class="v2-modal" style="max-width:1000px" @onclick:stopPropagation="true">
+                <div class="v2-modal-head">
+                    <div>
+                        <div class="v2-modal-title"><i class="bi bi-table"></i> @_epicModalTitle</div>
+                        <div class="v2-modal-sub">@(_epicModalIssues?.Count ?? 0) ticket@((_epicModalIssues?.Count ?? 0) == 1 ? "" : "s")</div>
+                    </div>
+                    <button class="v2-modal-close" @onclick="CloseEpicModal" title="Close">&times;</button>
+                </div>
+                <div class="v2-modal-body">
+                    @if (_epicModalIssues is null || _epicModalIssues.Count == 0)
+                    {
+                        <div class="v2-empty" style="padding:24px">No tickets found for this epic.</div>
+                    }
+                    else
+                    {
+                        <div class="v2-table-wrap" style="margin:0">
+                            <table class="v2-table">
+                                <thead>
+                                    <tr>
+                                        <th>Key</th><th>Summary</th><th>Product</th><th>Type</th>
+                                        <th>Status</th><th>Sprint</th><th>Assignee</th><th>Priority</th><th class="v2-table-num">Hours</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var i in _epicModalIssues.OrderBy(i => i.StatusCategoryKey == "done").ThenBy(i => i.Key))
+                                    {
+                                        <tr class="@(i.StatusCategoryKey == "done" ? "is-done" : "")">
+                                            <td class="v2-table-key"><a href="@(Config["Jira:BaseUrl"]?.TrimEnd('/'))/browse/@i.Key" target="_blank" class="v2-key-link">@i.Key</a></td>
+                                            <td class="v2-truncate" style="max-width:320px" title="@i.Summary">@i.Summary</td>
+                                            <td>@ProductOf(i)</td>
+                                            <td><span class="v2-chip v2-chip-@(i.IssueType.ToLower())">@i.IssueType</span></td>
+                                            <td><span class="v2-pill v2-pill-@(i.StatusCategoryKey == "done" ? "success" : i.StatusCategoryKey == "indeterminate" ? "brand" : "neutral")" style="font-size:10px;padding:1px 6px">@i.Status</span></td>
+                                            <td class="v2-truncate" style="max-width:140px" title="@i.SprintName">@(string.IsNullOrEmpty(i.SprintName) ? "—" : i.SprintName)</td>
+                                            <td class="v2-truncate" style="max-width:160px">@i.Assignee</td>
+                                            <td>
+                                                @if (!string.IsNullOrEmpty(i.Priority))
+                                                {
+                                                    <span class="v2-chip v2-chip-pri-@(i.Priority.ToLower())">@i.Priority</span>
+                                                }
+                                                else { <span class="v2-text-muted">—</span> }
+                                            </td>
+                                            <td class="v2-table-num">@IssueWindowHours(i).ToString("F1")h</td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -415,6 +558,13 @@
     private List<DeliveryHealthCalculator.EpicBreakdownRow> BugsByEpic = [];
     private List<DeliveryHealthCalculator.EpicBreakdownRow> FeaturesByEpic = [];
 
+    // Underlying issues behind BugsByEpic / FeaturesByEpic / SupportBugsByEpic — kept alongside
+    // the aggregated rows so a table row click can pull up the actual tickets for that epic
+    // (RenderEpicTable groups by the same EpicKey/EpicName pair as ComputeIssuesByEpic).
+    private List<SprintIssue> BugsByEpicIssues = [];
+    private List<SprintIssue> FeaturesByEpicIssues = [];
+    private List<SprintIssue> SupportBugsByEpicIssues = [];
+
     // Bug Origin detail: scoped to JSSUPPORT-linked bugs only (not the Feature-found half),
     // since Bug Origin is specifically about customer-reported/support-driven bug load.
     private List<DeliveryHealthCalculator.EpicBreakdownRow> SupportBugsByEpic = [];
@@ -425,6 +575,18 @@
     private double FeatureFoundBugAvgEffortOngoingHours;
     private List<DeliveryHealthCalculator.PriorityCount> SupportBugPriorityBreakdown = [];
     private DeliveryHealthCalculator.BugTypeSplit? SupportBugTypeSplitStat;
+
+    // Bug Origin JSSUPPORT detail table: per-product, per-issue-type (Bug/Redesign) breakdown
+    // of the JSSUPPORT-linked bugs — staff involved, hours logged, closed count and average
+    // hours to close. Replaces the plain "logged"/"closed" figures that used to sit inline
+    // next to the Bug Origin JSSUPPORT donut with a product-level view.
+    private record SupportProductTypeRow(string Product, string IssueType, int TotalCount, int ClosedCount, double LoggedHours, double AvgHoursToClose, int StaffCount);
+    private List<SupportProductTypeRow> SupportBugsByProductType = [];
+
+    // Per-origin-row summary for the Bug Origin donut: closed count + hours split by
+    // issue type (Bug/Redesign), shown right next to each row instead of only further down.
+    private DeliveryHealthCalculator.OriginTypeBreakdown? SupportLinkedOriginBreakdown;
+    private DeliveryHealthCalculator.OriginTypeBreakdown? FeatureFoundOriginBreakdown;
 
     // The fully filtered (products + sprint) issue set currently driving every metric on the
     // page — kept around so the "view tickets" popup can list exactly what's being measured.
@@ -577,32 +739,53 @@
 
     private async Task OnSprintPicked()
     {
-        if (!string.IsNullOrEmpty(SprintId)) await LoadData();
+        if (!string.IsNullOrEmpty(SprintId)) await LoadData(resetFilters: true);
     }
 
-    private async Task LoadData()
+    // resetFilters is true when switching to a (possibly new) sprint from the picker, so the
+    // product/sprint sub-filters start fresh — false for Reload/HardRefresh, which refresh the
+    // currently loaded sprint's data in place without discarding what the user has selected.
+    private async Task LoadData(bool forceRefresh = false, bool resetFilters = true)
     {
         if (!int.TryParse(SprintId.Trim(), out var sprintId)) return;
 
         IsLoading = true; ErrorMessage = null; Report = null;
         _productIssues.Clear();
-        SelectedSprintIds.Clear();
+        if (resetFilters) SelectedSprintIds.Clear();
         _loadingStatus = "Loading sprint report…";
         StateHasChanged();
 
         try
         {
-            var report = await JiraService.GetDeliveryDataAsync(sprintId);
+            var report = await JiraService.GetDeliveryDataAsync(sprintId, bypassCache: forceRefresh);
             Report = report;
 
             await LoadProductIssuesAsync();
-            SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
+            if (resetFilters) SelectedProducts = new HashSet<string>(AllProducts.Select(p => p.Name));
 
             RecomputeMetrics();
             _renderCharts = true;
         }
         catch (Exception ex) { ErrorMessage = $"Failed to load: {ex.Message}"; }
         finally { IsLoading = false; _loadingStatus = null; }
+    }
+
+    // Reload — re-runs LoadData without bypassing the cache. For a sprint loaded by ID this
+    // routes through JiraCacheService's sprint-aware cache: a closed/frozen sprint is served
+    // straight from the DB (no Jira call), an open one merges only recently-updated issues.
+    private async Task Reload()
+    {
+        if (IsLoading || Report is { IsFrozen: true }) return;
+        await LoadData(forceRefresh: false, resetFilters: false);
+    }
+
+    // Hard refresh — re-fetch the currently loaded sprint fresh from Jira, bypassing the DB
+    // cache. Blocked once a sprint is frozen (closed + synced on/after its end date) — that
+    // snapshot is the permanent historical record and must never be overwritten.
+    private async Task HardRefresh()
+    {
+        if (IsLoading || Report is { IsFrozen: true }) return;
+        await LoadData(forceRefresh: true, resetFilters: false);
     }
 
     private async Task LoadProductIssuesAsync()
@@ -683,13 +866,22 @@
         AllBugSplit       = DeliveryHealthCalculator.ComputeBugFeatureSplit(report, allIssues);
         AllBugOriginSplit = DeliveryHealthCalculator.ComputeBugOriginSplit(report, allIssues);
 
-        var bugsInScope = allIssues.Where(DeliveryHealthCalculator.IsBugLike).ToList();
-        var featuresInScope = allIssues.Where(DeliveryHealthCalculator.IsDeliveryType).ToList();
+        // A ticket can carry this sprint's Jira Sprint-field tag from anywhere in its history
+        // (e.g. added to the sprint once, long since re-parented to a later sprint's epic) with
+        // no actual work done during the sprint's own dates. The epic/support breakdowns below
+        // want tickets that were genuinely worked in this window, not just historically tagged.
+        var bugsInScope = allIssues.Where(DeliveryHealthCalculator.IsBugLike)
+            .Where(i => HasActivityInSprintWindow(i, report.StartDate, report.EndDate)).ToList();
+        var featuresInScope = allIssues.Where(DeliveryHealthCalculator.IsDeliveryType)
+            .Where(i => HasActivityInSprintWindow(i, report.StartDate, report.EndDate)).ToList();
         BugsByEpic     = DeliveryHealthCalculator.ComputeIssuesByEpic(report, bugsInScope);
         FeaturesByEpic = DeliveryHealthCalculator.ComputeIssuesByEpic(report, featuresInScope);
+        BugsByEpicIssues     = bugsInScope;
+        FeaturesByEpicIssues = featuresInScope;
 
         var supportLinkedBugs = bugsInScope.Where(DeliveryHealthCalculator.IsSupportLinkedBug).ToList();
         var featureFoundBugs  = bugsInScope.Where(i => !DeliveryHealthCalculator.IsSupportLinkedBug(i)).ToList();
+        SupportBugsByEpicIssues     = supportLinkedBugs;
         SupportBugsByEpic           = DeliveryHealthCalculator.ComputeIssuesByEpic(report, supportLinkedBugs);
         SupportBugAvgEffortHours    = DeliveryHealthCalculator.AvgHoursToConclude(report, supportLinkedBugs);
         SupportBugAvgEffortOngoingHours = DeliveryHealthCalculator.AvgHoursOngoing(report, supportLinkedBugs);
@@ -698,6 +890,39 @@
         FeatureFoundBugAvgEffortOngoingHours = DeliveryHealthCalculator.AvgHoursOngoing(report, featureFoundBugs);
         SupportBugPriorityBreakdown = DeliveryHealthCalculator.ComputePriorityBreakdown(supportLinkedBugs);
         SupportBugTypeSplitStat     = DeliveryHealthCalculator.ComputeBugVsRedesignSplit(supportLinkedBugs);
+
+        SupportBugsByProductType = supportLinkedBugs
+            .GroupBy(i => (Product: ProductOf(i), Type: i.IssueType))
+            .Select(g =>
+            {
+                var closed = g.Where(i => i.StatusCategoryKey == "done").ToList();
+                var loggedHours = DeliveryHealthCalculator.SprintWindowHours(g, report.StartDate, report.EndDate);
+                var closedHours = DeliveryHealthCalculator.SprintWindowHours(closed, report.StartDate, report.EndDate);
+                var staffCount = g.Select(i => i.Assignee).Where(a => !string.IsNullOrWhiteSpace(a)).Distinct().Count();
+                return new SupportProductTypeRow(
+                    Product: g.Key.Product,
+                    IssueType: g.Key.Type,
+                    TotalCount: g.Count(),
+                    ClosedCount: closed.Count,
+                    LoggedHours: loggedHours,
+                    AvgHoursToClose: closed.Count == 0 ? 0 : closedHours / closed.Count,
+                    StaffCount: staffCount);
+            })
+            .OrderBy(r => r.Product).ThenBy(r => r.IssueType)
+            .ToList();
+
+        SupportLinkedOriginBreakdown = DeliveryHealthCalculator.ComputeOriginTypeBreakdown(report, supportLinkedBugs);
+        FeatureFoundOriginBreakdown  = DeliveryHealthCalculator.ComputeOriginTypeBreakdown(report, featureFoundBugs);
+    }
+
+    // True if the issue had real activity (a worklog, or was created/resolved) between the
+    // sprint's own dates — as opposed to merely carrying that sprint's Jira Sprint-field tag
+    // from some point in its history. Unknown sprint dates never filter anything out.
+    private static bool HasActivityInSprintWindow(SprintIssue i, DateTime? start, DateTime? end)
+    {
+        if (!start.HasValue || !end.HasValue) return true;
+        bool InWin(DateTime? d) => d.HasValue && d.Value >= start.Value && d.Value <= end.Value;
+        return i.Worklogs.Any(w => InWin(w.Started)) || InWin(i.Created) || InWin(i.ResolutionDate);
     }
 
     private void ToggleProduct(string name)
@@ -1353,36 +1578,73 @@
             $"</svg>");
     }
 
-    private RenderFragment RenderEpicTable(string title, string note, List<DeliveryHealthCalculator.EpicBreakdownRow> rows, bool skipInHtmlExport = false) =>
-    @<text>
+    // Which epic tables (keyed by title, since titles are unique across the page) are currently
+    // collapsed — absent from the set means expanded, which is the default on first render.
+    private readonly HashSet<string> _collapsedEpicTables = [];
+
+    private void ToggleEpicTable(string title)
+    {
+        if (!_collapsedEpicTables.Remove(title)) _collapsedEpicTables.Add(title);
+    }
+
+    private RenderFragment RenderEpicTable(string title, string note, List<DeliveryHealthCalculator.EpicBreakdownRow> rows, List<SprintIssue> sourceIssues, bool skipInHtmlExport = false)
+    {
+        var isCollapsed = _collapsedEpicTables.Contains(title);
+        return
+        @<text>
         <div class="@(skipInHtmlExport ? "dr-export-skip" : "")">
             <div class="v2-divider"></div>
-            <div class="v2-section-title" style="margin-top:4px"><i class="bi bi-diagram-2" style="color:var(--v2-brand)"></i>@title <span class="v2-section-note">@note</span></div>
-            <div class="v2-table-wrap" style="max-height:260px;overflow-y:auto">
-                <table class="v2-table">
-                    <thead>
-                        <tr>
-                            <th>Epic</th>
-                            <th class="v2-table-num">Closed</th>
-                            <th class="v2-table-num">Open</th>
-                            <th class="v2-table-num">Hours</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        @foreach (var row in rows)
-                        {
-                            <tr>
-                                <td class="v2-truncate" style="max-width:320px" title="@row.EpicName">@(string.IsNullOrEmpty(row.EpicKey) ? row.EpicName : $"{row.EpicKey} {row.EpicName}")</td>
-                                <td class="v2-table-num">@row.ClosedCount@(row.ClosedCount == 0 ? "" : $" ({row.AvgEffortClosed:F1}h avg)")</td>
-                                <td class="v2-table-num">@row.OpenCount@(row.OpenCount == 0 ? "" : $" ({row.AvgEffortOpen:F1}h avg)")</td>
-                                <td class="v2-table-num">@row.HoursLogged.ToString("F0")h</td>
-                            </tr>
-                        }
-                    </tbody>
-                </table>
+            <div class="v2-section-title dr-collapsible-head" style="margin-top:4px" @onclick="() => ToggleEpicTable(title)">
+                <i class="bi bi-chevron-@(isCollapsed ? "right" : "down") dr-collapse-chevron"></i>
+                <i class="bi bi-diagram-2" style="color:var(--v2-brand)"></i>@title <span class="v2-section-note">@note</span>
             </div>
+            @if (!isCollapsed)
+            {
+                <div class="v2-table-wrap" style="max-height:260px;overflow-y:auto">
+                    <table class="v2-table">
+                        <thead>
+                            <tr>
+                                <th>Epic</th>
+                                <th class="v2-table-num">Closed</th>
+                                <th class="v2-table-num">Open</th>
+                                <th class="v2-table-num">Hours</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in rows)
+                            {
+                                <tr class="dr-epic-row" title="View tickets" @onclick="() => OpenEpicIssuesModal(title, row.EpicKey, row.EpicName, sourceIssues)">
+                                    <td class="v2-truncate" style="max-width:320px" title="@row.EpicName">@(string.IsNullOrEmpty(row.EpicKey) ? row.EpicName : $"{row.EpicKey} {row.EpicName}")</td>
+                                    <td class="v2-table-num">@row.ClosedCount@(row.ClosedCount == 0 ? "" : $" ({row.AvgEffortClosed:F1}h avg)")</td>
+                                    <td class="v2-table-num">@row.OpenCount@(row.OpenCount == 0 ? "" : $" ({row.AvgEffortOpen:F1}h avg)")</td>
+                                    <td class="v2-table-num">@row.HoursLogged.ToString("F0")h</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
         </div>
-    </text>;
+        </text>;
+    }
+
+    // Row click on any epic table opens a scoped ticket list for that epic — filtered from the
+    // same issue population the table's aggregated rows were computed from (ComputeIssuesByEpic
+    // groups by this same (EpicKey, EpicName-with-"No Epic"-fallback) pair).
+    private List<SprintIssue>? _epicModalIssues;
+    private string? _epicModalTitle;
+    private bool _showEpicModal;
+
+    private void OpenEpicIssuesModal(string tableTitle, string epicKey, string epicName, List<SprintIssue> sourceIssues)
+    {
+        _epicModalIssues = sourceIssues
+            .Where(i => i.EpicKey == epicKey && (string.IsNullOrEmpty(i.EpicName) ? "No Epic" : i.EpicName) == epicName)
+            .ToList();
+        _epicModalTitle = $"{tableTitle} — {(string.IsNullOrEmpty(epicKey) ? epicName : $"{epicKey} {epicName}")}";
+        _showEpicModal = true;
+    }
+
+    private void CloseEpicModal() => _showEpicModal = false;
 
     private RenderFragment RenderSection(string title, string note, DeliveryHealthMetrics m, DeliveryHealthCalculator.ScopeAddedStats? scopeAdded, List<double> velocitySparkline, List<ProductBreakdownRow>? productBreakdown, string idSuffix) =>
     @<text>
@@ -1576,4 +1838,16 @@
 
     .dr-info-icon { color:var(--v2-ink-4); cursor:help; font-size:12px; margin-left:2px; }
     .dr-info-icon:hover { color:var(--v2-brand); }
+
+    .dr-collapsible-head { cursor:pointer; user-select:none; }
+    .dr-collapsible-head:hover { color:var(--v2-brand); }
+    .dr-collapse-chevron { font-size:10px; color:var(--v2-ink-4); width:10px; display:inline-block; }
+
+    .dr-product-table { font-size:10.5px; }
+    .dr-product-table thead th { padding:6px 8px; font-size:9.5px; }
+    .dr-product-table tbody td { padding:5px 8px; }
+    .dr-product-table .v2-chip { font-size:9.5px; padding:1px 6px; }
+
+    .dr-epic-row { cursor:pointer; }
+    .dr-epic-row:hover { background:var(--v2-brand-soft); }
 </style>

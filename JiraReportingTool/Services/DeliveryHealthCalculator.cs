@@ -251,11 +251,22 @@ public static class DeliveryHealthCalculator
         .OrderByDescending(p => p.Count)
         .ToList();
 
-    public sealed record BugTypeSplit(int BugTypeCount, int RedesignTypeCount);
+    public sealed record BugTypeSplit(int BugTypeCount, int RedesignTypeCount, int BugTypeClosedCount, int RedesignTypeClosedCount);
 
     public static BugTypeSplit ComputeBugVsRedesignSplit(List<SprintIssue> bugs) => new(
         BugTypeCount: bugs.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)),
-        RedesignTypeCount: bugs.Count(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase)));
+        RedesignTypeCount: bugs.Count(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase)),
+        BugTypeClosedCount: bugs.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase) && i.StatusCategoryKey == "done"),
+        RedesignTypeClosedCount: bugs.Count(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase) && i.StatusCategoryKey == "done"));
+
+    // ── Origin-row summary for the Bug Origin donut (JSSUPPORT-linked / Feature-found):
+    // how many of this origin's bugs are closed, and how much time went into each issue type.
+    public sealed record OriginTypeBreakdown(int ClosedCount, double BugHours, double RedesignHours);
+
+    public static OriginTypeBreakdown ComputeOriginTypeBreakdown(SprintReport report, List<SprintIssue> issues) => new(
+        ClosedCount: issues.Count(i => i.StatusCategoryKey == "done"),
+        BugHours: SprintWindowHours(issues.Where(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)), report.StartDate, report.EndDate),
+        RedesignHours: SprintWindowHours(issues.Where(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase)), report.StartDate, report.EndDate));
 
     // ── Scope added: work added to the sprint after it started (Created on/after sprint start) ──
     public sealed record ScopeAddedTypeCount(string IssueType, int Count);

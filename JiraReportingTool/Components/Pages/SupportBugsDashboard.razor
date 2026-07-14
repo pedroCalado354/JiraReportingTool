@@ -1137,6 +1137,19 @@
                 </div>
                 @if (!_linkedBugsLoading && string.IsNullOrEmpty(_linkedBugsError) && _linkedBugsLoaded)
                 {
+                    <div class="sbk-grid" style="padding:0 16px;margin-top:12px">
+                        <div class="sbk-card sbk-neutral">
+                            <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-stopwatch"></i></span><span class="sbk-title">Sprint Logged</span></div>
+                            <div class="sbk-value">@FormatSeconds(LinkedSprintLoggedSeconds)</div>
+                            <div class="sbk-sub">@_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM") · @LinkedSupportBugs.Count JSSUPPORT-linked bug@(LinkedSupportBugs.Count == 1 ? "" : "s")</div>
+                        </div>
+                        <div class="sbk-card @(LinkedAvgDevReadyToDoneHours >= 24 ? "sbk-danger" : LinkedAvgDevReadyToDoneHours >= 8 ? "sbk-warn" : "sbk-success")">
+                            <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-hourglass-bottom"></i></span><span class="sbk-title">Avg Effort to Conclude</span></div>
+                            <div class="sbk-value">@($"{LinkedAvgDevReadyToDoneHours:0.0}")<span class="sbk-unit">h / bug</span></div>
+                            <div class="sbk-meter"><div class="sbk-meter-fill" style="width:@(Math.Min((int)(LinkedAvgDevReadyToDoneHours / 40.0 * 100), 100))%"></div></div>
+                            <div class="sbk-sub">@(LinkedAvgDevReadyToDoneCount > 0 ? $"Dev Ready → Done this sprint · {LinkedAvgDevReadyToDoneCount} bug{(LinkedAvgDevReadyToDoneCount == 1 ? "" : "s")}" : "no Dev Ready data this sprint")</div>
+                        </div>
+                    </div>
                     <div class="sb-lk-toolbar">
                         <span class="sb-fb-cap">Worklog Author</span>
                         <div class="sb-dd">
@@ -1240,6 +1253,7 @@
                                     <th class="sb-th sb-th-title sortable @SILk("title")" @onclick='() => SortLk("title")'>Title</th>
                                     <th class="sb-th sb-th-customer sortable @SILk("customer")" @onclick='() => SortLk("customer")'>Customer</th>
                                     <th class="sb-th sb-th-status sortable @SILk("status")" @onclick='() => SortLk("status")'>Status</th>
+                                    <th class="sb-th sb-th-status sortable @SILk("sprint")" @onclick='() => SortLk("sprint")'>Sprint</th>
                                     <th class="sb-th sb-th-due sortable @SILk("created")" @onclick='() => SortLk("created")'>Created</th>
                                     <th class="sb-th sb-th-est sortable @SILk("age")" @onclick='() => SortLk("age")'>Age</th>
                                     <th class="sb-th sb-th-est sortable @SILk("logged")" @onclick='() => SortLk("logged")'>Logged</th>
@@ -1258,6 +1272,7 @@
                                         <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
                                         <td class="sb-td sb-td-customer">@(string.IsNullOrEmpty(bug.Customer) ? "—" : bug.Customer)</td>
                                         <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
+                                        <td class="sb-td sb-td-status" title="@bug.SprintName">@(string.IsNullOrEmpty(bug.SprintName) ? "—" : bug.SprintName)</td>
                                         <td class="sb-td sb-td-due">@(bug.Created.HasValue ? bug.Created.Value.ToString("dd MMM yyyy") : "—")</td>
                                         <td class="sb-td sb-td-est">
                                             <span class="@(lkAge >= 90 ? "sb-age-badge sb-age-badge-old" : lkAge >= 30 ? "sb-age-badge sb-age-badge-aging" : lkAge >= 7 ? "sb-age-badge sb-age-badge-recent" : "sb-age-badge sb-age-badge-fresh")">@lkAge d</span>
@@ -1285,7 +1300,7 @@
                                             .OrderByDescending(x => x.Seconds)
                                             .ToList();
                                         <tr class="sb-worklog-row">
-                                            <td colspan="10" class="sb-worklog-cell">
+                                            <td colspan="11" class="sb-worklog-cell">
                                                 @if (bug.Worklogs.Count == 0)
                                                 {
                                                     <div class="sb-empty" style="padding:14px">No time logged on @bug.Key yet.</div>
@@ -1334,7 +1349,7 @@
                                 }
                                 @if (!LinkedSupportBugs.Any())
                                 {
-                                    <tr><td colspan="10" class="sb-empty">No JSSUPPORT-linked bugs outside the epic have time logged since @_sprintStart.ToString("dd MMM") 00h or were resolved in the window.</td></tr>
+                                    <tr><td colspan="11" class="sb-empty">No JSSUPPORT-linked bugs outside the epic have time logged since @_sprintStart.ToString("dd MMM") 00h or were resolved in the window.</td></tr>
                                 }
                             </tbody>
                         </table>
@@ -2536,6 +2551,7 @@
                 "title"    => _sortAscLk ? q.OrderBy(b => b.Summary)                            : q.OrderByDescending(b => b.Summary),
                 "customer" => _sortAscLk ? q.OrderBy(b => b.Customer)                           : q.OrderByDescending(b => b.Customer),
                 "status"   => _sortAscLk ? q.OrderBy(b => b.Status)                             : q.OrderByDescending(b => b.Status),
+                "sprint"   => _sortAscLk ? q.OrderBy(b => b.SprintName)                         : q.OrderByDescending(b => b.SprintName),
                 "created"  => _sortAscLk ? q.OrderBy(b => b.Created ?? DateTime.MaxValue)       : q.OrderByDescending(b => b.Created ?? DateTime.MinValue),
                 "age"      => _sortAscLk ? q.OrderBy(b => GetDaysOpen(b))                       : q.OrderByDescending(b => GetDaysOpen(b)),
                 "logged"   => _sortAscLk ? q.OrderBy(b => b.TimeSpentSeconds)                   : q.OrderByDescending(b => b.TimeSpentSeconds),
@@ -2543,6 +2559,25 @@
             }).ToList();
         }
     }
+
+    // ── JSSUPPORT Linked tab KPIs — same formulas as the main grid's "Sprint Logged" /
+    // "Avg Effort to Conclude" cards, but scoped to LinkedSupportBugs instead of FilteredBugs.
+    private int LinkedSprintLoggedSeconds => LinkedSupportBugs.Sum(b => GetSprintTimeSeconds(b));
+
+    private List<SprintIssue> LinkedDevReadyResolved =>
+        LinkedSupportBugs.Where(b => IsDone(b) && b.DevReadyDate.HasValue && ResolvedInSprint(b)
+                                   && b.ResolutionDate!.Value > b.DevReadyDate.Value).ToList();
+
+    private double LinkedAvgDevReadyToDoneHours
+    {
+        get
+        {
+            var list = LinkedDevReadyResolved;
+            return list.Count == 0 ? 0
+                : list.Average(b => WorklogSecondsBetween(b, b.DevReadyDate!.Value, b.ResolutionDate!.Value) / 3600.0);
+        }
+    }
+    private int LinkedAvgDevReadyToDoneCount => LinkedDevReadyResolved.Count;
 
     private async Task SwitchToLinkedTabAsync()
     {
