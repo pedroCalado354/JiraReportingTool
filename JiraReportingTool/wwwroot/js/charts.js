@@ -161,6 +161,16 @@ window.exportSectionsAsHtml = (sectionIds, fileName, chartIds, title) => {
             canvasInClone.replaceWith(img);
         });
 
+        // The "By Product" table is deliberately narrow on-screen (it sits beside the donut,
+        // priority breakdown, etc.), but the export has far more spare width — widen it there.
+        const productTableWrap = clone.querySelector('.dr-product-table-wrap');
+        if (productTableWrap) {
+            productTableWrap.style.width = '640px';
+            productTableWrap.style.maxWidth = 'none';
+            const tableScroll = productTableWrap.querySelector('.v2-table-wrap');
+            if (tableScroll) tableScroll.style.maxHeight = '320px';
+        }
+
         if (clone.classList.contains('v2-card')) {
             clone.style.marginBottom = '16px';
             container.appendChild(clone);

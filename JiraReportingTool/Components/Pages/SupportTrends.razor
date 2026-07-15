@@ -289,31 +289,6 @@
         </div>
         }
 
-        @if (_tab == "metrics")
-        {
-        <!-- ═══ 3. METRICS ════════════════════════════════════════════════════ -->
-        <div class="v2-section"><span class="v2-section-title"><i class="bi bi-bar-chart-line"></i> Metrics <span class="st-scope">all bugs · all time</span></span></div>
-
-        <!-- Worklog effort by author across every bug -->
-        <div class="v2-card">
-            <div class="st-card-title"><i class="bi bi-person-workspace"></i> Worklog effort by author <span class="st-scope">hours logged · top 20</span></div>
-            <div class="st-chart-box" style="height:420px"><canvas id="st-chart-m-author"></canvas></div>
-        </div>
-
-        <div class="v2-grid-2" style="margin-top:16px">
-            <!-- By customer -->
-            <div class="v2-card">
-                <div class="st-card-title"><i class="bi bi-building"></i> By customer <span class="st-scope">bugs &amp; logged hours · top 15</span></div>
-                <div class="st-chart-box" style="height:320px"><canvas id="st-chart-m-customer"></canvas></div>
-            </div>
-            <!-- By label -->
-            <div class="v2-card">
-                <div class="st-card-title"><i class="bi bi-tags"></i> By label <span class="st-scope">bugs &amp; logged hours · top 15</span></div>
-                <div class="st-chart-box" style="height:320px"><canvas id="st-chart-m-label"></canvas></div>
-            </div>
-        </div>
-
-        }
 
         @if (_tab == "sprints")
         {
@@ -476,11 +451,18 @@
                     <span><i class="bi bi-building"></i> By customer</span>
                     <div class="st-bk-head-tools">
                         <input class="st-bk-search" placeholder="Filter customers…" @bind="_custFilter" @bind:event="oninput" />
+                        <button class="btn small" @onclick='() => ToggleBreakdownChart("customer")' title="@(_expandedBreakdownCharts.Contains("customer") ? "Hide chart" : "Show chart")">
+                            <i class="bi bi-chevron-@(_expandedBreakdownCharts.Contains("customer") ? "down" : "right")"></i> Chart
+                        </button>
                         <button class="btn small" @onclick="ExportByCustomerAsync" title="Export this table to Excel">
                             <i class="bi bi-file-earmark-excel"></i>
                         </button>
                     </div>
                 </div>
+                @if (_expandedBreakdownCharts.Contains("customer"))
+                {
+                    <div class="st-chart-box" style="height:280px;margin-bottom:10px"><canvas id="st-chart-m-customer"></canvas></div>
+                }
                 <div class="v2-table-wrap st-bk-scroll" style="margin:0">
                     <table class="v2-table" style="font-size:12px">
                         <thead><tr>
@@ -515,11 +497,18 @@
                     <span><i class="bi bi-tags"></i> By label</span>
                     <div class="st-bk-head-tools">
                         <input class="st-bk-search" placeholder="Filter labels…" @bind="_labelFilter" @bind:event="oninput" />
+                        <button class="btn small" @onclick='() => ToggleBreakdownChart("label")' title="@(_expandedBreakdownCharts.Contains("label") ? "Hide chart" : "Show chart")">
+                            <i class="bi bi-chevron-@(_expandedBreakdownCharts.Contains("label") ? "down" : "right")"></i> Chart
+                        </button>
                         <button class="btn small" @onclick="ExportByLabelAsync" title="Export this table to Excel">
                             <i class="bi bi-file-earmark-excel"></i>
                         </button>
                     </div>
                 </div>
+                @if (_expandedBreakdownCharts.Contains("label"))
+                {
+                    <div class="st-chart-box" style="height:280px;margin-bottom:10px"><canvas id="st-chart-m-label"></canvas></div>
+                }
                 <div class="v2-table-wrap st-bk-scroll" style="margin:0">
                     <table class="v2-table" style="font-size:12px">
                         <thead><tr>
@@ -555,11 +544,18 @@
                 <span><i class="bi bi-person-workspace"></i> Worked by <span class="st-scope">who actually logged work — by worklog author, not assignee</span></span>
                 <div class="st-bk-head-tools">
                     <input class="st-bk-search" placeholder="Filter members…" @bind="_workedFilter" @bind:event="oninput" />
+                    <button class="btn small" @onclick='() => ToggleBreakdownChart("author")' title="@(_expandedBreakdownCharts.Contains("author") ? "Hide chart" : "Show chart")">
+                        <i class="bi bi-chevron-@(_expandedBreakdownCharts.Contains("author") ? "down" : "right")"></i> Chart
+                    </button>
                     <button class="btn small" @onclick="ExportWorkedByAsync" title="Export this table to Excel">
                         <i class="bi bi-file-earmark-excel"></i>
                     </button>
                 </div>
             </div>
+            @if (_expandedBreakdownCharts.Contains("author"))
+            {
+                <div class="st-chart-box" style="height:380px;margin-bottom:10px"><canvas id="st-chart-m-author"></canvas></div>
+            }
             @{
                 var workedTotalLogged = WorkedBy.Sum(w => w.LoggedSeconds);
             }
@@ -1153,7 +1149,6 @@
     private static readonly TabDef[] _tabs =
     {
         new("overview",   "Overview",   "bi-speedometer2"),
-        new("metrics",    "Metrics",    "bi-bar-chart-line"),
         new("sprints",    "Sprints",    "bi-calendar3"),
         new("breakdowns", "Breakdowns", "bi-diagram-3"),
         new("bugs",       "Bugs",       "bi-bug"),
@@ -1245,6 +1240,16 @@
     {
         _bugChartsExpanded = !_bugChartsExpanded;
         if (_bugChartsExpanded) _chartsNeedRender = true;
+    }
+
+    // Breakdowns-tab charts (formerly the standalone Metrics tab) — collapsed by default,
+    // one toggle per card ("customer" / "label" / "author"); canvases only exist in the DOM
+    // while their card is expanded, so re-render is requested on expand.
+    private readonly HashSet<string> _expandedBreakdownCharts = new();
+    private void ToggleBreakdownChart(string key)
+    {
+        if (!_expandedBreakdownCharts.Remove(key)) _expandedBreakdownCharts.Add(key);
+        _chartsNeedRender = true;
     }
 
     // ── Bug explorer: customer filter + column sorting ───────────────────────
@@ -2331,70 +2336,79 @@
 
         if (_tab == "bugs") { await RenderBugChartsAsync(); return; }
 
-        if (_tab != "metrics") return;
+        if (_tab != "breakdowns") return;
 
-        foreach (var id in new[] { "st-chart-m-author", "st-chart-m-customer", "st-chart-m-label" })
-            await JS.InvokeVoidAsync("destroyChart", id);
-
-        // Worklog effort by author across every bug (all time).
-        var auth = WlAuthorAllTime.Take(20).ToList();
-        await JS.InvokeVoidAsync("renderChart", "st-chart-m-author", new
+        // Formerly the standalone Metrics tab's 3 charts — now collapsible sections inside
+        // their matching Breakdowns card, so only render whichever ones are expanded (their
+        // canvases don't exist in the DOM otherwise).
+        if (_expandedBreakdownCharts.Contains("author"))
         {
-            type = "bar",
-            data = new
+            await JS.InvokeVoidAsync("destroyChart", "st-chart-m-author");
+            var auth = WlAuthorAllTime.Take(20).ToList();
+            await JS.InvokeVoidAsync("renderChart", "st-chart-m-author", new
             {
-                labels = auth.Select(g => g.Name).ToArray(),
-                datasets = new[] { new
+                type = "bar",
+                data = new
                 {
-                    label = "Hours",
-                    data = auth.Select(g => Math.Round(g.TotalHours, 1)).ToArray(),
-                    backgroundColor = ClrHours,
-                    borderRadius = 4
-                }}
-            },
-            options = new
-            {
-                indexAxis = "y",
-                responsive = true,
-                maintainAspectRatio = false,
-                plugins = new { legend = new { display = false } },
-                scales = new { x = new { beginAtZero = true } }
-            }
-        });
-
-        // By customer — bug count (left axis) + logged hours (right axis).
-        var cust = ByCustomer.OrderByDescending(c => c.Total).Take(15).ToList();
-        await JS.InvokeVoidAsync("renderChart", "st-chart-m-customer", new
-        {
-            type = "bar",
-            data = new
-            {
-                labels = cust.Select(c => c.Name).ToArray(),
-                datasets = new object[]
+                    labels = auth.Select(g => g.Name).ToArray(),
+                    datasets = new[] { new
+                    {
+                        label = "Hours",
+                        data = auth.Select(g => Math.Round(g.TotalHours, 1)).ToArray(),
+                        backgroundColor = ClrHours,
+                        borderRadius = 4
+                    }}
+                },
+                options = new
                 {
-                    new { label = "Bugs",  data = cust.Select(c => c.Total).ToArray(), backgroundColor = ClrCount, borderRadius = 3, yAxisID = "y" },
-                    new { label = "Hours", data = cust.Select(c => Math.Round(c.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = ClrHours, borderRadius = 3, yAxisID = "y1" }
+                    indexAxis = "y",
+                    responsive = true,
+                    maintainAspectRatio = false,
+                    plugins = new { legend = new { display = false } },
+                    scales = new { x = new { beginAtZero = true } }
                 }
-            },
-            options = DualAxisOpts()
-        });
+            });
+        }
 
-        // By label — bug count (left axis) + logged hours (right axis).
-        var lab = ByLabel.OrderByDescending(l => l.Total).Take(15).ToList();
-        await JS.InvokeVoidAsync("renderChart", "st-chart-m-label", new
+        if (_expandedBreakdownCharts.Contains("customer"))
         {
-            type = "bar",
-            data = new
+            await JS.InvokeVoidAsync("destroyChart", "st-chart-m-customer");
+            var cust = ByCustomer.OrderByDescending(c => c.Total).Take(15).ToList();
+            await JS.InvokeVoidAsync("renderChart", "st-chart-m-customer", new
             {
-                labels = lab.Select(l => l.Name).ToArray(),
-                datasets = new object[]
+                type = "bar",
+                data = new
                 {
-                    new { label = "Bugs",  data = lab.Select(l => l.Total).ToArray(), backgroundColor = ClrCount, borderRadius = 3, yAxisID = "y" },
-                    new { label = "Hours", data = lab.Select(l => Math.Round(l.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = ClrHours, borderRadius = 3, yAxisID = "y1" }
-                }
-            },
-            options = DualAxisOpts()
-        });
+                    labels = cust.Select(c => c.Name).ToArray(),
+                    datasets = new object[]
+                    {
+                        new { label = "Bugs",  data = cust.Select(c => c.Total).ToArray(), backgroundColor = ClrCount, borderRadius = 3, yAxisID = "y" },
+                        new { label = "Hours", data = cust.Select(c => Math.Round(c.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = ClrHours, borderRadius = 3, yAxisID = "y1" }
+                    }
+                },
+                options = DualAxisOpts()
+            });
+        }
+
+        if (_expandedBreakdownCharts.Contains("label"))
+        {
+            await JS.InvokeVoidAsync("destroyChart", "st-chart-m-label");
+            var lab = ByLabel.OrderByDescending(l => l.Total).Take(15).ToList();
+            await JS.InvokeVoidAsync("renderChart", "st-chart-m-label", new
+            {
+                type = "bar",
+                data = new
+                {
+                    labels = lab.Select(l => l.Name).ToArray(),
+                    datasets = new object[]
+                    {
+                        new { label = "Bugs",  data = lab.Select(l => l.Total).ToArray(), backgroundColor = ClrCount, borderRadius = 3, yAxisID = "y" },
+                        new { label = "Hours", data = lab.Select(l => Math.Round(l.LoggedSeconds / 3600.0, 1)).ToArray(), backgroundColor = ClrHours, borderRadius = 3, yAxisID = "y1" }
+                    }
+                },
+                options = DualAxisOpts()
+            });
+        }
     }
 
     // Grouped-bar options with a left axis (counts) and a right axis (hours).

@@ -250,15 +250,34 @@
                         <span class="v2-section-note">Bug vs Redesign, of the @supportBugRedesignTotal JSSUPPORT-linked bugs above</span>
                     </div>
                     <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
-                        <div class="v2-donut v2-donut-lg" style="--p:@(supportBugTypePct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
-                            <span>@supportBugTypePct.ToString("F0")%</span>
+                        <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
+                            <div class="v2-donut v2-donut-lg" style="--p:@(supportBugTypePct.ToString(System.Globalization.CultureInfo.InvariantCulture));--c1:var(--v2-danger)">
+                                <span>@supportBugTypePct.ToString("F0")%</span>
+                            </div>
+                            @if (SupportLinkedOriginBreakdown is not null)
+                            {
+                                var totalHours = SupportLinkedOriginBreakdown.BugHours + SupportLinkedOriginBreakdown.RedesignHours;
+                                <span class="dr-hours-link" @onclick="OpenJsSupportPersonHoursModal" title="Click to see hours logged per person">@totalHours.ToString("F0")h total</span>
+                            }
                         </div>
                         <div style="display:flex;flex-direction:column;gap:10px">
                             <div>
-                                <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@SupportBugTypeSplitStat.BugTypeCount issues</span></div>
+                                <div class="v2-row">
+                                    <span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@SupportBugTypeSplitStat.BugTypeCount issues</span>
+                                    @if (SupportLinkedOriginBreakdown is not null)
+                                    {
+                                        <span class="dr-hours-link" @onclick='() => OpenJsSupportHoursModal("Bug", SupportLinkedOriginBreakdown.BugHours, SupportBugTypeHoursPerDay)' title="Click to see hours logged per day">@SupportLinkedOriginBreakdown.BugHours.ToString("F0")h logged</span>
+                                    }
+                                </div>
                             </div>
                             <div>
-                                <div class="v2-row"><span class="v2-chip" style="background:#f3e8ff;color:#7c3aed">Redesign</span><span class="v2-row-value">@SupportBugTypeSplitStat.RedesignTypeCount issues</span></div>
+                                <div class="v2-row">
+                                    <span class="v2-chip" style="background:#f3e8ff;color:#7c3aed">Redesign</span><span class="v2-row-value">@SupportBugTypeSplitStat.RedesignTypeCount issues</span>
+                                    @if (SupportLinkedOriginBreakdown is not null)
+                                    {
+                                        <span class="dr-hours-link" @onclick='() => OpenJsSupportHoursModal("Redesign", SupportLinkedOriginBreakdown.RedesignHours, SupportRedesignTypeHoursPerDay)' title="Click to see hours logged per day">@SupportLinkedOriginBreakdown.RedesignHours.ToString("F0")h logged</span>
+                                    }
+                                </div>
                             </div>
                         </div>
                         @if (SupportBugPriorityBreakdown.Count > 0)
@@ -275,7 +294,7 @@
                         }
                         @if (SupportBugsByProductType.Count > 0)
                         {
-                            <div style="flex:0 0 auto;width:370px">
+                            <div class="dr-product-table-wrap" style="flex:0 0 auto;width:370px">
                                 <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3);margin-bottom:6px"><i class="bi bi-people"></i> By Product</div>
                                 <div class="v2-table-wrap" style="margin:0;max-height:200px;overflow:auto">
                                     <table class="v2-table dr-product-table">
@@ -313,38 +332,6 @@
                 {
                     @RenderEpicTable("JSSUPPORT-linked Bugs by Epic", "closed this sprint vs still open, hours logged, avg effort per issue", SupportBugsByEpic, SupportBugsByEpicIssues)
                 }
-
-                <div class="v2-kpi-grid" style="margin-top:12px;margin-bottom:0">
-                    <div class="v2-kpi v2-kpi-neutral">
-                        <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Avg Effort per Issue</div>
-                        <div style="margin-top:6px">
-                            <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)">JSSUPPORT-linked</div>
-                            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
-                                <div>
-                                    <div class="v2-kpi-value" style="font-size:20px">@SupportBugAvgEffortHours.ToString("F1")h</div>
-                                    <div class="v2-kpi-sub">to conclude · @SupportBugClosedCount closed</div>
-                                </div>
-                                <div>
-                                    <div class="v2-kpi-value" style="font-size:20px">@SupportBugAvgEffortOngoingHours.ToString("F1")h</div>
-                                    <div class="v2-kpi-sub">ongoing (still open)</div>
-                                </div>
-                            </div>
-                        </div>
-                        <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--v2-divider)">
-                            <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3)">Feature-found</div>
-                            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:2px">
-                                <div>
-                                    <div class="v2-kpi-value" style="font-size:20px">@FeatureFoundBugAvgEffortHours.ToString("F1")h</div>
-                                    <div class="v2-kpi-sub">to conclude (closed)</div>
-                                </div>
-                                <div>
-                                    <div class="v2-kpi-value" style="font-size:20px">@FeatureFoundBugAvgEffortOngoingHours.ToString("F1")h</div>
-                                    <div class="v2-kpi-sub">ongoing (still open)</div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             }
         </div>
     }
@@ -520,6 +507,72 @@
             </div>
         </div>
     }
+
+    @if (_showJsSupportHoursModal)
+    {
+        <div class="v2-modal-overlay dr-export-skip" @onclick="CloseJsSupportHoursModal">
+            <div class="v2-modal" style="max-width:700px" @onclick:stopPropagation="true">
+                <div class="v2-modal-head">
+                    <div>
+                        <div class="v2-modal-title"><i class="bi bi-bar-chart-line"></i> Hours Logged per Day — JSSUPPORT-linked @_jsSupportHoursModalTitle</div>
+                        <div class="v2-modal-sub">
+                            @_jsSupportHoursModalTotalHours.ToString("F0")h total
+                            @if (Report?.StartDate is not null && Report.EndDate is not null)
+                            {
+                                <span> · @Report.StartDate.Value.ToString("MMM d") – @Report.EndDate.Value.ToString("MMM d")</span>
+                            }
+                        </div>
+                    </div>
+                    <button class="v2-modal-close" @onclick="CloseJsSupportHoursModal" title="Close">&times;</button>
+                </div>
+                <div class="v2-modal-body">
+                    @if (_jsSupportHoursModalSeries.Count == 0)
+                    {
+                        <div class="v2-empty" style="padding:24px">No hours logged in this window.</div>
+                    }
+                    else
+                    {
+                        <div style="height:300px;position:relative">
+                            <canvas id="chart-hours-jssupport"></canvas>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (_showJsSupportPersonHoursModal)
+    {
+        <div class="v2-modal-overlay dr-export-skip" @onclick="CloseJsSupportPersonHoursModal">
+            <div class="v2-modal" style="max-width:700px" @onclick:stopPropagation="true">
+                <div class="v2-modal-head">
+                    <div>
+                        <div class="v2-modal-title"><i class="bi bi-bar-chart-line"></i> Hours Logged per Person — JSSUPPORT-linked Bugs</div>
+                        <div class="v2-modal-sub">
+                            @_jsSupportPersonHoursModalTotalHours.ToString("F0")h total
+                            @if (Report?.StartDate is not null && Report.EndDate is not null)
+                            {
+                                <span> · @Report.StartDate.Value.ToString("MMM d") – @Report.EndDate.Value.ToString("MMM d")</span>
+                            }
+                        </div>
+                    </div>
+                    <button class="v2-modal-close" @onclick="CloseJsSupportPersonHoursModal" title="Close">&times;</button>
+                </div>
+                <div class="v2-modal-body">
+                    @if (_jsSupportPersonHoursModalSeries.Count == 0)
+                    {
+                        <div class="v2-empty" style="padding:24px">No hours logged in this window.</div>
+                    }
+                    else
+                    {
+                        <div style="height:@(Math.Max(200, _jsSupportPersonHoursModalSeries.Count * 32))px;position:relative">
+                            <canvas id="chart-hours-jssupport-person"></canvas>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -542,6 +595,10 @@
     private List<(DateTime Date, double RemainingHours)> AllBurndown = [];
     private List<(DateTime Date, double IdealRemainingHours)> TaskIdealBurndown = [];
     private List<(DateTime Date, double IdealRemainingHours)> AllIdealBurndown = [];
+    private List<(DateTime Date, int RemainingCount)> TaskCountBurndown = [];
+    private List<(DateTime Date, int RemainingCount)> AllCountBurndown = [];
+    private List<(DateTime Date, double IdealRemainingCount)> TaskIdealCountBurndown = [];
+    private List<(DateTime Date, double IdealRemainingCount)> AllIdealCountBurndown = [];
     private List<(DateTime Date, double Hours)> TaskHoursPerDay = [];
     private List<(DateTime Date, double Hours)> AllHoursPerDay = [];
     private List<DeliveryHealthCalculator.EstimationPoint> TaskEstimationPoints = [];
@@ -582,6 +639,27 @@
     // next to the Bug Origin JSSUPPORT donut with a product-level view.
     private record SupportProductTypeRow(string Product, string IssueType, int TotalCount, int ClosedCount, double LoggedHours, double AvgHoursToClose, int StaffCount);
     private List<SupportProductTypeRow> SupportBugsByProductType = [];
+
+    // Day-by-day logged-hours series per issue type (Bug / Redesign) within the JSSUPPORT-linked
+    // population — feeds the popup chart opened by clicking either type's "Xh logged" stat,
+    // right in front of that type's issue count. Same renderer as the Delivery Work "Hours
+    // Logged per Day" chart.
+    private List<(DateTime Date, double Hours)> SupportBugTypeHoursPerDay = [];
+    private List<(DateTime Date, double Hours)> SupportRedesignTypeHoursPerDay = [];
+    private bool _showJsSupportHoursModal;
+    private bool _renderJsSupportHoursChart;
+    private string _jsSupportHoursModalTitle = "";
+    private double _jsSupportHoursModalTotalHours;
+    private List<(DateTime Date, double Hours)> _jsSupportHoursModalSeries = [];
+
+    // Hours logged across all JSSUPPORT-linked bugs (Bug + Redesign combined), by worklog
+    // author — feeds the "Total Hours" stat next to the Bug Origin donut and its per-person
+    // drilldown chart, opened by clicking that stat.
+    private List<(string Person, double Hours)> SupportLinkedHoursPerPerson = [];
+    private bool _showJsSupportPersonHoursModal;
+    private bool _renderJsSupportPersonHoursChart;
+    private double _jsSupportPersonHoursModalTotalHours;
+    private List<(string Person, double Hours)> _jsSupportPersonHoursModalSeries = [];
 
     // Per-origin-row summary for the Bug Origin donut: closed count + hours split by
     // issue type (Bug/Redesign), shown right next to each row instead of only further down.
@@ -857,6 +935,10 @@
         AllBurndown       = DeliveryHealthCalculator.ComputeBurndown(report, allIssues);
         TaskIdealBurndown = DeliveryHealthCalculator.ComputeIdealBurndown(report, taskIssues);
         AllIdealBurndown  = DeliveryHealthCalculator.ComputeIdealBurndown(report, allIssues);
+        TaskCountBurndown = DeliveryHealthCalculator.ComputeTaskCountBurndown(report, taskIssues);
+        AllCountBurndown  = DeliveryHealthCalculator.ComputeTaskCountBurndown(report, allIssues);
+        TaskIdealCountBurndown = DeliveryHealthCalculator.ComputeIdealTaskCountBurndown(report, taskIssues);
+        AllIdealCountBurndown  = DeliveryHealthCalculator.ComputeIdealTaskCountBurndown(report, allIssues);
         TaskHoursPerDay   = DeliveryHealthCalculator.ComputeHoursPerDay(report, taskIssues);
         AllHoursPerDay    = DeliveryHealthCalculator.ComputeHoursPerDay(report, allIssues);
         TaskEstimationPoints = DeliveryHealthCalculator.ComputeEstimationPoints(taskIssues);
@@ -910,6 +992,12 @@
             })
             .OrderBy(r => r.Product).ThenBy(r => r.IssueType)
             .ToList();
+
+        SupportBugTypeHoursPerDay = DeliveryHealthCalculator.ComputeHoursPerDay(report,
+            supportLinkedBugs.Where(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)).ToList());
+        SupportRedesignTypeHoursPerDay = DeliveryHealthCalculator.ComputeHoursPerDay(report,
+            supportLinkedBugs.Where(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase)).ToList());
+        SupportLinkedHoursPerPerson = DeliveryHealthCalculator.ComputeHoursPerPerson(report, supportLinkedBugs);
 
         SupportLinkedOriginBreakdown = DeliveryHealthCalculator.ComputeOriginTypeBreakdown(report, supportLinkedBugs);
         FeatureFoundOriginBreakdown  = DeliveryHealthCalculator.ComputeOriginTypeBreakdown(report, featureFoundBugs);
@@ -1020,12 +1108,13 @@
         finally { IsExporting = false; }
     }
 
-    // Snapshots just the Bug vs Feature Split, Bug Origin, Delivery Work's Completion /
-    // Planned vs Worked KPIs, and Delivery Burndown (Delivery Work / Task issue type only)
-    // sections as a standalone .html file — the burndown chart is swapped for a static PNG
-    // client-side since a <canvas> element's pixels aren't part of the DOM.
+    // Snapshots just the Bug vs Feature Split, Bug Origin JSSUPPORT (donut, Priority Breakdown,
+    // Total Hours Logged and the By Product table), Delivery Work's Completion / Planned vs
+    // Worked KPIs, and both Delivery Work burndown charts (Delivery Burndown by hours, Task
+    // Burndown by issue count) side by side as a standalone .html file — each burndown chart is
+    // swapped for a static PNG client-side since a <canvas> element's pixels aren't part of the DOM.
     private static readonly string[] HtmlExportSectionIds =
-        ["html-export-bugsplit", "html-export-bugorigin", "html-export-delivery-kpis", "html-export-burndown"];
+        ["html-export-bugsplit", "html-export-bugorigin-jssupport", "html-export-delivery-kpis", "html-export-burndown"];
 
     private async Task ExportToHtml()
     {
@@ -1037,7 +1126,7 @@
             var sprintLabel = Report.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}";
             var fileName = $"DeliveryReport_{ExportSprintLabel()}_{DateTime.Today:yyyyMMdd}.html";
             await JS.InvokeVoidAsync("exportSectionsAsHtml", HtmlExportSectionIds, fileName,
-                new[] { "chart-burndown-task" }, $"Delivery Report — {sprintLabel}");
+                new[] { "chart-burndown-task", "chart-count-burndown-task" }, $"Delivery Report — {sprintLabel}");
         }
         catch (Exception ex) { ErrorMessage = $"HTML export failed: {ex.Message}"; }
         finally { IsExportingHtml = false; }
@@ -1390,10 +1479,24 @@
             await RenderStatusDonut("chart-status-all", AllMetrics);
             await RenderBurndownChart("chart-burndown-task", TaskBurndown, TaskIdealBurndown);
             await RenderBurndownChart("chart-burndown-all", AllBurndown, AllIdealBurndown);
+            await RenderCountBurndownChart("chart-count-burndown-task", TaskCountBurndown, TaskIdealCountBurndown);
+            await RenderCountBurndownChart("chart-count-burndown-all", AllCountBurndown, AllIdealCountBurndown);
             await RenderHoursPerDayChart("chart-hours-task", TaskHoursPerDay);
             await RenderHoursPerDayChart("chart-hours-all", AllHoursPerDay);
             await RenderEstimationScatter("chart-estimation-task", TaskEstimationPoints);
             await RenderEstimationScatter("chart-estimation-all", AllEstimationPoints);
+        }
+
+        if (_renderJsSupportHoursChart && _showJsSupportHoursModal && _jsSupportHoursModalSeries.Count > 0)
+        {
+            _renderJsSupportHoursChart = false;
+            await RenderHoursPerDayChart("chart-hours-jssupport", _jsSupportHoursModalSeries);
+        }
+
+        if (_renderJsSupportPersonHoursChart && _showJsSupportPersonHoursModal && _jsSupportPersonHoursModalSeries.Count > 0)
+        {
+            _renderJsSupportPersonHoursChart = false;
+            await RenderHoursPerPersonChart("chart-hours-jssupport-person", _jsSupportPersonHoursModalSeries);
         }
     }
 
@@ -1475,6 +1578,55 @@
         });
     }
 
+    private async Task RenderCountBurndownChart(string canvasId, List<(DateTime Date, int RemainingCount)> actual,
+        List<(DateTime Date, double IdealRemainingCount)> ideal)
+    {
+        if (actual.Count == 0 && ideal.Count == 0) return;
+
+        var labelDates = (ideal.Count > 0 ? ideal.Select(p => p.Date) : actual.Select(p => p.Date)).ToArray();
+        var actualByDate = actual.ToDictionary(p => p.Date, p => (double?)p.RemainingCount);
+        var idealByDate  = ideal.ToDictionary(p => p.Date, p => (double?)Math.Round(p.IdealRemainingCount, 1));
+
+        await JS.InvokeVoidAsync("renderChart", canvasId, new
+        {
+            type = "line",
+            data = new
+            {
+                labels   = labelDates.Select(d => d.ToString("MMM d")).ToArray(),
+                datasets = new object[]
+                {
+                    new
+                    {
+                        label = "Actual remaining",
+                        data = labelDates.Select(d => actualByDate.TryGetValue(d, out var v) ? v : null).ToArray(),
+                        borderColor = "rgba(22,163,74,0.9)",
+                        backgroundColor = "rgba(22,163,74,0.12)",
+                        borderWidth = 2, pointRadius = 2, fill = true, tension = 0.15
+                    },
+                    new
+                    {
+                        label = "Ideal",
+                        data = labelDates.Select(d => idealByDate.TryGetValue(d, out var v) ? v : null).ToArray(),
+                        borderColor = "rgba(148,163,184,0.9)",
+                        backgroundColor = "transparent",
+                        borderDash = new[] { 6, 4 },
+                        borderWidth = 2, pointRadius = 0, fill = false, tension = (double)0
+                    }
+                }
+            },
+            options = new
+            {
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = true, position = "top", labels = new { font = new { size = 11 }, boxWidth = 12, padding = 8 } } },
+                scales  = new
+                {
+                    x = new { grid = new { display = false } },
+                    y = new { beginAtZero = true, ticks = new { precision = 0 }, grid = new { color = "rgba(0,0,0,0.04)" } }
+                }
+            }
+        });
+    }
+
     private async Task RenderHoursPerDayChart(string canvasId, List<(DateTime Date, double Hours)> series)
     {
         if (series.Count == 0) return;
@@ -1506,6 +1658,41 @@
                 {
                     x = new { grid = new { display = false } },
                     y = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } }
+                }
+            }
+        });
+    }
+
+    private async Task RenderHoursPerPersonChart(string canvasId, List<(string Person, double Hours)> series)
+    {
+        if (series.Count == 0) return;
+        await JS.InvokeVoidAsync("renderChart", canvasId, new
+        {
+            type = "bar",
+            data = new
+            {
+                labels   = series.Select(p => p.Person).ToArray(),
+                datasets = new object[]
+                {
+                    new
+                    {
+                        label = "Hours logged",
+                        data  = series.Select(p => Math.Round(p.Hours, 1)).ToArray(),
+                        backgroundColor = "rgba(99,102,241,0.82)",
+                        borderColor     = "rgba(79,70,229,1)",
+                        borderWidth = 1, borderRadius = 4
+                    }
+                }
+            },
+            options = new
+            {
+                indexAxis = "y",
+                responsive = true, maintainAspectRatio = false,
+                plugins = new { legend = new { display = false } },
+                scales  = new
+                {
+                    x = new { beginAtZero = true, grid = new { color = "rgba(0,0,0,0.04)" } },
+                    y = new { grid = new { display = false } }
                 }
             }
         });
@@ -1646,6 +1833,27 @@
 
     private void CloseEpicModal() => _showEpicModal = false;
 
+    private void OpenJsSupportHoursModal(string typeLabel, double totalHours, List<(DateTime Date, double Hours)> series)
+    {
+        _jsSupportHoursModalTitle = typeLabel;
+        _jsSupportHoursModalTotalHours = totalHours;
+        _jsSupportHoursModalSeries = series;
+        _showJsSupportHoursModal = true;
+        _renderJsSupportHoursChart = true;
+    }
+
+    private void CloseJsSupportHoursModal() => _showJsSupportHoursModal = false;
+
+    private void OpenJsSupportPersonHoursModal()
+    {
+        _jsSupportPersonHoursModalTotalHours = (SupportLinkedOriginBreakdown?.BugHours ?? 0) + (SupportLinkedOriginBreakdown?.RedesignHours ?? 0);
+        _jsSupportPersonHoursModalSeries = SupportLinkedHoursPerPerson;
+        _showJsSupportPersonHoursModal = true;
+        _renderJsSupportPersonHoursChart = true;
+    }
+
+    private void CloseJsSupportPersonHoursModal() => _showJsSupportPersonHoursModal = false;
+
     private RenderFragment RenderSection(string title, string note, DeliveryHealthMetrics m, DeliveryHealthCalculator.ScopeAddedStats? scopeAdded, List<double> velocitySparkline, List<ProductBreakdownRow>? productBreakdown, string idSuffix) =>
     @<text>
         <div class="v2-section-title" style="margin-top:20px"><i class="bi bi-collection"></i>@title <span class="v2-section-note">@note</span></div>
@@ -1684,7 +1892,14 @@
         </div>
 
         <div class="v2-kpi-grid">
-            <div id="@(idSuffix == "task" ? "html-export-delivery-kpis" : null)" style="display:contents">
+            @* display:contents on the live page lets these two cards sit as plain siblings in the
+               parent's auto-fit grid (alongside Velocity) — but the HTML export grabs this div's
+               outerHTML in isolation, and display:contents produces no layout of its own once
+               detached from that parent grid, so exported Completion/Planned vs Worked used to
+               stack instead of sitting side by side. grid-column:span 2 keeps this div occupying
+               the same two-column width it always did inside the live 3-up grid, while its own
+               nested 1fr/1fr grid gives the export a self-contained side-by-side layout. *@
+            <div id="@(idSuffix == "task" ? "html-export-delivery-kpis" : null)" style="display:grid;grid-template-columns:1fr 1fr;gap:14px;grid-column:span 2">
             <div class="v2-kpi @(m.CompletionBehind ? "v2-kpi-warn" : "v2-kpi-success")">
                 <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Completion</div>
                 <div class="v2-kpi-value">@((int)m.CompletionPct)%</div>
@@ -1779,8 +1994,9 @@
             </div>
         </div>
 
-        <div class="v2-grid-2" style="margin-top:12px">
-            <div class="v2-card" id="@(idSuffix == "task" ? "html-export-burndown" : null)">
+        <div class="v2-grid-3" style="margin-top:12px">
+            <div id="@(idSuffix == "task" ? "html-export-burndown" : null)" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;grid-column:span 2">
+            <div class="v2-card">
                 <div class="v2-section-title">
                     <i class="bi bi-graph-down-arrow" style="color:var(--v2-brand-3)"></i>Delivery Burndown <span class="v2-section-note">remaining estimate — actual vs ideal</span>
                     <i class="bi bi-info-circle dr-info-icon" title="Remaining = each issue's original estimate minus hours already logged against it (never below zero), dropping to zero once the issue is marked Done. It's not a straight subtraction of total hours logged — an issue's remaining only falls when work is logged on that specific issue, or the issue resolves."></i>
@@ -1788,6 +2004,16 @@
                 <div style="height:240px;position:relative">
                     <canvas id="chart-burndown-@idSuffix"></canvas>
                 </div>
+            </div>
+            <div class="v2-card">
+                <div class="v2-section-title">
+                    <i class="bi bi-list-check" style="color:var(--v2-success)"></i>Task Burndown <span class="v2-section-note">issue count — actual vs ideal</span>
+                    <i class="bi bi-info-circle dr-info-icon" title="Number of issues not yet marked Done as of each day, regardless of estimate size — complements the hours-based Delivery Burndown for tracking raw task count instead of effort."></i>
+                </div>
+                <div style="height:240px;position:relative">
+                    <canvas id="chart-count-burndown-@idSuffix"></canvas>
+                </div>
+            </div>
             </div>
             <div class="v2-card">
                 <div class="v2-section-title"><i class="bi bi-calendar-event" style="color:var(--v2-brand-2)"></i>Hours Logged per Day</div>
@@ -1847,6 +2073,12 @@
     .dr-product-table thead th { padding:6px 8px; font-size:9.5px; }
     .dr-product-table tbody td { padding:5px 8px; }
     .dr-product-table .v2-chip { font-size:9.5px; padding:1px 6px; }
+
+    .dr-hours-link {
+        margin-left:8px; cursor:pointer; user-select:none; font-size:11.5px; font-weight:600;
+        color:var(--v2-brand); padding:2px 8px; border-radius:6px; border:1px solid transparent;
+    }
+    .dr-hours-link:hover { background:var(--v2-brand-soft); border-color:var(--v2-brand); }
 
     .dr-epic-row { cursor:pointer; }
     .dr-epic-row:hover { background:var(--v2-brand-soft); }

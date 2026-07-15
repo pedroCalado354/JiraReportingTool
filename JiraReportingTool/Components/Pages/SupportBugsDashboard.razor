@@ -135,7 +135,13 @@
             <div class="sbk-card sbk-neutral">
                 <div class="sbk-head"><span class="sbk-ico"><i class="bi bi-stopwatch"></i></span><span class="sbk-title">Sprint Logged</span></div>
                 <div class="sbk-value">@FormatSeconds(TotalSprintSeconds)</div>
-                <div class="sbk-sub">@_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")</div>
+                <div class="sbk-sub">
+                    @_sprintStart.ToString("dd MMM") – @_sprintEnd.ToString("dd MMM")
+                    @if (_linkedBugsLoaded)
+                    {
+                        <span> · + @FormatSeconds(LinkedSprintLoggedSeconds) JSSUPPORT</span>
+                    }
+                </div>
             </div>
 
             <!-- Daily Burn -->
@@ -573,8 +579,8 @@
                             <th class="sb-th sb-th-labels">Labels</th>
                             <th class="sb-th sb-th-status sortable @SI("status")" @onclick='() => Sort("status")'>Status</th>
                             <th class="sb-th sb-th-due sortable @SI("due")" @onclick='() => Sort("due")'>Due Date</th>
-                            <th class="sb-th sb-th-est sortable @SI("est")" @onclick='() => Sort("est")'>Orig Est</th>
                             <th class="sb-th sb-th-est sortable @SI("logged")" @onclick='() => Sort("logged")'>Logged</th>
+                            <th class="sb-th sb-th-est sortable @SI("sprint")" @onclick='() => Sort("sprint")' title="Hours logged within the current sprint window">Logged in Sprint</th>
                             <th class="sb-th sb-th-est sortable @SI("rem")" @onclick='() => Sort("rem")'>Remaining</th>
                             <th class="sb-th sb-th-pct sortable @SI("pct")" @onclick='() => Sort("pct")'>%</th>
                             <th class="sb-th sb-th-activity sortable @SI("activity")" @onclick='() => Sort("activity")'>Last Activity</th>
@@ -630,8 +636,8 @@
                                         <span class="sb-no-due">—</span>
                                     }
                                 </td>
-                                <td class="sb-td sb-td-est">@FormatSeconds(bug.OriginalEstimateSeconds)</td>
                                 <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                                <td class="sb-td sb-td-est">@FormatSeconds(sprint)</td>
                                 <td class="sb-td sb-td-est">@(bug.OriginalEstimateSeconds == 0 ? "—" : FormatSeconds(bug.ComputedRemainingSeconds))</td>
                                 <td class="sb-td sb-td-pct">
                                     @if (bug.OriginalEstimateSeconds > 0)
@@ -1186,6 +1192,41 @@
                                 </div>
                             }
                         </div>
+                        <span class="sb-fb-cap">Product</span>
+                        <div class="sb-dd">
+                            <button class="sb-dd-btn @(_lkSelectedProducts.Count > 0 ? "active" : "")" @onclick="() => _lkProductDdOpen = !_lkProductDdOpen">
+                                @(_lkSelectedProducts.Count == 0 ? "All products" : $"{_lkSelectedProducts.Count} selected")
+                                <span class="sb-dd-caret">▾</span>
+                            </button>
+                            @if (_lkProductDdOpen)
+                            {
+                                <div class="sb-dd-backdrop" @onclick="CloseLkProductDropdown"></div>
+                                <div class="sb-dd-panel">
+                                    <div class="sb-dd-head">
+                                        <input class="sb-dd-search" placeholder="Search products…" @bind="_lkProductSearch" @bind:event="oninput" />
+                                        @if (_lkSelectedProducts.Count > 0)
+                                        {
+                                            <button class="sb-dd-clear" @onclick="() => _lkSelectedProducts.Clear()">Clear</button>
+                                        }
+                                    </div>
+                                    <div class="sb-dd-list">
+                                        @foreach (var product in LinkedBugProducts.Where(p => string.IsNullOrEmpty(_lkProductSearch) || p.Contains(_lkProductSearch, StringComparison.OrdinalIgnoreCase)))
+                                        {
+                                            var pr = product;
+                                            <label class="sb-dd-opt">
+                                                <input type="checkbox" checked="@(_lkSelectedProducts.Contains(pr))" @onchange="() => ToggleLkProduct(pr)" />
+                                                <span class="sb-dd-opt-name" title="@pr">@pr</span>
+                                                <span class="sb-dd-opt-n">@CountForLkProduct(pr)</span>
+                                            </label>
+                                        }
+                                        @if (!LinkedBugProducts.Any())
+                                        {
+                                            <div class="sb-empty" style="padding:10px;font-size:12px">No products in these bugs.</div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
                         <span class="sb-fb-cap">Status</span>
                         <div class="sb-dd">
                             <button class="sb-dd-btn @(_lkSelectedStatuses.Count > 0 ? "active" : "")" @onclick="() => _lkStatusDdOpen = !_lkStatusDdOpen">
@@ -1231,6 +1272,11 @@
                             var val = st;
                             <button class="sb-fb-chip" @onclick="() => ToggleLkStatus(val)" title="Remove @val"><span class="sb-fb-chip-cap">status</span>@val ✕</button>
                         }
+                        @foreach (var pr in _lkSelectedProducts.OrderBy(x => x))
+                        {
+                            var val = pr;
+                            <button class="sb-fb-chip" @onclick="() => ToggleLkProduct(val)" title="Remove @val"><span class="sb-fb-chip-cap">product</span>@val ✕</button>
+                        }
                         <span class="sb-lk-toolbar-count">@LinkedSupportBugs.Count of @LinkedBaseBugs.Count bug@(LinkedBaseBugs.Count == 1 ? "" : "s")</span>
                     </div>
                 }
@@ -1252,11 +1298,13 @@
                                     <th class="sb-th sb-th-key sortable @SILk("key")" @onclick='() => SortLk("key")'>Key</th>
                                     <th class="sb-th sb-th-title sortable @SILk("title")" @onclick='() => SortLk("title")'>Title</th>
                                     <th class="sb-th sb-th-customer sortable @SILk("customer")" @onclick='() => SortLk("customer")'>Customer</th>
+                                    <th class="sb-th sb-th-customer sortable @SILk("product")" @onclick='() => SortLk("product")'>Product</th>
                                     <th class="sb-th sb-th-status sortable @SILk("status")" @onclick='() => SortLk("status")'>Status</th>
                                     <th class="sb-th sb-th-status sortable @SILk("sprint")" @onclick='() => SortLk("sprint")'>Sprint</th>
                                     <th class="sb-th sb-th-due sortable @SILk("created")" @onclick='() => SortLk("created")'>Created</th>
                                     <th class="sb-th sb-th-est sortable @SILk("age")" @onclick='() => SortLk("age")'>Age</th>
                                     <th class="sb-th sb-th-est sortable @SILk("logged")" @onclick='() => SortLk("logged")'>Logged</th>
+                                    <th class="sb-th sb-th-est sortable @SILk("sprintlogged")" @onclick='() => SortLk("sprintlogged")' title="Hours logged within the current sprint window">Logged in Sprint</th>
                                     <th class="sb-th">JSSUPPORT Links</th>
                                     <th class="sb-th sb-th-expand"></th>
                                 </tr>
@@ -1271,6 +1319,7 @@
                                         <td class="sb-td sb-td-key"><a class="sb-key-link" href="@_jiraBase/browse/@bug.Key" target="_blank" rel="noopener noreferrer">@bug.Key</a></td>
                                         <td class="sb-td sb-td-title" title="@bug.Summary">@bug.Summary</td>
                                         <td class="sb-td sb-td-customer">@(string.IsNullOrEmpty(bug.Customer) ? "—" : bug.Customer)</td>
+                                        <td class="sb-td sb-td-customer">@ProductOf(bug)</td>
                                         <td class="sb-td sb-td-status"><span class="rpt-status-chip @GetStatusClass(bug.Status)">@(bug.Status ?? "—")</span></td>
                                         <td class="sb-td sb-td-status" title="@bug.SprintName">@(string.IsNullOrEmpty(bug.SprintName) ? "—" : bug.SprintName)</td>
                                         <td class="sb-td sb-td-due">@(bug.Created.HasValue ? bug.Created.Value.ToString("dd MMM yyyy") : "—")</td>
@@ -1278,6 +1327,7 @@
                                             <span class="@(lkAge >= 90 ? "sb-age-badge sb-age-badge-old" : lkAge >= 30 ? "sb-age-badge sb-age-badge-aging" : lkAge >= 7 ? "sb-age-badge sb-age-badge-recent" : "sb-age-badge sb-age-badge-fresh")">@lkAge d</span>
                                         </td>
                                         <td class="sb-td sb-td-est">@FormatSeconds(bug.TimeSpentSeconds)</td>
+                                        <td class="sb-td sb-td-est">@FormatSeconds(GetSprintTimeSeconds(bug))</td>
                                         <td class="sb-td">
                                             @foreach (var lk in JsSupportLinksOf(bug))
                                             {
@@ -1300,7 +1350,7 @@
                                             .OrderByDescending(x => x.Seconds)
                                             .ToList();
                                         <tr class="sb-worklog-row">
-                                            <td colspan="11" class="sb-worklog-cell">
+                                            <td colspan="13" class="sb-worklog-cell">
                                                 @if (bug.Worklogs.Count == 0)
                                                 {
                                                     <div class="sb-empty" style="padding:14px">No time logged on @bug.Key yet.</div>
@@ -1349,7 +1399,7 @@
                                 }
                                 @if (!LinkedSupportBugs.Any())
                                 {
-                                    <tr><td colspan="11" class="sb-empty">No JSSUPPORT-linked bugs outside the epic have time logged since @_sprintStart.ToString("dd MMM") 00h or were resolved in the window.</td></tr>
+                                    <tr><td colspan="13" class="sb-empty">No JSSUPPORT-linked bugs outside the epic have time logged since @_sprintStart.ToString("dd MMM") 00h or were resolved in the window.</td></tr>
                                 }
                             </tbody>
                         </table>
@@ -1975,7 +2025,6 @@
                 "customer" => _sortAsc ? q.OrderBy(b => b.Customer)                            : q.OrderByDescending(b => b.Customer),
                 "status"   => _sortAsc ? q.OrderBy(b => b.Status)                              : q.OrderByDescending(b => b.Status),
                 "due"      => _sortAsc ? q.OrderBy(b => b.DueDate ?? DateTime.MaxValue)        : q.OrderByDescending(b => b.DueDate ?? DateTime.MinValue),
-                "est"      => _sortAsc ? q.OrderBy(b => b.OriginalEstimateSeconds)             : q.OrderByDescending(b => b.OriginalEstimateSeconds),
                 "logged"   => _sortAsc ? q.OrderBy(b => b.TimeSpentSeconds)                    : q.OrderByDescending(b => b.TimeSpentSeconds),
                 "rem"      => _sortAsc ? q.OrderBy(b => b.ComputedRemainingSeconds)            : q.OrderByDescending(b => b.ComputedRemainingSeconds),
                 "activity" => _sortAsc ? q.OrderBy(b => GetLastActivity(b) ?? DateTime.MinValue) : q.OrderByDescending(b => GetLastActivity(b) ?? DateTime.MaxValue),
@@ -2407,7 +2456,8 @@
             // epic, matching a Jira "parent = EPIC" worklog total so logged hours reconcile.
             var epicTask     = JiraService.GetEpicBugsAsync(key, bugsOnly: false);
             var priorityTask = JiraService.GetPriorityBugsAsync();
-            await Task.WhenAll(epicTask, priorityTask);
+            var linkedTask   = LoadLinkedBugsAsync(); // refetch alongside the epic so JSSUPPORT hours are ready without opening that tab
+            await Task.WhenAll(epicTask, priorityTask, linkedTask);
 
             _bugs              = epicTask.Result.Issues ?? new();
             _loadedEpicKey     = key;
@@ -2510,6 +2560,34 @@
     private int CountForLkStatus(string status) =>
         LinkedBaseBugs.Count(b => b.Status == status);
 
+    // Product filter for the JSSUPPORT Linked tab (independent of the main filter bar) —
+    // same "JS Project[Radio Buttons]" field and "—" fallback as Support Trends' Product filter.
+    private const string NoProductLabel = "—";
+    private static string ProductOf(SprintIssue b) => string.IsNullOrWhiteSpace(b.Product) ? NoProductLabel : b.Product;
+
+    private readonly HashSet<string> _lkSelectedProducts = new();
+    private bool   _lkProductDdOpen;
+    private string _lkProductSearch = "";
+
+    private void ToggleLkProduct(string product)
+    {
+        if (!_lkSelectedProducts.Remove(product)) _lkSelectedProducts.Add(product);
+    }
+
+    private void CloseLkProductDropdown()
+    {
+        _lkProductDdOpen = false;
+        _lkProductSearch = "";
+    }
+
+    private IEnumerable<string> LinkedBugProducts => LinkedBaseBugs
+        .Select(ProductOf)
+        .Distinct()
+        .OrderBy(p => p);
+
+    private int CountForLkProduct(string product) =>
+        LinkedBaseBugs.Count(b => ProductOf(b) == product);
+
     private static List<string> JsSupportLinksOf(SprintIssue b) => b.LinkedIssueKeys
         .Where(k => k.StartsWith("JSSUPPORT", StringComparison.OrdinalIgnoreCase))
         .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -2544,17 +2622,21 @@
                 q = q.Where(b => b.Worklogs.Any(w => _lkSelectedAuthors.Contains(w.Author)));
             if (_lkSelectedStatuses.Count > 0)
                 q = q.Where(b => _lkSelectedStatuses.Contains(b.Status));
+            if (_lkSelectedProducts.Count > 0)
+                q = q.Where(b => _lkSelectedProducts.Contains(ProductOf(b)));
             return (_sortColLk switch
             {
                 "pri"      => _sortAscLk ? q.OrderBy(b => PriOrder(b))                          : q.OrderByDescending(b => PriOrder(b)),
                 "key"      => _sortAscLk ? q.OrderBy(b => b.Key)                                : q.OrderByDescending(b => b.Key),
                 "title"    => _sortAscLk ? q.OrderBy(b => b.Summary)                            : q.OrderByDescending(b => b.Summary),
                 "customer" => _sortAscLk ? q.OrderBy(b => b.Customer)                           : q.OrderByDescending(b => b.Customer),
+                "product"  => _sortAscLk ? q.OrderBy(b => ProductOf(b))                         : q.OrderByDescending(b => ProductOf(b)),
                 "status"   => _sortAscLk ? q.OrderBy(b => b.Status)                             : q.OrderByDescending(b => b.Status),
                 "sprint"   => _sortAscLk ? q.OrderBy(b => b.SprintName)                         : q.OrderByDescending(b => b.SprintName),
                 "created"  => _sortAscLk ? q.OrderBy(b => b.Created ?? DateTime.MaxValue)       : q.OrderByDescending(b => b.Created ?? DateTime.MinValue),
                 "age"      => _sortAscLk ? q.OrderBy(b => GetDaysOpen(b))                       : q.OrderByDescending(b => GetDaysOpen(b)),
                 "logged"   => _sortAscLk ? q.OrderBy(b => b.TimeSpentSeconds)                   : q.OrderByDescending(b => b.TimeSpentSeconds),
+                "sprintlogged" => _sortAscLk ? q.OrderBy(b => GetSprintTimeSeconds(b))          : q.OrderByDescending(b => GetSprintTimeSeconds(b)),
                 _          => q.OrderByDescending(b => b.Created ?? DateTime.MinValue)
             }).ToList();
         }
@@ -2601,6 +2683,8 @@
             CloseLkAuthorDropdown();
             _lkSelectedStatuses.Clear();
             CloseLkStatusDropdown();
+            _lkSelectedProducts.Clear();
+            CloseLkProductDropdown();
         }
         catch (Exception ex)
         {

@@ -418,6 +418,46 @@ public static class DeliveryHealthCalculator
         return points;
     }
 
+    // Count-based burndown: how many issues (not hours) are still open as of each day —
+    // complements ComputeBurndown's hours view for teams that want to see tasks draining down
+    // regardless of how unevenly estimated they are.
+    public static List<(DateTime Date, int RemainingCount)> ComputeTaskCountBurndown(SprintReport report, List<SprintIssue> scopedIssues)
+    {
+        var start = report.StartDate?.Date;
+        var end = report.EndDate?.Date;
+        if (start is null || end is null) return [];
+
+        var cap = end.Value < DateTime.Today ? end.Value : DateTime.Today;
+
+        bool IsDoneByDay(SprintIssue i, DateTime d) => i.StatusCategoryKey == "done" &&
+            (i.ResolutionDate.HasValue ? i.ResolutionDate.Value.Date <= d : d >= cap);
+
+        var points = new List<(DateTime, int)>();
+        for (var d = start.Value; d <= cap; d = d.AddDays(1))
+            points.Add((d, scopedIssues.Count(i => !IsDoneByDay(i, d))));
+        return points;
+    }
+
+    // Ideal task-count burndown: straight-line trajectory from total scoped issue count (sprint
+    // start) to zero (sprint end) — mirrors ComputeIdealBurndown but in issue counts.
+    public static List<(DateTime Date, double IdealRemainingCount)> ComputeIdealTaskCountBurndown(SprintReport report, List<SprintIssue> scopedIssues)
+    {
+        var start = report.StartDate?.Date;
+        var end = report.EndDate?.Date;
+        if (start is null || end is null) return [];
+
+        var totalCount = scopedIssues.Count;
+        var totalDays = (end.Value - start.Value).Days;
+        var points = new List<(DateTime, double)>();
+        for (var d = start.Value; d <= end.Value; d = d.AddDays(1))
+        {
+            var elapsedDays = (d - start.Value).Days;
+            var idealRemaining = totalDays <= 0 ? 0 : totalCount * (1 - (double)elapsedDays / totalDays);
+            points.Add((d, Math.Max(0, idealRemaining)));
+        }
+        return points;
+    }
+
     public static List<(DateTime Date, double Hours)> ComputeHoursPerDay(SprintReport report, List<SprintIssue> scopedIssues)
     {
         var start = report.StartDate?.Date;
@@ -431,6 +471,25 @@ public static class DeliveryHealthCalculator
             .GroupBy(w => w.Started.Date)
             .Select(g => (Date: g.Key, Hours: g.Sum(w => w.TimeSpentSeconds) / 3600.0))
             .OrderBy(x => x.Date)
+            .ToList();
+    }
+
+    // Same worklog population as ComputeHoursPerDay, grouped by worklog author instead of by
+    // day — feeds the "hours logged per person" drilldown chart.
+    public static List<(string Person, double Hours)> ComputeHoursPerPerson(SprintReport report, List<SprintIssue> scopedIssues)
+    {
+        var start = report.StartDate?.Date;
+        var end = report.EndDate?.Date;
+
+        var worklogs = scopedIssues.SelectMany(i => i.Worklogs).AsEnumerable();
+        if (start is not null && end is not null)
+            worklogs = worklogs.Where(w => w.Started.Date >= start.Value && w.Started.Date <= end.Value);
+
+        return worklogs
+            .Where(w => !string.IsNullOrWhiteSpace(w.Author))
+            .GroupBy(w => w.Author)
+            .Select(g => (Person: g.Key, Hours: g.Sum(w => w.TimeSpentSeconds) / 3600.0))
+            .OrderByDescending(x => x.Hours)
             .ToList();
     }
 
