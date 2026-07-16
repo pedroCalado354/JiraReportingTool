@@ -249,8 +249,8 @@
                     <div class="v2-section-title" style="margin-top:4px">
                         <i class="bi bi-pie-chart-fill" style="color:var(--v2-danger)"></i>Bug Origin JSSUPPORT
                         <span class="v2-section-note">Bug vs Redesign, of the @supportBugRedesignTotal JSSUPPORT-linked bugs above</span>
-                        <button class="v2-btn v2-btn-ghost dr-export-skip" style="margin-left:auto;padding:5px 12px;font-size:12px" @onclick="OpenBugCapacityModal" title="Bug capacity burndown, budget overview and daily burn rate — based on a 4h/bug, 320h sprint budget assumption">
-                            <i class="bi bi-graph-down-arrow"></i> Capacity Burndown
+                        <button class="v2-btn v2-btn-ghost dr-export-skip" style="margin-left:auto;padding:5px 12px;font-size:12px" @onclick="OpenBugCapacityModal" title="Budget overview and daily burn rate — based on a 4h/bug, 320h sprint budget assumption">
+                            <i class="bi bi-piggy-bank"></i> Budget Details
                         </button>
                     </div>
                     <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
@@ -263,6 +263,7 @@
                                 var totalHours = SupportLinkedOriginBreakdown.BugHours + SupportLinkedOriginBreakdown.RedesignHours;
                                 <span class="dr-hours-link" @onclick="OpenJsSupportPersonHoursModal" title="Click to see hours logged per person">@totalHours.ToString("F0")h total</span>
                             }
+                            <span class="v2-hint">@SupportBugClosedCount closed</span>
                         </div>
                         <div style="display:flex;flex-direction:column;gap:10px">
                             <div>
@@ -329,16 +330,12 @@
                                 </div>
                             </div>
                         }
-                    </div>
-                </div>
-
-                <!-- Export-only, off-screen render of the Bug Capacity popup's burndown chart —
-                     kept always up to date (unlike the popup itself) so the HTML export can grab
-                     it via chart-bugcap-burndown-export without requiring the popup to be open. -->
-                <div id="html-export-bugcap-burndown" style="position:absolute;left:-9999px;top:-9999px;width:640px">
-                    <div class="v2-section-title"><i class="bi bi-graph-down-arrow" style="color:var(--v2-danger)"></i>Bug Capacity Burndown <span class="v2-section-note">JSSUPPORT bugs — open &times; @BugHoursPerBug.ToString("F0")h vs ideal (@BugCapacityBudgetHours.ToString("F0")h budget)</span></div>
-                    <div style="height:240px;position:relative">
-                        <canvas id="chart-bugcap-burndown-export"></canvas>
+                        <div id="html-export-bugcap-burndown" style="flex:1 1 380px;min-width:340px">
+                            <div class="v2-hint" style="font-weight:600;color:var(--v2-ink-3);margin-bottom:6px"><i class="bi bi-graph-down-arrow"></i> Bug Capacity Burndown <span style="font-weight:400">— open bugs &times; @BugHoursPerBug.ToString("F0")h vs ideal (@BugCapacityBudgetHours.ToString("F0")h budget)</span></div>
+                            <div style="height:240px;position:relative">
+                                <canvas id="chart-bugcap-burndown"></canvas>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -601,7 +598,7 @@
             <div class="v2-modal" style="max-width:1000px" @onclick:stopPropagation="true">
                 <div class="v2-modal-head">
                     <div>
-                        <div class="v2-modal-title"><i class="bi bi-graph-down-arrow"></i> Bug Capacity Burndown — JSSUPPORT Bugs</div>
+                        <div class="v2-modal-title"><i class="bi bi-piggy-bank"></i> Bug Budget Details — JSSUPPORT Bugs</div>
                         <div class="v2-modal-sub">
                             Assumes @BugHoursPerBug.ToString("F0")h per bug &middot; @BugCapacityBudgetHours.ToString("F0")h sprint budget
                             @if (Report?.StartDate is not null && Report.EndDate is not null)
@@ -644,23 +641,16 @@
 
                         <div class="v2-grid-2" style="margin-bottom:16px">
                             <div class="v2-card">
-                                <div class="v2-section-title" style="margin-bottom:6px">Capacity Burndown <span class="v2-section-note">open bugs &times; 4h vs ideal</span></div>
-                                <div style="height:260px;position:relative">
-                                    <canvas id="chart-bugcap-burndown"></canvas>
-                                </div>
-                            </div>
-                            <div class="v2-card">
                                 <div class="v2-section-title" style="margin-bottom:6px">Budget Overview <span class="v2-section-note">@BugCapacityBudgetHours.ToString("F0")h split</span></div>
                                 <div style="height:260px;position:relative">
                                     <canvas id="chart-bugcap-overview"></canvas>
                                 </div>
                             </div>
-                        </div>
-
-                        <div class="v2-card">
-                            <div class="v2-section-title" style="margin-bottom:6px">Daily Burn Rate <span class="v2-section-note">bugs closed per day vs target pace to hit budget</span></div>
-                            <div style="height:260px;position:relative">
-                                <canvas id="chart-bugcap-dailyrate"></canvas>
+                            <div class="v2-card">
+                                <div class="v2-section-title" style="margin-bottom:6px">Daily Burn Rate <span class="v2-section-note">bugs closed per day vs target pace to hit budget</span></div>
+                                <div style="height:260px;position:relative">
+                                    <canvas id="chart-bugcap-dailyrate"></canvas>
+                                </div>
                             </div>
                         </div>
                     }
@@ -1367,9 +1357,10 @@
     }
 
     // Mirrors exactly the sections the "Export .html" button captures (HtmlExportSectionIds):
-    // Bug vs Feature Split, Bug Origin JSSUPPORT (donut, priority breakdown, by-product table),
-    // Delivery Work's Completion + Planned vs Worked KPIs, and its two burndown charts — so the
-    // .xlsx and .html exports carry the same data.
+    // Bug vs Feature Split, Bug Origin JSSUPPORT (donut, priority breakdown, by-product table,
+    // Bug Capacity Burndown chart), Delivery Work's Completion + Planned vs Worked KPIs, its two
+    // burndown charts, and Hours Logged per Day last — so the .xlsx and .html exports carry the
+    // same data, in the same order.
     private async Task BuildHtmlMatchedSheetAsync(XLWorkbook wb, string sprintLabel, string dateRangeLabel, string productLabel, string exportedAt)
     {
         var ws = wb.Worksheets.Add("Summary");
@@ -1414,6 +1405,7 @@
             Meta("Bug %", $"{supportBugTypePct:F0}%");
             if (SupportLinkedOriginBreakdown is not null)
                 Meta("Total Hours Logged", $"{(SupportLinkedOriginBreakdown.BugHours + SupportLinkedOriginBreakdown.RedesignHours):F0}h");
+            Meta("Closed", $"{SupportBugClosedCount}");
             Meta("Bug", $"{SupportBugTypeSplitStat.BugTypeCount} total · {SupportBugTypeSplitStat.BugTypeWorkedOnCount} worked on" +
                 (SupportLinkedOriginBreakdown is not null ? $" · {SupportLinkedOriginBreakdown.BugHours:F0}h logged" : ""));
             Meta("Redesign", $"{SupportBugTypeSplitStat.RedesignTypeCount} total · {SupportBugTypeSplitStat.RedesignTypeWorkedOnCount} worked on" +
@@ -1439,6 +1431,8 @@
                 }
                 row++;
             }
+
+            await AddBurndownChart("Bug Capacity Burndown", "chart-bugcap-burndown");
         }
 
         if (TaskMetrics is not null)
@@ -1489,20 +1483,22 @@
         {
             await AddBurndownChart("Delivery Burndown — Delivery Work", "chart-burndown-task");
             await AddBurndownChart("Task Burndown — Delivery Work", "chart-count-burndown-task");
+            await AddBurndownChart("Hours Logged per Day — Delivery Work", "chart-hours-task");
         }
 
         ws.Columns().AdjustToContents();
     }
 
     // Snapshots just the Bug vs Feature Split, Bug Origin JSSUPPORT (donut, Priority Breakdown,
-    // Total Hours Logged and the By Product table), Hours Logged per Day, the Bug Capacity
-    // popup's burndown chart, Delivery Work's Completion / Planned vs Worked KPIs, and both
-    // Delivery Work burndown charts (Delivery Burndown by hours, Task Burndown by issue count)
-    // side by side as a standalone .html file — each chart is swapped for a static PNG
-    // client-side since a <canvas> element's pixels aren't part of the DOM.
+    // Total Hours Logged, the By Product table and the Bug Capacity burndown chart, all inline),
+    // Delivery Work's Completion / Planned vs Worked KPIs, both Delivery Work burndown charts
+    // (Delivery Burndown by hours, Task Burndown by issue count), and Hours Logged per Day last —
+    // each chart is swapped for a static PNG client-side since a <canvas> element's pixels aren't
+    // part of the DOM. html-export-bugcap-burndown is NOT listed separately — it's nested inside
+    // html-export-bugorigin-jssupport now, so cloning that section already brings it along.
     private static readonly string[] HtmlExportSectionIds =
-        ["html-export-bugsplit", "html-export-bugorigin-jssupport", "html-export-hours-per-day", "html-export-bugcap-burndown",
-         "html-export-delivery-kpis", "html-export-burndown"];
+        ["html-export-bugsplit", "html-export-bugorigin-jssupport",
+         "html-export-delivery-kpis", "html-export-burndown", "html-export-hours-per-day"];
 
     private async Task ExportToHtml()
     {
@@ -1514,7 +1510,7 @@
             var sprintLabel = Report.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}";
             var fileName = $"DeliveryReport_{ExportSprintLabel()}_{DateTime.Today:yyyyMMdd}.html";
             await JS.InvokeVoidAsync("exportSectionsAsHtml", HtmlExportSectionIds, fileName,
-                new[] { "chart-burndown-task", "chart-count-burndown-task", "chart-hours-task", "chart-bugcap-burndown-export" },
+                new[] { "chart-burndown-task", "chart-count-burndown-task", "chart-hours-task", "chart-bugcap-burndown" },
                 $"Delivery Report — {sprintLabel}", _exportNotesHtml);
         }
         catch (Exception ex) { ErrorMessage = $"HTML export failed: {ex.Message}"; }
@@ -1663,11 +1659,10 @@
             await RenderEstimationScatter("chart-estimation-task", TaskEstimationPoints);
             await RenderEstimationScatter("chart-estimation-all", AllEstimationPoints);
 
-            // Off-screen render (see html-export-bugcap-burndown) so the HTML export can grab
-            // this chart even when the Bug Capacity popup itself has never been opened.
+            // Always-visible now (inline in Bug Origin JSSUPPORT), not gated behind the popup.
             var jsSupportBugsOnly = JsSupportBugsOnly;
             if (jsSupportBugsOnly.Count > 0)
-                await RenderBugCapacityBurndownChart(jsSupportBugsOnly, "chart-bugcap-burndown-export");
+                await RenderBugCapacityBurndownChart(jsSupportBugsOnly);
         }
 
         if (_renderJsSupportHoursChart && _showJsSupportHoursModal && _jsSupportHoursModalSeries.Count > 0)
@@ -1688,7 +1683,6 @@
             var bugs = JsSupportBugsOnly;
             if (bugs.Count > 0)
             {
-                await RenderBugCapacityBurndownChart(bugs);
                 await RenderBugCapacityOverviewChart(bugs);
                 await RenderBugCapacityDailyRateChart(bugs);
             }
@@ -2130,9 +2124,13 @@
         var end = Report.EndDate.Value.Date;
         var cap = end < DateTime.Today ? end : DateTime.Today;
 
+        // A done issue with no resolution date (rare, workflow-dependent) can only be confirmed
+        // closed as of "today" — attribute it to the cap day rather than silently dropping it
+        // from every day's bar, which otherwise makes the daily total undercount the real
+        // "Closed" KPI and can make a day look emptier than it actually was.
         var closedByDay = bugs
-            .Where(i => i.StatusCategoryKey == "done" && i.ResolutionDate.HasValue)
-            .GroupBy(i => i.ResolutionDate!.Value.Date)
+            .Where(i => i.StatusCategoryKey == "done")
+            .GroupBy(i => i.ResolutionDate?.Date ?? cap)
             .ToDictionary(g => g.Key, g => g.Count());
 
         var points = new List<(DateTime, int)>();
@@ -2425,8 +2423,7 @@
             </div>
         </div>
 
-        <div class="v2-grid-3" style="margin-top:12px">
-            <div id="@(idSuffix == "task" ? "html-export-burndown" : null)" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;grid-column:span 2">
+        <div id="@(idSuffix == "task" ? "html-export-burndown" : null)" class="v2-grid-2" style="margin-top:12px">
             <div class="v2-card">
                 <div class="v2-section-title">
                     <i class="bi bi-graph-down-arrow" style="color:var(--v2-brand-3)"></i>Delivery Burndown <span class="v2-section-note">remaining estimate — actual vs ideal</span>
@@ -2445,19 +2442,19 @@
                     <canvas id="chart-count-burndown-@idSuffix"></canvas>
                 </div>
             </div>
-            </div>
-            <div class="v2-card" id="@(idSuffix == "task" ? "html-export-hours-per-day" : null)">
-                <div class="v2-section-title"><i class="bi bi-calendar-event" style="color:var(--v2-brand-2)"></i>Hours Logged per Day</div>
-                <div style="height:240px;position:relative">
-                    <canvas id="chart-hours-@idSuffix"></canvas>
-                </div>
-            </div>
         </div>
 
         <div class="v2-card" style="margin-top:12px">
             <div class="v2-section-title"><i class="bi bi-graph-up" style="color:var(--v2-brand)"></i>Estimation Accuracy <span class="v2-section-note">planned vs actual hours per issue — above the diagonal = underestimated</span></div>
             <div style="height:300px;position:relative">
                 <canvas id="chart-estimation-@idSuffix"></canvas>
+            </div>
+        </div>
+
+        <div class="v2-card" style="margin-top:12px" id="@(idSuffix == "task" ? "html-export-hours-per-day" : null)">
+            <div class="v2-section-title"><i class="bi bi-calendar-event" style="color:var(--v2-brand-2)"></i>Hours Logged per Day</div>
+            <div style="height:240px;position:relative">
+                <canvas id="chart-hours-@idSuffix"></canvas>
             </div>
         </div>
     </text>;

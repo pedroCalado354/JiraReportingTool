@@ -159,6 +159,10 @@ window.exportSectionsAsHtml = (sectionIds, fileName, chartIds, title, notesHtml)
         if (!el) return;
         const clone = el.cloneNode(true);
 
+        // Interactive-only elements (buttons, filter chip rows, modal triggers) are marked
+        // dr-export-skip so they never end up baked into the static export.
+        clone.querySelectorAll('.dr-export-skip').forEach(skip => skip.remove());
+
         (chartIds || []).forEach(cid => {
             const chart = _charts[cid];
             const canvasInClone = clone.querySelector('#' + cid);
@@ -174,16 +178,6 @@ window.exportSectionsAsHtml = (sectionIds, fileName, chartIds, title, notesHtml)
         // cloned section only, leaving the on-screen dashboard order untouched.
         if (id === 'html-export-burndown' && clone.children.length === 2) {
             clone.insertBefore(clone.children[1], clone.children[0]);
-        }
-
-        // This section is rendered off-screen on the live page (so its chart stays up to date
-        // without requiring the Bug Capacity popup to be open) — undo that positioning on the
-        // cloned copy so it renders normally in the export.
-        if (id === 'html-export-bugcap-burndown') {
-            clone.style.position = 'static';
-            clone.style.left = 'auto';
-            clone.style.top = 'auto';
-            clone.style.width = 'auto';
         }
 
         // The "By Product" table is deliberately narrow on-screen (it sits beside the donut,
