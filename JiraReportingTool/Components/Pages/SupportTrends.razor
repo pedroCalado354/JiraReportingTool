@@ -910,7 +910,7 @@
     private List<SprintConfig> _configs = new();
     private List<string> _epicKeys = new();
     private List<string> _failedEpics = new();
-    private List<SprintIssue> _allBugsPool = new();   // epic children + JSSUPPORT-linked, unfiltered
+    private List<SprintIssue> _allBugsPool = new();   // JSSUPPORT-linked bugs only (see ReloadCoreAsync), unfiltered by the page's Product/Sprint/Customer filters
     private List<SprintIssue> _bugs = new();          // _allBugsPool after the Product filter
     private bool _linkedFetchFailed;
 
@@ -1314,13 +1314,39 @@
         {
             _fullStart = _configs.Min(c => c.StartDate);
             _fullEnd   = _configs.Max(c => c.EndDate);
-            _rangeStart = _fullStart;
-            _rangeEnd   = _fullEnd;
             _jsFrom = _fullStart;
             _jsTo   = _fullEnd;
+
+            // Default the Window (measurement period) to just the current sprint's dates
+            // rather than the full multi-sprint span — the underlying bug pool still covers
+            // every tracked sprint (so "Full span" / widening the Window is instant, no
+            // re-fetch needed), but the stats shown right after load are scoped to now
+            // instead of dumping 5 sprints' worth of Created/Closed/Worked On numbers at once.
+            var (currentStart, currentEnd) = CurrentSprintWindow(_configs);
+            _rangeStart = currentStart;
+            _rangeEnd   = currentEnd;
         }
 
         if (_epicKeys.Count > 0) await ReloadAsync();
+    }
+
+    // The configs whose own date range covers today, merged into one window (min start, max
+    // end) since different products' sprints can share the same calendar dates under different
+    // sprint numbers (e.g. "Legacy 26.14" and "Pro 26.13" both Jul 13 – Jul 24/26). Falls back to
+    // whichever sprint ended most recently, or the soonest upcoming one, when today falls
+    // between tracked sprints.
+    private static (DateOnly Start, DateOnly End) CurrentSprintWindow(List<SprintConfig> configs)
+    {
+        var today = DateOnly.FromDateTime(DateTime.Today);
+        var current = configs.Where(c => c.StartDate <= today && c.EndDate >= today).ToList();
+        if (current.Count == 0)
+        {
+            var past = configs.Where(c => c.EndDate < today).ToList();
+            current = past.Count > 0
+                ? past.Where(c => c.EndDate == past.Max(p => p.EndDate)).ToList()
+                : configs.Where(c => c.StartDate == configs.Min(p => p.StartDate)).ToList();
+        }
+        return (current.Min(c => c.StartDate), current.Max(c => c.EndDate));
     }
 
     private bool _forceReload;

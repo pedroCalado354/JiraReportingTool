@@ -142,9 +142,17 @@ window.downloadBase64File = (base64, fileName, mimeType) => {
 // its own card: swaps each listed chart canvas for a static PNG (canvas pixels aren't part
 // of the DOM so a plain clone would leave them blank), and points at this page's own
 // stylesheets so it keeps the same look when opened with network access.
-window.exportSectionsAsHtml = (sectionIds, fileName, chartIds, title) => {
+window.exportSectionsAsHtml = (sectionIds, fileName, chartIds, title, notesHtml) => {
     const container = document.createElement('div');
     container.className = 'v2-root';
+
+    if (notesHtml && notesHtml.trim()) {
+        const notesCard = document.createElement('div');
+        notesCard.className = 'v2-card';
+        notesCard.style.marginBottom = '16px';
+        notesCard.innerHTML = `<div class="v2-section-title"><i class="bi bi-sticky-fill"></i> Notes</div><div style="margin-top:8px">${notesHtml}</div>`;
+        container.appendChild(notesCard);
+    }
 
     (sectionIds || []).forEach(id => {
         const el = document.getElementById(id);
@@ -160,6 +168,13 @@ window.exportSectionsAsHtml = (sectionIds, fileName, chartIds, title) => {
             img.style.maxWidth = '100%';
             canvasInClone.replaceWith(img);
         });
+
+        // The live page shows Delivery Burndown (hours) before Task Burndown (issue count),
+        // but the export wants them the other way round — swap the two cards within this one
+        // cloned section only, leaving the on-screen dashboard order untouched.
+        if (id === 'html-export-burndown' && clone.children.length === 2) {
+            clone.insertBefore(clone.children[1], clone.children[0]);
+        }
 
         // The "By Product" table is deliberately narrow on-screen (it sits beside the donut,
         // priority breakdown, etc.), but the export has far more spare width — widen it there.
@@ -209,4 +224,66 @@ ${container.outerHTML}
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
+};
+
+// Minimal rich-text editing for the "add notes before export" popup — a plain contenteditable
+// div plus document.execCommand. Deprecated by the spec but still the simplest way to get
+// bold/bullets/color out of a contenteditable without pulling in a full editor library for
+// what's meant to be a few lines of report commentary.
+window.runNotesCommand = (command) => {
+    const el = document.getElementById('export-notes-editor');
+    if (!el) return;
+    el.focus();
+    document.execCommand(command);
+};
+
+window.runNotesColor = (color) => {
+    const el = document.getElementById('export-notes-editor');
+    if (!el) return;
+    el.focus();
+    document.execCommand('foreColor', false, color);
+};
+
+window.insertNotesLink = () => {
+    const el = document.getElementById('export-notes-editor');
+    if (!el) return;
+    const url = window.prompt('Jira link URL:');
+    if (!url) return;
+    el.focus();
+
+    const selection = window.getSelection();
+    const hasSelection = selection && selection.rangeCount > 0 && !selection.isCollapsed && el.contains(selection.anchorNode);
+    if (hasSelection) {
+        document.execCommand('createLink', false, url);
+        return;
+    }
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.textContent = url;
+
+    const range = selection && selection.rangeCount > 0 && el.contains(selection.anchorNode)
+        ? selection.getRangeAt(0)
+        : null;
+    if (range) {
+        range.deleteContents();
+        range.insertNode(a);
+        range.setStartAfter(a);
+        range.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(range);
+    } else {
+        el.appendChild(a);
+    }
+};
+
+window.getExportNotesHtml = () => {
+    const el = document.getElementById('export-notes-editor');
+    return el ? el.innerHTML : '';
+};
+
+window.clearNotesEditor = () => {
+    const el = document.getElementById('export-notes-editor');
+    if (el) el.innerHTML = '';
 };

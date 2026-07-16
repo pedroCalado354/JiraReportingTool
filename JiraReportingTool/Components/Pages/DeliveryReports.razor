@@ -8,6 +8,7 @@
 @using JiraReportingTool.Models
 @using ClosedXML.Excel
 @using ClosedXML.Excel.Drawings
+@using System.Text.RegularExpressions
 
 <PageTitle>Delivery Reports</PageTitle>
 
@@ -81,17 +82,17 @@
         <div class="v2-hero-spacer"></div>
         @if (Report is not null)
         {
-            <button class="dr-export-btn" @onclick="ExportToExcel" disabled="@IsExporting">
+            <button class="dr-export-btn" @onclick='() => OpenExportNotesModal("excel")' disabled="@IsExporting">
                 @if (IsExporting) { <span class="v2-spin" style="width:12px;height:12px"></span> }
                 else { <i class="bi bi-download"></i> }
                 Export .xlsx
             </button>
-            <button class="dr-export-btn" @onclick="ExportToHtml" disabled="@IsExportingHtml">
+            <button class="dr-export-btn" @onclick='() => OpenExportNotesModal("html")' disabled="@IsExportingHtml">
                 @if (IsExportingHtml) { <span class="v2-spin" style="width:12px;height:12px"></span> }
                 else { <i class="bi bi-filetype-html"></i> }
                 Export .html
             </button>
-            <button class="dr-export-btn dr-export-btn-compact" @onclick="ExportToExcelCompact" disabled="@IsExportingCompact" title="Bug vs Feature Split, Bug Origin, Planned vs Worked and Delivery Burndown for Delivery Work only">
+            <button class="dr-export-btn dr-export-btn-compact" @onclick='() => OpenExportNotesModal("compact")' disabled="@IsExportingCompact" title="Bug vs Feature Split, Bug Origin, Planned vs Worked and Delivery Burndown for Delivery Work only">
                 @if (IsExportingCompact) { <span class="v2-spin" style="width:12px;height:12px"></span> }
                 else { <i class="bi bi-file-earmark-spreadsheet"></i> }
                 Export Compact
@@ -191,8 +192,8 @@
                             <span>@AllBugSplit.BugPct.ToString("F0")%</span>
                         </div>
                         <div style="display:flex;flex-direction:column;gap:8px">
-                            <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@AllBugSplit.BugCount issues &middot; @AllBugSplit.BugHours.ToString("F0")h logged</span></div>
-                            <div class="v2-row"><span class="v2-chip v2-chip-story">Feature / Task</span><span class="v2-row-value">@AllBugSplit.FeatureCount issues &middot; @AllBugSplit.FeatureHours.ToString("F0")h logged</span></div>
+                            <div class="v2-row"><span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@AllBugSplit.BugCount total &middot; @AllBugSplit.BugWorkedOnCount issues worked on &middot; @AllBugSplit.BugHours.ToString("F0")h logged</span></div>
+                            <div class="v2-row"><span class="v2-chip v2-chip-story">Feature / Task</span><span class="v2-row-value">@AllBugSplit.FeatureCount total &middot; @AllBugSplit.FeatureWorkedOnCount issues worked on &middot; @AllBugSplit.FeatureHours.ToString("F0")h logged</span></div>
                         </div>
                     </div>
                     <div class="v2-hint" style="margin-top:8px">@(AllBugSplit.BugPct >= 40 ? "A large share of logged time is going to bugs — the team may be firefighting more than building." : "Most logged time is going toward feature/task work.")</div>
@@ -211,14 +212,14 @@
                             </div>
                             <div style="display:flex;flex-direction:column;gap:10px">
                                 <div>
-                                    <div class="v2-row"><span class="v2-chip v2-chip-bug">JSSUPPORT-linked</span><span class="v2-row-value">@AllBugOriginSplit.SupportLinkedCount bugs &middot; @AllBugOriginSplit.SupportLinkedHours.ToString("F0")h logged</span></div>
+                                    <div class="v2-row"><span class="v2-chip v2-chip-bug">JSSUPPORT-linked</span><span class="v2-row-value">@AllBugOriginSplit.SupportLinkedCount total &middot; @AllBugOriginSplit.SupportLinkedWorkedOnCount worked on &middot; @AllBugOriginSplit.SupportLinkedHours.ToString("F0")h logged</span></div>
                                     @if (SupportLinkedOriginBreakdown is not null)
                                     {
                                         <div class="v2-hint" style="margin-top:-2px">@SupportLinkedOriginBreakdown.ClosedCount closed &middot; Bug @SupportLinkedOriginBreakdown.BugHours.ToString("F0")h &middot; Redesign @SupportLinkedOriginBreakdown.RedesignHours.ToString("F0")h</div>
                                     }
                                 </div>
                                 <div>
-                                    <div class="v2-row"><span class="v2-chip v2-chip-task">Feature-found</span><span class="v2-row-value">@AllBugOriginSplit.FeatureFoundCount bugs &middot; @AllBugOriginSplit.FeatureFoundHours.ToString("F0")h logged</span></div>
+                                    <div class="v2-row"><span class="v2-chip v2-chip-task">Feature-found</span><span class="v2-row-value">@AllBugOriginSplit.FeatureFoundCount total &middot; @AllBugOriginSplit.FeatureFoundWorkedOnCount worked on &middot; @AllBugOriginSplit.FeatureFoundHours.ToString("F0")h logged</span></div>
                                     @if (FeatureFoundOriginBreakdown is not null)
                                     {
                                         <div class="v2-hint" style="margin-top:-2px">@FeatureFoundOriginBreakdown.ClosedCount closed &middot; Bug @FeatureFoundOriginBreakdown.BugHours.ToString("F0")h &middot; Redesign @FeatureFoundOriginBreakdown.RedesignHours.ToString("F0")h</div>
@@ -263,7 +264,7 @@
                         <div style="display:flex;flex-direction:column;gap:10px">
                             <div>
                                 <div class="v2-row">
-                                    <span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@SupportBugTypeSplitStat.BugTypeCount issues</span>
+                                    <span class="v2-chip v2-chip-bug">Bug</span><span class="v2-row-value">@SupportBugTypeSplitStat.BugTypeCount total &middot; @SupportBugTypeSplitStat.BugTypeWorkedOnCount worked on</span>
                                     @if (SupportLinkedOriginBreakdown is not null)
                                     {
                                         <span class="dr-hours-link" @onclick='() => OpenJsSupportHoursModal("Bug", SupportLinkedOriginBreakdown.BugHours, SupportBugTypeHoursPerDay)' title="Click to see hours logged per day">@SupportLinkedOriginBreakdown.BugHours.ToString("F0")h logged</span>
@@ -272,7 +273,7 @@
                             </div>
                             <div>
                                 <div class="v2-row">
-                                    <span class="v2-chip" style="background:#f3e8ff;color:#7c3aed">Redesign</span><span class="v2-row-value">@SupportBugTypeSplitStat.RedesignTypeCount issues</span>
+                                    <span class="v2-chip" style="background:#f3e8ff;color:#7c3aed">Redesign</span><span class="v2-row-value">@SupportBugTypeSplitStat.RedesignTypeCount total &middot; @SupportBugTypeSplitStat.RedesignTypeWorkedOnCount worked on</span>
                                     @if (SupportLinkedOriginBreakdown is not null)
                                     {
                                         <span class="dr-hours-link" @onclick='() => OpenJsSupportHoursModal("Redesign", SupportLinkedOriginBreakdown.RedesignHours, SupportRedesignTypeHoursPerDay)' title="Click to see hours logged per day">@SupportLinkedOriginBreakdown.RedesignHours.ToString("F0")h logged</span>
@@ -573,6 +574,39 @@
             </div>
         </div>
     }
+
+    @if (_showExportNotesModal)
+    {
+        <div class="v2-modal-overlay dr-export-skip" @onclick="CloseExportNotesModal">
+            <div class="v2-modal" style="max-width:640px" @onclick:stopPropagation="true">
+                <div class="v2-modal-head">
+                    <div>
+                        <div class="v2-modal-title"><i class="bi bi-pencil-square"></i> Add notes to this export</div>
+                        <div class="v2-modal-sub">Optional — bullet points, bold and color are supported. Leave blank to export without notes.</div>
+                    </div>
+                    <button class="v2-modal-close" @onclick="CloseExportNotesModal" title="Close">&times;</button>
+                </div>
+                <div class="v2-modal-body">
+                    <div class="dr-notes-toolbar">
+                        <button type="button" class="dr-notes-btn" @onclick='() => RunNotesCommand("bold")' title="Bold"><b>B</b></button>
+                        <button type="button" class="dr-notes-btn" @onclick='() => RunNotesCommand("insertUnorderedList")' title="Bullet list"><i class="bi bi-list-ul"></i></button>
+                        <button type="button" class="dr-notes-btn" @onclick="InsertNotesLink" title="Insert Jira link"><i class="bi bi-link-45deg"></i></button>
+                        <span class="dr-notes-toolbar-sep"></span>
+                        @foreach (var c in NotesColorSwatches)
+                        {
+                            var color = c;
+                            <button type="button" class="dr-notes-swatch" style="background:@color" @onclick="() => RunNotesColor(color)" title="@color"></button>
+                        }
+                    </div>
+                    <div id="export-notes-editor" class="dr-notes-editor" contenteditable="true"></div>
+                </div>
+                <div class="v2-modal-foot" style="display:flex;justify-content:flex-end;gap:8px;padding:12px 16px;border-top:1px solid var(--v2-divider)">
+                    <button class="v2-btn v2-btn-ghost" @onclick="SkipNotesAndExport">Export without notes</button>
+                    <button class="v2-btn v2-btn-primary" @onclick="ConfirmExportWithNotes">Add notes &amp; export</button>
+                </div>
+            </div>
+        </div>
+    }
 </div>
 
 @code {
@@ -673,6 +707,16 @@
     private bool IsExporting;
     private bool IsExportingHtml;
     private bool IsExportingCompact;
+
+    // Notes popup shown before any export — lets the user add free-form context (bullet
+    // points, bold, color) that gets embedded in the exported file. _pendingExportKind records
+    // which of the three export buttons triggered the popup so the right export resumes once
+    // the user confirms or skips.
+    private bool _showExportNotesModal;
+    private bool _clearNotesEditorPending;
+    private string _pendingExportKind = "";
+    private string _exportNotesHtml = "";
+    private static readonly string[] NotesColorSwatches = ["#dc2626", "#d97706", "#16a34a", "#2563eb", "#7c3aed", "#111827"];
 
     // ── Product filter ── "JS Project[Radio Buttons]" field; empty selection means "no filter"
     // (same convention as Working Hours' product filter), so clearing chips shows everything merged.
@@ -881,7 +925,18 @@
             .GroupBy(ProductOf)
             .ToDictionary(g => g.Key, g => g.ToList());
 
-        var products = nativeByProduct.Keys.ToList();
+        // Every configured product (e.g. Digital Journey, Integrations, Rentway Legacy, Rentway
+        // Pro), not just the ones this epic's own sprint happens to touch — so the Product
+        // filter always offers the same full set regardless of which epic is loaded, matching
+        // Support Trends' cross-epic view. GetJsProjectFieldOptionsAsync hits Jira's field-context
+        // API, which needs Jira Administrator permission and 403s for a regular API token — when
+        // that happens it returns an empty list, so DeliveryHealthCalculator.KnownProducts is the
+        // real source of truth and the API result is only an (often-empty) bonus on top.
+        var fieldOptions = await JiraService.GetJsProjectFieldOptionsAsync();
+        var products = DeliveryHealthCalculator.KnownProducts
+            .Union(fieldOptions)
+            .Union(nativeByProduct.Keys)
+            .ToList();
         var byProduct = new Dictionary<string, List<SprintIssue>>();
         for (var idx = 0; idx < products.Count; idx++)
         {
@@ -889,16 +944,17 @@
             _loadingStatus = $"Fetching {product} ({idx + 1} of {products.Count})…";
             StateHasChanged();
 
-            // Union with a worklog-date + product fetch so cross-sprint work is still counted
-            // for products that aren't this sprint's own (e.g. Integrations logs continuously
-            // without every ticket being added to this sprint) — sprint membership alone
-            // drastically undercounts those, while worklog-date alone drops zero-worklog
-            // backlog items for the sprint's own product. Neither alone is complete; union is.
-            var fetched = await JiraService.GetIssuesByProductInRangeAsync(product, start, end);
+            // Union with a worklog-date + product fetch (itself now OR'd with native sprint
+            // membership server-side, so zero-worklog backlog issues come back too — not just
+            // for the epic's own product) so cross-sprint work is still counted for products
+            // that aren't this sprint's own (e.g. Integrations logs continuously without every
+            // ticket being added to this sprint). Neither worklog-date nor sprint membership
+            // alone is complete; the union is.
+            var fetched = await JiraService.GetIssuesByProductInRangeAsync(product, start, end, Report.JiraSprintId);
             var worklogScoped = DeliveryHealthCalculator.FilterActive(fetched.Issues);
 
             byProduct[product] = worklogScoped
-                .Concat(nativeByProduct[product])
+                .Concat(nativeByProduct.GetValueOrDefault(product, []))
                 .DistinctBy(i => i.Key)
                 .ToList();
         }
@@ -961,8 +1017,15 @@
         BugsByEpicIssues     = bugsInScope;
         FeaturesByEpicIssues = featuresInScope;
 
-        var supportLinkedBugs = bugsInScope.Where(DeliveryHealthCalculator.IsSupportLinkedBug).ToList();
-        var featureFoundBugs  = bugsInScope.Where(i => !DeliveryHealthCalculator.IsSupportLinkedBug(i)).ToList();
+        // Unlike bugsInScope above, the JSSUPPORT-linked / feature-found split is NOT narrowed
+        // to bugs with activity this exact window — it's every in-scope bug (matching "Bug
+        // Origin"'s SupportLinkedCount/FeatureFoundCount above), so this section's own total
+        // reconciles with that one instead of silently dropping untouched-this-window bugs.
+        // *WorkedOnCount (Bug Origin) and BugTypeWorkedOnCount/RedesignTypeWorkedOnCount (Bug
+        // Origin JSSUPPORT) still surface the activity-filtered subset alongside the true total.
+        var allBugsInScope = allIssues.Where(DeliveryHealthCalculator.IsBugLike).ToList();
+        var supportLinkedBugs = allBugsInScope.Where(DeliveryHealthCalculator.IsSupportLinkedBug).ToList();
+        var featureFoundBugs  = allBugsInScope.Where(i => !DeliveryHealthCalculator.IsSupportLinkedBug(i)).ToList();
         SupportBugsByEpicIssues     = supportLinkedBugs;
         SupportBugsByEpic           = DeliveryHealthCalculator.ComputeIssuesByEpic(report, supportLinkedBugs);
         SupportBugAvgEffortHours    = DeliveryHealthCalculator.AvgHoursToConclude(report, supportLinkedBugs);
@@ -971,7 +1034,7 @@
         FeatureFoundBugAvgEffortHours = DeliveryHealthCalculator.AvgHoursToConclude(report, featureFoundBugs);
         FeatureFoundBugAvgEffortOngoingHours = DeliveryHealthCalculator.AvgHoursOngoing(report, featureFoundBugs);
         SupportBugPriorityBreakdown = DeliveryHealthCalculator.ComputePriorityBreakdown(supportLinkedBugs);
-        SupportBugTypeSplitStat     = DeliveryHealthCalculator.ComputeBugVsRedesignSplit(supportLinkedBugs);
+        SupportBugTypeSplitStat     = DeliveryHealthCalculator.ComputeBugVsRedesignSplit(report, supportLinkedBugs);
 
         SupportBugsByProductType = supportLinkedBugs
             .GroupBy(i => (Product: ProductOf(i), Type: i.IssueType))
@@ -1057,20 +1120,114 @@
     private double IssueWindowHours(SprintIssue i) =>
         Report is null ? 0 : DeliveryHealthCalculator.SprintWindowHours([i], Report.StartDate, Report.EndDate);
 
-    // ── Excel export ── one workbook: KPI overview, every chart on the page as an image,
-    // the product breakdown, bug/feature detail, and the full filtered ticket list — so a
-    // director can get the whole report without opening the app.
-    private static readonly (string CanvasId, string Title)[] ChartExports =
-    [
-        ("chart-status-task",   "Sprint Status — Delivery Work"),
-        ("chart-status-all",    "Sprint Status — All Issue Types"),
-        ("chart-burndown-task", "Delivery Burndown — Delivery Work"),
-        ("chart-burndown-all",  "Delivery Burndown — All Issue Types"),
-        ("chart-hours-task",    "Hours Logged per Day — Delivery Work"),
-        ("chart-hours-all",     "Hours Logged per Day — All Issue Types"),
-        ("chart-estimation-task", "Estimation Accuracy — Delivery Work"),
-        ("chart-estimation-all",  "Estimation Accuracy — All Issue Types"),
-    ];
+    private void OpenExportNotesModal(string kind)
+    {
+        _pendingExportKind = kind;
+        _showExportNotesModal = true;
+        _clearNotesEditorPending = true;
+    }
+
+    private void CloseExportNotesModal() => _showExportNotesModal = false;
+
+    private async Task RunNotesCommand(string command) => await JS.InvokeVoidAsync("runNotesCommand", command);
+
+    private async Task RunNotesColor(string color) => await JS.InvokeVoidAsync("runNotesColor", color);
+
+    private async Task InsertNotesLink() => await JS.InvokeVoidAsync("insertNotesLink");
+
+    private async Task RunPendingExport()
+    {
+        switch (_pendingExportKind)
+        {
+            case "excel":   await ExportToExcel(); break;
+            case "html":    await ExportToHtml(); break;
+            case "compact": await ExportToExcelCompact(); break;
+        }
+    }
+
+    private async Task ConfirmExportWithNotes()
+    {
+        _exportNotesHtml = await JS.InvokeAsync<string>("getExportNotesHtml");
+        _showExportNotesModal = false;
+        await RunPendingExport();
+    }
+
+    private async Task SkipNotesAndExport()
+    {
+        _exportNotesHtml = "";
+        _showExportNotesModal = false;
+        await RunPendingExport();
+    }
+
+    private sealed record NoteLine(string Text, bool Bold, string? ColorHex, string? Url);
+
+    // execCommand-produced markup wraps each new line in <div>/<p>, and bullet items in <li> —
+    // block tags act as line breaks. Bold/color/link are approximated per-line (good enough for
+    // short report notes) rather than parsed as nested runs, to avoid pulling in a full HTML
+    // parser for what's meant to be a few bullet points, not a document.
+    private static List<NoteLine> ParseNotesHtml(string html)
+    {
+        var lines = new List<NoteLine>();
+        if (string.IsNullOrWhiteSpace(html)) return lines;
+
+        var blockified = Regex.Replace(html, "(?i)<(div|p|li|br)[^>]*>", "\n$0");
+        var blocks = blockified.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var block in blocks)
+        {
+            var isBullet = Regex.IsMatch(block, "(?i)<li[^>]*>");
+            var isBold = Regex.IsMatch(block, "(?i)<(b|strong)[^>]*>");
+            string? color = null;
+            var colorMatch = Regex.Match(block, "(?i)color:\\s*(#[0-9a-f]{3,6}|rgb\\([^)]+\\))");
+            if (colorMatch.Success) color = NormalizeNoteColor(colorMatch.Groups[1].Value);
+
+            string? url = null;
+            var linkMatch = Regex.Match(block, "(?is)<a\\s+[^>]*href=[\"']([^\"']+)[\"']");
+            if (linkMatch.Success) url = System.Net.WebUtility.HtmlDecode(linkMatch.Groups[1].Value);
+
+            var text = System.Net.WebUtility.HtmlDecode(Regex.Replace(block, "<[^>]+>", "")).Trim();
+            if (text.Length == 0) continue;
+
+            lines.Add(new NoteLine(isBullet ? $"• {text}" : text, isBold, color, url));
+        }
+        return lines;
+    }
+
+    private static string? NormalizeNoteColor(string raw)
+    {
+        if (raw.StartsWith('#'))
+            return raw.Length == 4 ? $"#{raw[1]}{raw[1]}{raw[2]}{raw[2]}{raw[3]}{raw[3]}" : raw;
+        var m = Regex.Match(raw, @"rgb\((\d+),\s*(\d+),\s*(\d+)\)");
+        if (!m.Success) return null;
+        return $"#{int.Parse(m.Groups[1].Value):X2}{int.Parse(m.Groups[2].Value):X2}{int.Parse(m.Groups[3].Value):X2}";
+    }
+
+    // Writes a "Notes" section starting at row, returns the next free row. No-op (returns row
+    // unchanged) when there's nothing to write.
+    private static int WriteNotesSection(IXLWorksheet ws, int row, string notesHtml)
+    {
+        var lines = ParseNotesHtml(notesHtml);
+        if (lines.Count == 0) return row;
+
+        var header = ws.Cell(row, 1); header.Value = "Notes"; header.Style.Font.Bold = true; header.Style.Font.FontSize = 13;
+        row++;
+        foreach (var line in lines)
+        {
+            var cell = ws.Cell(row, 1);
+            cell.Value = line.Text;
+            if (line.Bold) cell.Style.Font.Bold = true;
+            if (line.ColorHex is not null) cell.Style.Font.FontColor = XLColor.FromHtml(line.ColorHex);
+            if (line.Url is not null)
+            {
+                cell.SetHyperlink(new XLHyperlink(line.Url));
+                cell.Style.Font.FontColor = XLColor.FromHtml("#0d6efd");
+                cell.Style.Font.Underline = XLFontUnderlineValues.Single;
+            }
+            row++;
+        }
+        row++;
+        return row;
+    }
 
     private async Task ExportToExcel()
     {
@@ -1087,14 +1244,9 @@
             var productLabel = SelectedProducts.Count == AllProducts.Count
                 ? "All products"
                 : (SelectedProducts.Count == 0 ? "(none selected)" : string.Join(", ", SelectedProducts.Order()));
-            var sprintFilterLabel = SprintFilterLabel();
             var exportedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm");
 
-            BuildOverviewSheet(wb, sprintLabel, dateRangeLabel, productLabel, sprintFilterLabel, exportedAt);
-            await BuildChartsSheetAsync(wb);
-            BuildProductsSheet(wb);
-            BuildBugFeatureSheet(wb);
-            BuildTicketsSheet(wb);
+            await BuildHtmlMatchedSheetAsync(wb, sprintLabel, dateRangeLabel, productLabel, exportedAt);
 
             using var ms = new MemoryStream();
             wb.SaveAs(ms);
@@ -1106,6 +1258,134 @@
         }
         catch (Exception ex) { ErrorMessage = $"Export failed: {ex.Message}"; }
         finally { IsExporting = false; }
+    }
+
+    // Mirrors exactly the sections the "Export .html" button captures (HtmlExportSectionIds):
+    // Bug vs Feature Split, Bug Origin JSSUPPORT (donut, priority breakdown, by-product table),
+    // Delivery Work's Completion + Planned vs Worked KPIs, and its two burndown charts — so the
+    // .xlsx and .html exports carry the same data.
+    private async Task BuildHtmlMatchedSheetAsync(XLWorkbook wb, string sprintLabel, string dateRangeLabel, string productLabel, string exportedAt)
+    {
+        var ws = wb.Worksheets.Add("Summary");
+        int row = 1;
+
+        void Meta(string label, string value)
+        {
+            var lc = ws.Cell(row, 1); lc.Value = label; StyleMetaLabel(lc);
+            ws.Cell(row, 2).Value = value;
+            row++;
+        }
+
+        void SectionTitle(string title)
+        {
+            var c = ws.Cell(row, 1); c.Value = title; c.Style.Font.Bold = true; c.Style.Font.FontSize = 13;
+            row++;
+        }
+
+        Meta("Sprint", sprintLabel);
+        Meta("Date Range", dateRangeLabel);
+        Meta("Products", productLabel);
+        Meta("Exported", exportedAt);
+        row++;
+
+        row = WriteNotesSection(ws, row, _exportNotesHtml);
+
+        if (AllBugSplit is not null)
+        {
+            SectionTitle("Bug vs Feature Split");
+            Meta("Bug %", $"{AllBugSplit.BugPct:F0}%");
+            Meta("Bugs", $"{AllBugSplit.BugCount} total · {AllBugSplit.BugWorkedOnCount} worked on · {AllBugSplit.BugHours:F0}h logged");
+            Meta("Feature / Task", $"{AllBugSplit.FeatureCount} total · {AllBugSplit.FeatureWorkedOnCount} worked on · {AllBugSplit.FeatureHours:F0}h logged");
+            row++;
+        }
+
+        if (SupportBugTypeSplitStat is not null && (SupportBugTypeSplitStat.BugTypeCount + SupportBugTypeSplitStat.RedesignTypeCount) > 0)
+        {
+            var supportBugRedesignTotal = SupportBugTypeSplitStat.BugTypeCount + SupportBugTypeSplitStat.RedesignTypeCount;
+            var supportBugTypePct = supportBugRedesignTotal > 0 ? SupportBugTypeSplitStat.BugTypeCount * 100.0 / supportBugRedesignTotal : 0;
+
+            SectionTitle("Bug Origin JSSUPPORT");
+            Meta("Bug %", $"{supportBugTypePct:F0}%");
+            if (SupportLinkedOriginBreakdown is not null)
+                Meta("Total Hours Logged", $"{(SupportLinkedOriginBreakdown.BugHours + SupportLinkedOriginBreakdown.RedesignHours):F0}h");
+            Meta("Bug", $"{SupportBugTypeSplitStat.BugTypeCount} total · {SupportBugTypeSplitStat.BugTypeWorkedOnCount} worked on" +
+                (SupportLinkedOriginBreakdown is not null ? $" · {SupportLinkedOriginBreakdown.BugHours:F0}h logged" : ""));
+            Meta("Redesign", $"{SupportBugTypeSplitStat.RedesignTypeCount} total · {SupportBugTypeSplitStat.RedesignTypeWorkedOnCount} worked on" +
+                (SupportLinkedOriginBreakdown is not null ? $" · {SupportLinkedOriginBreakdown.RedesignHours:F0}h logged" : ""));
+            if (SupportBugPriorityBreakdown.Count > 0)
+                Meta("Priority Breakdown", string.Join(", ", SupportBugPriorityBreakdown.Select(p => $"{p.Priority} ({p.Count})")));
+            row++;
+
+            if (SupportBugsByProductType.Count > 0)
+            {
+                var headers = new[] { "Product", "Type", "Staff", "Logged", "Closed", "Avg" };
+                for (int i = 0; i < headers.Length; i++) { var hc = ws.Cell(row, i + 1); hc.Value = headers[i]; StyleHeaderCell(hc); }
+                row++;
+                foreach (var r in SupportBugsByProductType)
+                {
+                    ws.Cell(row, 1).Value = r.Product;
+                    ws.Cell(row, 2).Value = r.IssueType;
+                    ws.Cell(row, 3).Value = r.StaffCount;
+                    ws.Cell(row, 4).Value = $"{r.LoggedHours:F0}h";
+                    ws.Cell(row, 5).Value = $"{r.ClosedCount}/{r.TotalCount}";
+                    ws.Cell(row, 6).Value = r.ClosedCount > 0 ? $"{r.AvgHoursToClose:F1}h" : "—";
+                    row++;
+                }
+                row++;
+            }
+        }
+
+        if (TaskMetrics is not null)
+        {
+            var t = TaskMetrics;
+            SectionTitle("Delivery Work — Completion");
+            Meta("Completion", $"{t.CompletionPct:F0}%");
+            Meta("Done / In Progress / To Do", $"{t.DoneCount} / {t.InProgressCount} / {t.ToDoCount}");
+            if (TaskProductBreakdown.Count > 0)
+                Meta("By Product", string.Join(" · ", TaskProductBreakdown.Select(p => $"{p.Product} {(p.Total > 0 ? p.Done * 100 / p.Total : 0)}% ({p.Done}/{p.Total})")));
+            row++;
+
+            var delta = t.SprintWindowLoggedHours - t.PlannedHours;
+            var deltaPct = t.PlannedHours > 0 ? Math.Abs(delta) / t.PlannedHours * 100 : 0;
+            SectionTitle("Delivery Work — Planned vs Worked");
+            Meta("Planned", $"{t.PlannedHours:F0}h");
+            Meta("Logged", $"{t.SprintWindowLoggedHours:F0}h");
+            Meta("Delta", delta > 0 ? $"+{delta:F0}h ({deltaPct:F0}% over)" : delta < 0 ? $"{delta:F0}h ({deltaPct:F0}% under)" : "on plan");
+            row++;
+        }
+
+        async Task AddBurndownChart(string title, string canvasId)
+        {
+            SectionTitle(title);
+            string? dataUrl = null;
+            try { dataUrl = await JS.InvokeAsync<string?>("getChartImage", canvasId); } catch { }
+
+            if (!string.IsNullOrEmpty(dataUrl))
+            {
+                var comma = dataUrl.IndexOf(',');
+                var base64Img = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
+                var bytes = Convert.FromBase64String(base64Img);
+                using var imgStream = new MemoryStream(bytes);
+                ws.AddPicture(imgStream, XLPictureFormat.Png)
+                  .MoveTo(ws.Cell(row, 1))
+                  .WithSize(640, 340);
+                row += 18;
+            }
+            else
+            {
+                ws.Cell(row, 1).Value = "(chart not available — no data for current filters)";
+                row += 1;
+            }
+            row += 2;
+        }
+
+        if (TaskMetrics is not null)
+        {
+            await AddBurndownChart("Delivery Burndown — Delivery Work", "chart-burndown-task");
+            await AddBurndownChart("Task Burndown — Delivery Work", "chart-count-burndown-task");
+        }
+
+        ws.Columns().AdjustToContents();
     }
 
     // Snapshots just the Bug vs Feature Split, Bug Origin JSSUPPORT (donut, Priority Breakdown,
@@ -1126,7 +1406,7 @@
             var sprintLabel = Report.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}";
             var fileName = $"DeliveryReport_{ExportSprintLabel()}_{DateTime.Today:yyyyMMdd}.html";
             await JS.InvokeVoidAsync("exportSectionsAsHtml", HtmlExportSectionIds, fileName,
-                new[] { "chart-burndown-task", "chart-count-burndown-task" }, $"Delivery Report — {sprintLabel}");
+                new[] { "chart-burndown-task", "chart-count-burndown-task" }, $"Delivery Report — {sprintLabel}", _exportNotesHtml);
         }
         catch (Exception ex) { ErrorMessage = $"HTML export failed: {ex.Message}"; }
         finally { IsExportingHtml = false; }
@@ -1190,12 +1470,14 @@
         Meta("Exported", exportedAt);
         row++;
 
+        row = WriteNotesSection(ws, row, _exportNotesHtml);
+
         if (AllBugSplit is not null)
         {
             SectionTitle("Bug vs Feature Split");
             Meta("Bug %", $"{AllBugSplit.BugPct:F0}%");
-            Meta("Bugs", $"{AllBugSplit.BugCount} issues · {AllBugSplit.BugHours:F0}h logged");
-            Meta("Feature / Task", $"{AllBugSplit.FeatureCount} issues · {AllBugSplit.FeatureHours:F0}h logged");
+            Meta("Bugs", $"{AllBugSplit.BugCount} total · {AllBugSplit.BugWorkedOnCount} worked on · {AllBugSplit.BugHours:F0}h logged");
+            Meta("Feature / Task", $"{AllBugSplit.FeatureCount} total · {AllBugSplit.FeatureWorkedOnCount} worked on · {AllBugSplit.FeatureHours:F0}h logged");
             row++;
         }
 
@@ -1203,8 +1485,8 @@
         {
             SectionTitle("Bug Origin");
             Meta("Support-linked %", $"{AllBugOriginSplit.SupportLinkedPct:F0}%");
-            Meta("JSSUPPORT-linked", $"{AllBugOriginSplit.SupportLinkedCount} bugs · {AllBugOriginSplit.SupportLinkedHours:F0}h logged");
-            Meta("Feature-found", $"{AllBugOriginSplit.FeatureFoundCount} bugs · {AllBugOriginSplit.FeatureFoundHours:F0}h logged");
+            Meta("JSSUPPORT-linked", $"{AllBugOriginSplit.SupportLinkedCount} total · {AllBugOriginSplit.SupportLinkedWorkedOnCount} worked on · {AllBugOriginSplit.SupportLinkedHours:F0}h logged");
+            Meta("Feature-found", $"{AllBugOriginSplit.FeatureFoundCount} total · {AllBugOriginSplit.FeatureFoundWorkedOnCount} worked on · {AllBugOriginSplit.FeatureFoundHours:F0}h logged");
             row++;
         }
 
@@ -1240,220 +1522,6 @@
         }
 
         ws.Columns().AdjustToContents();
-    }
-
-    private void BuildOverviewSheet(XLWorkbook wb, string sprintLabel, string dateRangeLabel, string productLabel, string sprintFilterLabel, string exportedAt)
-    {
-        var ws = wb.Worksheets.Add("Overview");
-        int row = 1;
-        void Meta(string label, string value)
-        {
-            var lc = ws.Cell(row, 1); lc.Value = label; StyleMetaLabel(lc);
-            ws.Cell(row, 2).Value = value;
-            row++;
-        }
-
-        Meta("Sprint", sprintLabel);
-        Meta("Date Range", dateRangeLabel);
-        Meta("Products", productLabel);
-        Meta("Sprint Filter", sprintFilterLabel);
-        Meta("Exported", exportedAt);
-        row++;
-
-        var h1 = ws.Cell(row, 1); h1.Value = "Metric";           StyleHeaderCell(h1);
-        var h2 = ws.Cell(row, 2); h2.Value = "Delivery Work";    StyleHeaderCell(h2);
-        var h3 = ws.Cell(row, 3); h3.Value = "All Issue Types";  StyleHeaderCell(h3);
-        row++;
-
-        void Kpi(string label, string taskVal, string allVal)
-        {
-            ws.Cell(row, 1).Value = label; ws.Cell(row, 1).Style.Font.Bold = true;
-            ws.Cell(row, 2).Value = taskVal;
-            ws.Cell(row, 3).Value = allVal;
-            row++;
-        }
-
-        var t = TaskMetrics!; var a = AllMetrics!;
-        Kpi("Sprint Health Score",         $"{t.Score} ({t.Band})", $"{a.Score} ({a.Band})");
-        Kpi("Message",                     t.Message, a.Message);
-        Kpi("Time Elapsed",                $"{t.TimeElapsedPct:F0}%", $"{a.TimeElapsedPct:F0}%");
-        Kpi("Completion",                  $"{t.CompletionPct:F0}%", $"{a.CompletionPct:F0}%");
-        Kpi("Done / In Progress / To Do",  $"{t.DoneCount} / {t.InProgressCount} / {t.ToDoCount}", $"{a.DoneCount} / {a.InProgressCount} / {a.ToDoCount}");
-        Kpi("Planned Hours",               $"{t.PlannedHours:F0}h", $"{a.PlannedHours:F0}h");
-        Kpi("Full-Sprint Capacity",        $"{t.FullSprintCapacityHours:F0}h", $"{a.FullSprintCapacityHours:F0}h");
-        Kpi("Remaining Capacity",          $"{t.CapacityHours:F0}h", $"{a.CapacityHours:F0}h");
-        Kpi("Remaining Work",              $"{t.RemainingHours:F0}h", $"{a.RemainingHours:F0}h");
-        Kpi("Logged Hours (window)",       $"{t.SprintWindowLoggedHours:F0}h", $"{a.SprintWindowLoggedHours:F0}h");
-        Kpi("Hours / Workday",             $"{t.HoursLoggedPerWorkday:F1}h", $"{a.HoursLoggedPerWorkday:F1}h");
-        Kpi("Projected Finish",            $"{t.ProjectedFinishHours:F0}h", $"{a.ProjectedFinishHours:F0}h");
-        Kpi("Idle Tasks",                  $"{t.IdleActiveCount} of {t.InProgressCount}", $"{a.IdleActiveCount} of {a.InProgressCount}");
-        Kpi("Stale (2d+ no worklog)",      t.StaleCount.ToString(), a.StaleCount.ToString());
-        Kpi("Velocity / day (needed)",     $"{t.ThroughputPerDay:F1} ({t.NeededThroughputPerDay:F1})", $"{a.ThroughputPerDay:F1} ({a.NeededThroughputPerDay:F1})");
-        Kpi("Unassigned",                  t.UnassignedCount.ToString(), a.UnassignedCount.ToString());
-        Kpi("Estimation Coverage",         $"{t.EstimationCoveragePct:F0}%", $"{a.EstimationCoveragePct:F0}%");
-        if (AllScopeAdded is not null)
-        {
-            var pctUnplanned = a.FullSprintCapacityHours > 0 ? AllScopeAdded.TimeLoggedHours / a.FullSprintCapacityHours * 100 : 0;
-            Kpi("Cost of Unplanned Work",  "—", $"{AllScopeAdded.TimeLoggedHours:F0}h ({pctUnplanned:F0}% of capacity)");
-        }
-
-        ws.Columns().AdjustToContents();
-    }
-
-    private async Task BuildChartsSheetAsync(XLWorkbook wb)
-    {
-        var ws = wb.Worksheets.Add("Charts");
-        int row = 1;
-        foreach (var (canvasId, title) in ChartExports)
-        {
-            var titleCell = ws.Cell(row, 1);
-            titleCell.Value = title;
-            titleCell.Style.Font.Bold = true;
-            titleCell.Style.Font.FontSize = 13;
-            row++;
-
-            string? dataUrl = null;
-            try { dataUrl = await JS.InvokeAsync<string?>("getChartImage", canvasId); } catch { }
-
-            if (!string.IsNullOrEmpty(dataUrl))
-            {
-                var comma = dataUrl.IndexOf(',');
-                var base64Img = comma >= 0 ? dataUrl[(comma + 1)..] : dataUrl;
-                var bytes = Convert.FromBase64String(base64Img);
-                using var imgStream = new MemoryStream(bytes);
-                ws.AddPicture(imgStream, XLPictureFormat.Png)
-                  .MoveTo(ws.Cell(row, 1))
-                  .WithSize(640, 340);
-                row += 18;
-            }
-            else
-            {
-                ws.Cell(row, 1).Value = "(chart not available — no data for current filters)";
-                row += 1;
-            }
-            row += 2;
-        }
-        ws.Column(1).Width = 16;
-    }
-
-    private void BuildProductsSheet(XLWorkbook wb)
-    {
-        var ws = wb.Worksheets.Add("Products");
-        var h1 = ws.Cell(1, 1); h1.Value = "Product"; StyleHeaderCell(h1);
-        var h2 = ws.Cell(1, 2); h2.Value = "Tickets";  StyleHeaderCell(h2);
-        ws.SheetView.FreezeRows(1);
-
-        int row = 2;
-        foreach (var (name, count) in AllProducts)
-        {
-            if (row % 2 == 0) ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
-            ws.Cell(row, 1).Value = name;
-            ws.Cell(row, 1).Style.Font.Bold = SelectedProducts.Contains(name);
-            ws.Cell(row, 2).Value = count;
-            row++;
-        }
-        if (AllProducts.Count > 0)
-        {
-            ws.Cell(row, 1).Value = "TOTAL"; ws.Cell(row, 1).Style.Font.Bold = true;
-            ws.Cell(row, 2).Value = AllProducts.Sum(p => p.Count); ws.Cell(row, 2).Style.Font.Bold = true;
-            ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#e9ecef");
-        }
-        ws.Columns().AdjustToContents();
-        ws.Row(1).Height = 22;
-    }
-
-    private void BuildBugFeatureSheet(XLWorkbook wb)
-    {
-        if (AllBugSplit is null) return;
-        var ws = wb.Worksheets.Add("Bug vs Feature");
-        int row = 1;
-
-        void Meta(string label, string value)
-        {
-            var lc = ws.Cell(row, 1); lc.Value = label; StyleMetaLabel(lc);
-            ws.Cell(row, 2).Value = value;
-            row++;
-        }
-
-        Meta("Bug %", $"{AllBugSplit.BugPct:F0}%");
-        Meta("Bugs", $"{AllBugSplit.BugCount} issues · {AllBugSplit.BugHours:F0}h logged");
-        Meta("Feature / Task", $"{AllBugSplit.FeatureCount} issues · {AllBugSplit.FeatureHours:F0}h logged");
-        if (AllBugOriginSplit is not null && (AllBugOriginSplit.SupportLinkedCount + AllBugOriginSplit.FeatureFoundCount) > 0)
-        {
-            Meta("Support-linked %", $"{AllBugOriginSplit.SupportLinkedPct:F0}%");
-            Meta("JSSUPPORT-linked", $"{AllBugOriginSplit.SupportLinkedCount} bugs · {AllBugOriginSplit.SupportLinkedHours:F0}h logged");
-            Meta("Feature-found", $"{AllBugOriginSplit.FeatureFoundCount} bugs · {AllBugOriginSplit.FeatureFoundHours:F0}h logged");
-        }
-        row++;
-
-        void EpicTable(string title, List<DeliveryHealthCalculator.EpicBreakdownRow> rows)
-        {
-            if (rows.Count == 0) return;
-            var titleCell = ws.Cell(row, 1); titleCell.Value = title; titleCell.Style.Font.Bold = true; titleCell.Style.Font.FontSize = 13;
-            row++;
-            var hc1 = ws.Cell(row, 1); hc1.Value = "Epic";                 StyleHeaderCell(hc1);
-            var hc2 = ws.Cell(row, 2); hc2.Value = "Closed";               StyleHeaderCell(hc2);
-            var hc3 = ws.Cell(row, 3); hc3.Value = "Avg Effort (Closed)";  StyleHeaderCell(hc3);
-            var hc4 = ws.Cell(row, 4); hc4.Value = "Open";                 StyleHeaderCell(hc4);
-            var hc5 = ws.Cell(row, 5); hc5.Value = "Avg Effort (Open)";    StyleHeaderCell(hc5);
-            var hc6 = ws.Cell(row, 6); hc6.Value = "Hours";                StyleHeaderCell(hc6);
-            row++;
-            foreach (var r in rows)
-            {
-                ws.Cell(row, 1).Value = string.IsNullOrEmpty(r.EpicKey) ? r.EpicName : $"{r.EpicKey} {r.EpicName}";
-                ws.Cell(row, 2).Value = r.ClosedCount;
-                if (r.ClosedCount == 0) ws.Cell(row, 3).Value = ""; else ws.Cell(row, 3).Value = Math.Round(r.AvgEffortClosed, 1);
-                ws.Cell(row, 4).Value = r.OpenCount;
-                if (r.OpenCount == 0) ws.Cell(row, 5).Value = ""; else ws.Cell(row, 5).Value = Math.Round(r.AvgEffortOpen, 1);
-                ws.Cell(row, 6).Value = Math.Round(r.HoursLogged, 1);
-                row++;
-            }
-            row++;
-        }
-
-        EpicTable("Bugs by Epic", BugsByEpic);
-        EpicTable("Tasks by Epic", FeaturesByEpic);
-        EpicTable("JSSUPPORT-linked Bugs by Epic", SupportBugsByEpic);
-
-        if (SupportBugTypeSplitStat is not null)
-        {
-            Meta("Avg Effort to Conclude", $"{SupportBugAvgEffortHours:F1}h");
-            Meta("Avg Effort Ongoing (still open)", $"{SupportBugAvgEffortOngoingHours:F1}h");
-            Meta("Bug vs Redesign", $"Bug {SupportBugTypeSplitStat.BugTypeCount} · Redesign {SupportBugTypeSplitStat.RedesignTypeCount}");
-            if (SupportBugPriorityBreakdown.Count > 0)
-                Meta("Priority Breakdown", string.Join(", ", SupportBugPriorityBreakdown.Select(p => $"{p.Priority} ({p.Count})")));
-        }
-
-        ws.Columns().AdjustToContents();
-    }
-
-    private void BuildTicketsSheet(XLWorkbook wb)
-    {
-        var ws = wb.Worksheets.Add("Tickets");
-        var headers = new[] { "Key", "Epic", "Summary", "Product", "Type", "Status", "Assignee", "Priority", "Hours" };
-        for (int i = 0; i < headers.Length; i++) { var hc = ws.Cell(1, i + 1); hc.Value = headers[i]; StyleHeaderCell(hc); }
-        ws.SheetView.FreezeRows(1);
-
-        var baseUrl = Config["Jira:BaseUrl"]?.TrimEnd('/');
-        int row = 2;
-        foreach (var i in FilteredIssues.OrderBy(i => i.EpicName).ThenBy(i => i.Key))
-        {
-            if (row % 2 == 0) ws.Row(row).Style.Fill.BackgroundColor = XLColor.FromHtml("#f8f9fa");
-            var keyCell = ws.Cell(row, 1);
-            keyCell.Value = i.Key;
-            if (!string.IsNullOrEmpty(baseUrl)) keyCell.SetHyperlink(new XLHyperlink($"{baseUrl}/browse/{i.Key}"));
-            ws.Cell(row, 2).Value = i.EpicName;
-            ws.Cell(row, 3).Value = i.Summary;
-            ws.Cell(row, 4).Value = ProductOf(i);
-            ws.Cell(row, 5).Value = i.IssueType;
-            ws.Cell(row, 6).Value = i.Status;
-            ws.Cell(row, 7).Value = i.Assignee;
-            ws.Cell(row, 8).Value = i.Priority;
-            ws.Cell(row, 9).Value = Math.Round(IssueWindowHours(i), 1);
-            row++;
-        }
-        ws.Columns().AdjustToContents();
-        ws.Row(1).Height = 22;
     }
 
     private static void StyleHeaderCell(IXLCell cell)
@@ -1497,6 +1565,12 @@
         {
             _renderJsSupportPersonHoursChart = false;
             await RenderHoursPerPersonChart("chart-hours-jssupport-person", _jsSupportPersonHoursModalSeries);
+        }
+
+        if (_clearNotesEditorPending && _showExportNotesModal)
+        {
+            _clearNotesEditorPending = false;
+            await JS.InvokeVoidAsync("clearNotesEditor");
         }
     }
 
@@ -2082,4 +2156,24 @@
 
     .dr-epic-row { cursor:pointer; }
     .dr-epic-row:hover { background:var(--v2-brand-soft); }
+
+    .dr-notes-toolbar { display:flex; align-items:center; gap:6px; margin-bottom:8px; }
+    .dr-notes-btn {
+        width:28px; height:28px; border-radius:6px; border:1px solid var(--v2-divider);
+        background:var(--v2-surface); cursor:pointer; display:flex; align-items:center; justify-content:center;
+        font-size:12px; color:var(--v2-ink-2);
+    }
+    .dr-notes-btn:hover { background:var(--v2-brand-soft); border-color:var(--v2-brand); }
+    .dr-notes-toolbar-sep { width:1px; height:20px; background:var(--v2-divider); margin:0 2px; }
+    .dr-notes-swatch {
+        width:20px; height:20px; border-radius:50%; border:1px solid var(--v2-divider); cursor:pointer; padding:0;
+    }
+    .dr-notes-swatch:hover { transform:scale(1.15); }
+    .dr-notes-editor {
+        min-height:160px; max-height:320px; overflow-y:auto; border:1px solid var(--v2-divider);
+        border-radius:8px; padding:10px 12px; font-size:13px; color:var(--v2-ink-1); line-height:1.5;
+    }
+    .dr-notes-editor:focus { outline:none; border-color:var(--v2-brand); }
+    .dr-notes-editor ul { margin:4px 0 4px 18px; padding:0; }
+    .dr-notes-editor a { color:var(--v2-brand); text-decoration:underline; }
 </style>

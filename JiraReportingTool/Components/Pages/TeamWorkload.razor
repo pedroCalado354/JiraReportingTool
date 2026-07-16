@@ -1,0 +1,521 @@
+@page "/team-workload"
+@rendermode InteractiveServer
+@inject IJiraService JiraService
+@inject SprintConfigService SprintConfigService
+@inject TeamRosterService RosterService
+@inject IConfiguration Config
+@using JiraReportingTool.Models
+
+<PageTitle>Team Workload</PageTitle>
+
+<div class="v2-root">
+
+    <!-- ═══ HERO ═════════════════════════════════════════════════════════════ -->
+    <div class="v2-hero">
+        <div class="v2-hero-row">
+            <div class="v2-hero-icon" style="background: linear-gradient(135deg,#0ea5e9 0%,#6366f1 100%); box-shadow: 0 8px 24px rgba(14,165,233,0.28);">
+                <i class="bi bi-person-workspace"></i>
+            </div>
+            <div class="v2-hero-titles">
+                <span class="v2-eyebrow">Team Workload</span>
+                <h1 class="v2-hero-title">What the team is working on</h1>
+                <span class="v2-hero-sub">
+                    @if (Report is not null)
+                    {
+                        <strong>@(Report.SprintName is { Length: > 0 } sn ? sn : $"Sprint {Report.JiraSprintId}")</strong>
+                        <span> · @Report.StartDate?.ToString("MMM d") – @Report.EndDate?.ToString("MMM d")</span>
+                    }
+                    else
+                    {
+                        <span>Pick a sprint and a team member, then click Fetch to see their assigned work, hours logged and full task detail.</span>
+                    }
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ CONTROL BAR ══════════════════════════════════════════════════════ -->
+    <div class="v2-control-bar">
+        <div class="v2-field" style="min-width:260px">
+            <label class="v2-label">Sprint</label>
+            <select class="v2-select" @bind="SprintId">
+                <option value="">— pick a sprint —</option>
+                @foreach (var s in _knownSprints)
+                {
+                    <option value="@s.SprintId">@SprintLabel(s)</option>
+                }
+            </select>
+        </div>
+        <div class="v2-field" style="min-width:220px">
+            <label class="v2-label">Team Member</label>
+            <select class="v2-select" @bind="SelectedMemberIdStr" @bind:after="OnMemberPicked">
+                <option value="">— pick a member —</option>
+                @foreach (var team in Teams)
+                {
+                    <optgroup label="@team">
+                        @foreach (var m in _roster.Where(x => string.Equals(x.Team, team, StringComparison.OrdinalIgnoreCase)).OrderBy(x => x.Name))
+                        {
+                            <option value="@m.Id">@m.Name</option>
+                        }
+                    </optgroup>
+                }
+            </select>
+        </div>
+        <button class="v2-btn v2-btn-primary" @onclick="() => Fetch(false)" disabled="@(!CanFetch || IsLoading)">
+            @if (IsLoading) { <span class="v2-spin"></span> }
+            else { <i class="bi bi-search"></i> }
+            <span>Fetch</span>
+        </button>
+        <div class="v2-hero-spacer"></div>
+        @if (Report is not null && SelectedSummary is not null)
+        {
+            <button class="v2-btn v2-btn-ghost" @onclick="() => Fetch(true)" disabled="@IsLoading">
+                <i class="bi bi-arrow-repeat"></i>
+                <span>Refresh</span>
+            </button>
+        }
+    </div>
+
+    @if (IsLoading)
+    {
+        <div class="v2-card" style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+            <span class="v2-spin" style="border-color:rgba(99,102,241,0.20);border-top-color:var(--v2-brand)"></span>
+            <span class="v2-text-muted">Loading sprint data…</span>
+        </div>
+    }
+    @if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <div class="v2-alert v2-alert-error"><i class="bi bi-exclamation-triangle-fill"></i> @ErrorMessage</div>
+    }
+
+    @if (!IsLoading)
+    {
+        @if (Report is null || SelectedSummary is null)
+        {
+            <div class="v2-empty">
+                <div class="v2-empty-icon"><i class="bi bi-person-workspace"></i></div>
+                <div class="v2-empty-title">Pick a sprint and a team member, then hit Fetch</div>
+                <div>See that person's assigned tasks — across all issue types — between the sprint's start and end dates.</div>
+            </div>
+        }
+        else
+        {
+            var sel = SelectedSummary;
+                    var capacity = CapacityHours(sel.Member);
+                    var utilPct = capacity <= 0 ? 0 : sel.LoggedHours * 100.0 / capacity;
+                    var completionPct = sel.Assigned.Count == 0 ? 0 : sel.Done * 100.0 / sel.Assigned.Count;
+                    var rows = FilteredAssigned(sel);
+
+                    <!-- Profile card -->
+                    <div class="v2-card" style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+                        <span class="v2-avatar v2-avatar-lg @AvatarClass(sel.Member.Name)">@Initials(sel.Member.Name)</span>
+                        <div style="flex:1;min-width:0">
+                            <div style="font-size:18px;font-weight:800;color:var(--v2-ink-1)">@sel.Member.Name</div>
+                            <div style="display:flex;align-items:center;gap:8px;margin-top:4px;flex-wrap:wrap">
+                                <span class="v2-pill v2-pill-neutral">@(string.IsNullOrEmpty(sel.Member.Team) ? "No team" : sel.Member.Team)</span>
+                                <span class="v2-hint">@sel.Member.HoursPerDay h/day capacity</span>
+                                @if (!string.IsNullOrEmpty(sel.Member.JiraEmail))
+                                {
+                                    <span class="v2-hint">· @sel.Member.JiraEmail</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- KPI tiles -->
+                    <div class="v2-kpi-grid">
+                        <div class="v2-kpi">
+                            <div class="v2-kpi-head"><i class="bi bi-list-check"></i>Assigned</div>
+                            <div class="v2-kpi-value">@sel.Assigned.Count</div>
+                            <div class="v2-kpi-sub">@sel.Done done · @sel.InProgress active · @sel.ToDo pending</div>
+                        </div>
+                        <div class="v2-kpi v2-kpi-success">
+                            <div class="v2-kpi-head"><i class="bi bi-check2-circle"></i>Completion</div>
+                            <div class="v2-kpi-value">@completionPct.ToString("F0")<span class="v2-kpi-of">%</span></div>
+                            <div class="v2-bar" style="margin-top:8px"><div class="v2-bar-fill v2-bar-fill-success" style="width:@completionPct%"></div></div>
+                        </div>
+                        <div class="v2-kpi">
+                            <div class="v2-kpi-head"><i class="bi bi-stopwatch"></i>Logged this sprint</div>
+                            <div class="v2-kpi-value">@sel.LoggedHours.ToString("F1")<span class="v2-kpi-of">h</span></div>
+                            <div class="v2-kpi-sub">of @capacity.ToString("F0")h capacity</div>
+                        </div>
+                        <div class="v2-kpi v2-kpi-warn">
+                            <div class="v2-kpi-head"><i class="bi bi-hourglass-split"></i>Remaining</div>
+                            <div class="v2-kpi-value">@sel.RemainingHours.ToString("F1")<span class="v2-kpi-of">h</span></div>
+                            <div class="v2-kpi-sub">on open issues</div>
+                        </div>
+                        <div class="v2-kpi @(utilPct > 100 ? "v2-kpi-danger" : "v2-kpi-neutral")">
+                            <div class="v2-kpi-head"><i class="bi bi-speedometer2"></i>Utilization</div>
+                            <div class="v2-kpi-value">@utilPct.ToString("F0")<span class="v2-kpi-of">%</span></div>
+                            <div class="v2-kpi-sub">logged vs capacity</div>
+                        </div>
+                    </div>
+
+                    <!-- Filter bar -->
+                    <div class="v2-filter-bar">
+                        <div class="v2-filter-group">
+                            <span class="v2-label" style="text-transform:none;font-size:11px">Status</span>
+                            <select class="v2-select v2-input-sm" @bind="StatusFilter">
+                                <option value="">All</option>
+                                <option value="new">To Do</option>
+                                <option value="indeterminate">In Progress</option>
+                                <option value="done">Done</option>
+                            </select>
+                        </div>
+                        <div class="v2-filter-sep"></div>
+                        <div class="v2-filter-group">
+                            <span class="v2-label" style="text-transform:none;font-size:11px">Type</span>
+                            <select class="v2-select v2-input-sm" @bind="TypeFilter">
+                                <option value="">All types</option>
+                                @foreach (var t in sel.Assigned.Select(i => i.IssueType).Distinct().OrderBy(t => t))
+                                {
+                                    <option value="@t">@t</option>
+                                }
+                            </select>
+                        </div>
+                        <div class="v2-filter-sep"></div>
+                        <div class="v2-filter-group" style="flex:1;min-width:160px">
+                            <input class="v2-input v2-input-sm" style="width:100%" placeholder="Search key or summary…" @bind="TaskSearch" @bind:event="oninput" />
+                        </div>
+                        <span class="v2-filter-count">@FilteredAssigned(sel).Count of @sel.Assigned.Count task@(sel.Assigned.Count == 1 ? "" : "s")</span>
+                    </div>
+
+                    <!-- Task table -->
+                    @if (rows.Count == 0)
+                    {
+                        <div class="v2-empty" style="padding:32px 20px">
+                            <div class="v2-empty-icon" style="font-size:28px"><i class="bi bi-inbox"></i></div>
+                            <div>No tasks match this filter.</div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="v2-table-wrap">
+                            <table class="v2-table">
+                                <thead>
+                                    <tr>
+                                        <th></th>
+                                        <th>Key</th>
+                                        <th>Type</th>
+                                        <th>Summary</th>
+                                        <th>Status</th>
+                                        <th>Priority</th>
+                                        <th class="v2-table-num">Estimate</th>
+                                        <th class="v2-table-num">Logged (sprint)</th>
+                                        <th class="v2-table-num">Remaining</th>
+                                        <th>Due</th>
+                                        <th>Epic</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var i in rows)
+                                    {
+                                        var expanded = _expanded.Contains(i.Key);
+                                        var loggedWindow = LoggedInWindow(i);
+                                        var overdue = i.DueDate.HasValue && i.DueDate.Value.Date < DateTime.Today && i.StatusCategoryKey != "done";
+                                        <tr class="@(i.StatusCategoryKey == "done" ? "is-done" : "") tw-clickable-row" @onclick="() => ToggleExpand(i.Key)">
+                                            <td><i class="bi @(expanded ? "bi-chevron-down" : "bi-chevron-right")" style="color:var(--v2-ink-4)"></i></td>
+                                            <td class="v2-table-key">@i.Key</td>
+                                            <td><span class="v2-chip v2-chip-@i.IssueType.ToLower()">@i.IssueType</span></td>
+                                            <td class="v2-truncate" style="max-width:280px">@i.Summary</td>
+                                            <td><span class="v2-pill v2-pill-@StatusPillClass(i.StatusCategoryKey)">@i.Status</span></td>
+                                            <td><span class="v2-chip @PriorityChipClass(i.Priority)">@i.Priority</span></td>
+                                            <td class="v2-table-num">@(i.OriginalEstimate == "-" ? "—" : i.OriginalEstimate)</td>
+                                            <td class="v2-table-num">@(loggedWindow > 0 ? $"{loggedWindow:F1}h" : "—")</td>
+                                            <td class="v2-table-num">@(i.StatusCategoryKey == "done" ? "—" : $"{i.ComputedRemainingSeconds / 3600.0:F1}h")</td>
+                                            <td class="@(overdue ? "v2-text-danger" : "")" style="white-space:nowrap">
+                                                @(i.DueDate.HasValue ? i.DueDate.Value.ToString("MMM d") : "—")
+                                            </td>
+                                            <td class="v2-truncate" style="max-width:140px">@(i.EpicName == "No Epic" ? "—" : i.EpicName)</td>
+                                        </tr>
+                                        @if (expanded)
+                                        {
+                                            <tr class="tw-detail-row">
+                                                <td colspan="11">
+                                                    @TaskDetail(i)
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                }
+    }
+</div>
+
+@code {
+    private SprintReport? Report;
+    private List<SprintConfig> _knownSprints = [];
+    private List<RosterMember> _roster = [];
+    private string SprintId = "";
+    private bool IsLoading;
+    private string? ErrorMessage;
+
+    private string SelectedMemberIdStr = "";
+    private int? SelectedMemberId => int.TryParse(SelectedMemberIdStr, out var id) ? id : null;
+    private bool CanFetch => !string.IsNullOrEmpty(SprintId) && SelectedMemberId.HasValue;
+
+    private string StatusFilter = "";
+    private string TypeFilter = "";
+    private string TaskSearch = "";
+    private readonly HashSet<string> _expanded = [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { _roster = await RosterService.GetActiveAsync(); } catch { _roster = []; }
+
+        _knownSprints = (await SprintConfigService.GetAllAsync())
+            .OrderByDescending(c => c.StartDate)
+            .ToList();
+
+        // Pre-fill the picker with the current sprint but don't fetch anything yet —
+        // the user explicitly picks a sprint (then a member) before any Jira/DB call fires.
+        var current = await SprintConfigService.GetCurrentAsync();
+        if (current is not null)
+            SprintId = current.SprintId.ToString();
+    }
+
+    private string SprintLabel(SprintConfig s)
+    {
+        var name = string.IsNullOrEmpty(s.Name) ? $"Sprint {s.SprintId}" : s.Name;
+        return $"{name} ({s.StartDate:MMM d} – {s.EndDate:MMM d})";
+    }
+
+    // Only fires the Jira/DB call when the button is clicked — never on dropdown change.
+    private async Task Fetch(bool forceRefresh)
+    {
+        if (!CanFetch) return;
+        if (!int.TryParse(SprintId.Trim(), out var sprintId)) return;
+
+        IsLoading = true; ErrorMessage = null;
+        try
+        {
+            if (forceRefresh || Report is null || Report.JiraSprintId != sprintId)
+                Report = await JiraService.GetDeliveryDataAsync(sprintId, bypassCache: forceRefresh);
+            _expanded.Clear();
+        }
+        catch (Exception ex) { ErrorMessage = $"Failed to load sprint data: {ex.Message}"; Report = null; }
+        finally { IsLoading = false; }
+    }
+
+    private void OnMemberPicked()
+    {
+        StatusFilter = ""; TypeFilter = ""; TaskSearch = "";
+        _expanded.Clear();
+    }
+
+    private void ToggleExpand(string key)
+    {
+        if (!_expanded.Remove(key)) _expanded.Add(key);
+    }
+
+    // ── Roster / member matching ────────────────────────────────────────────
+    private List<string> Teams => _roster
+        .Select(m => m.Team).Where(t => !string.IsNullOrWhiteSpace(t))
+        .Distinct().OrderBy(t => t).ToList();
+
+    private record MemberSummary(RosterMember Member, List<SprintIssue> Assigned, int Done, int InProgress, int ToDo,
+                                  double EstimateHours, double RemainingHours, double LoggedHours);
+
+    // SprintIssue.Assignee is Jira's full display name (e.g. "Dasa Orsaghova"), while the roster
+    // usually stores just a first name (e.g. "Dasa") — an exact-string match misses almost every
+    // member. Match if every word in the roster name appears among the assignee's name words.
+    private static bool AssigneeMatches(string assignee, string rosterName)
+    {
+        if (string.IsNullOrWhiteSpace(assignee) || assignee == "Unassigned" || string.IsNullOrWhiteSpace(rosterName))
+            return false;
+        if (string.Equals(assignee, rosterName, StringComparison.OrdinalIgnoreCase)) return true;
+
+        var assigneeWords = assignee.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var nameWords = rosterName.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return nameWords.All(nw => assigneeWords.Any(aw => string.Equals(aw, nw, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private List<SprintIssue> AssignedTo(RosterMember m) =>
+        Report?.Issues.Where(i => AssigneeMatches(i.Assignee, m.Name)).ToList() ?? [];
+
+    private static bool WorklogByMember(WorklogEntry w, RosterMember m)
+    {
+        if (!string.IsNullOrWhiteSpace(m.JiraAccountId) && !string.IsNullOrWhiteSpace(w.AuthorAccountId))
+            return string.Equals(w.AuthorAccountId, m.JiraAccountId, StringComparison.OrdinalIgnoreCase);
+        if (!string.IsNullOrWhiteSpace(m.JiraEmail) && !string.IsNullOrWhiteSpace(w.AuthorEmail))
+            return string.Equals(w.AuthorEmail, m.JiraEmail, StringComparison.OrdinalIgnoreCase);
+        return !string.IsNullOrWhiteSpace(m.Name) && string.Equals(w.Author, m.Name, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool InWindow(DateTime d) =>
+        (Report?.StartDate is null || d.Date >= Report.StartDate.Value.Date) &&
+        (Report?.EndDate is null || d.Date <= Report.EndDate.Value.Date);
+
+    private MemberSummary BuildSummary(RosterMember m)
+    {
+        var assigned = AssignedTo(m);
+        var logged = assigned.SelectMany(i => i.Worklogs)
+            .Where(w => WorklogByMember(w, m) && InWindow(w.Started))
+            .Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
+
+        return new MemberSummary(
+            Member: m,
+            Assigned: assigned,
+            Done: assigned.Count(i => i.StatusCategoryKey == "done"),
+            InProgress: assigned.Count(i => i.StatusCategoryKey == "indeterminate"),
+            ToDo: assigned.Count(i => i.StatusCategoryKey == "new"),
+            EstimateHours: assigned.Sum(i => i.OriginalEstimateSeconds) / 3600.0,
+            RemainingHours: assigned.Where(i => i.StatusCategoryKey != "done").Sum(i => i.ComputedRemainingSeconds) / 3600.0,
+            LoggedHours: logged);
+    }
+
+    private MemberSummary? SelectedSummary
+    {
+        get
+        {
+            var member = SelectedMemberId.HasValue ? _roster.FirstOrDefault(m => m.Id == SelectedMemberId.Value) : null;
+            return member is null ? null : BuildSummary(member);
+        }
+    }
+
+    private double CapacityHours(RosterMember m)
+    {
+        if (Report?.StartDate is null || Report?.EndDate is null) return 0;
+        return (double)m.HoursPerDay * CountWeekdays(Report.StartDate.Value.Date, Report.EndDate.Value.Date);
+    }
+
+    private static int CountWeekdays(DateTime from, DateTime to)
+    {
+        int count = 0;
+        for (var d = from.Date; d <= to.Date; d = d.AddDays(1))
+            if (d.DayOfWeek != DayOfWeek.Saturday && d.DayOfWeek != DayOfWeek.Sunday) count++;
+        return count;
+    }
+
+    // ── Task filtering / detail ─────────────────────────────────────────────
+    private List<SprintIssue> FilteredAssigned(MemberSummary s) => s.Assigned
+        .Where(i => string.IsNullOrEmpty(StatusFilter) || i.StatusCategoryKey == StatusFilter)
+        .Where(i => string.IsNullOrEmpty(TypeFilter) || i.IssueType == TypeFilter)
+        .Where(i => string.IsNullOrEmpty(TaskSearch)
+            || i.Key.Contains(TaskSearch, StringComparison.OrdinalIgnoreCase)
+            || i.Summary.Contains(TaskSearch, StringComparison.OrdinalIgnoreCase))
+        .OrderBy(i => i.StatusCategoryKey == "indeterminate" ? 0 : i.StatusCategoryKey == "new" ? 1 : 2)
+        .ThenBy(i => i.DueDate ?? DateTime.MaxValue)
+        .ThenBy(i => i.Key)
+        .ToList();
+
+    private double LoggedInWindow(SprintIssue i) =>
+        i.Worklogs.Where(w => InWindow(w.Started)).Sum(w => (long)w.TimeSpentSeconds) / 3600.0;
+
+    private RenderFragment TaskDetail(SprintIssue i) => @<text>
+        <div class="tw-detail-grid">
+            <div>
+                <div class="v2-ep-detail-h">Details</div>
+                <div class="v2-row">
+                    <span class="v2-row-label">Jira Link</span>
+                    <span class="v2-row-value">
+                        <a class="v2-key-link" style="color:var(--v2-brand);font-weight:600" href="@(Config["Jira:BaseUrl"]?.TrimEnd('/'))/browse/@i.Key" target="_blank">
+                            @i.Key <i class="bi bi-box-arrow-up-right" style="font-size:10px"></i>
+                        </a>
+                    </span>
+                </div>
+                @if (!string.IsNullOrEmpty(i.EpicKey))
+                {
+                    <div class="v2-row">
+                        <span class="v2-row-label">Epic</span>
+                        <span class="v2-row-value">
+                            <a style="color:var(--v2-brand);font-weight:600;text-decoration:none" href="@(Config["Jira:BaseUrl"]?.TrimEnd('/'))/browse/@i.EpicKey" target="_blank">@i.EpicKey</a>
+                        </span>
+                    </div>
+                }
+                @if (i.StoryPoints.HasValue)
+                {
+                    <div class="v2-row"><span class="v2-row-label">Story Points</span><span class="v2-row-value">@i.StoryPoints</span></div>
+                }
+                @if (i.Created.HasValue)
+                {
+                    <div class="v2-row"><span class="v2-row-label">Created</span><span class="v2-row-value">@i.Created.Value.ToString("MMM d, yyyy")</span></div>
+                }
+                @if (i.ResolutionDate.HasValue)
+                {
+                    <div class="v2-row"><span class="v2-row-label">Resolved</span><span class="v2-row-value v2-text-success">@i.ResolutionDate.Value.ToString("MMM d, yyyy")</span></div>
+                }
+                @if (i.Labels.Count > 0)
+                {
+                    <div class="v2-row" style="align-items:flex-start">
+                        <span class="v2-row-label" style="padding-top:3px">Labels</span>
+                        <span class="v2-row-value" style="display:flex;gap:4px;flex-wrap:wrap;justify-content:flex-end">
+                            @foreach (var lbl in i.Labels)
+                            {
+                                <span class="v2-chip">@lbl</span>
+                            }
+                        </span>
+                    </div>
+                }
+                @if (!string.IsNullOrEmpty(i.Customer))
+                {
+                    <div class="v2-row"><span class="v2-row-label">Customer</span><span class="v2-row-value">@i.Customer</span></div>
+                }
+            </div>
+            <div>
+                <div class="v2-ep-detail-h">Worklog @(i.Worklogs.Count > 0 ? $"({i.Worklogs.Count})" : "")</div>
+                @if (i.Worklogs.Count == 0)
+                {
+                    <div class="v2-hint">No worklog entries recorded.</div>
+                }
+                else
+                {
+                    <table class="v2-table" style="font-size:12px">
+                        <thead><tr><th>Date</th><th>Author</th><th class="v2-table-num">Time</th></tr></thead>
+                        <tbody>
+                            @foreach (var log in i.Worklogs.OrderByDescending(w => w.Started).Take(8))
+                            {
+                                <tr class="@(InWindow(log.Started) ? "" : "v2-text-muted")">
+                                    <td style="white-space:nowrap">@log.Started.ToString("MMM d")</td>
+                                    <td>@log.Author</td>
+                                    <td class="v2-table-num">@log.TimeSpent</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    @if (i.Worklogs.Count > 8)
+                    {
+                        <div class="v2-hint" style="margin-top:4px">+@(i.Worklogs.Count - 8) more entries</div>
+                    }
+                }
+            </div>
+        </div>
+    </text>;
+
+    // ── Presentation helpers ─────────────────────────────────────────────────
+    private static string StatusPillClass(string key) => key switch
+    {
+        "done" => "success",
+        "indeterminate" => "brand",
+        _ => "neutral"
+    };
+
+    private static string PriorityChipClass(string priority) => priority?.ToLowerInvariant() switch
+    {
+        "highest" => "v2-chip-pri-highest",
+        "high" => "v2-chip-pri-high",
+        "low" => "v2-chip-pri-low",
+        "lowest" => "v2-chip-pri-low",
+        _ => "v2-chip-pri-medium"
+    };
+
+    private static string Initials(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "?";
+        var parts = name.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        return parts.Length >= 2 ? $"{parts[0][0]}{parts[^1][0]}".ToUpper()
+            : name.Length >= 2 ? name[..2].ToUpper() : name.ToUpper();
+    }
+
+    private static string AvatarClass(string name) => $"v2-avatar-grad-{1 + (Math.Abs(name.GetHashCode()) % 5)}";
+}
+
+<style>
+    .tw-clickable-row { cursor: pointer; }
+    .tw-detail-row td { background: var(--v2-surface-2); padding: 14px 18px; border-bottom: 1px solid var(--v2-divider); }
+    .tw-detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    @@media (max-width: 700px) { .tw-detail-grid { grid-template-columns: 1fr; } }
+</style>

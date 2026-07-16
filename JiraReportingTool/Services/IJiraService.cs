@@ -26,7 +26,17 @@ public interface IJiraService
     /// "Sprint" field membership (some products log work continuously without every ticket
     /// being added to the same sprint). Used by Delivery Reports' Product filter. Not cached.
     /// </summary>
-    Task<SprintReport> GetIssuesByProductInRangeAsync(string product, DateTime start, DateTime end);
+    Task<SprintReport> GetIssuesByProductInRangeAsync(string product, DateTime start, DateTime end, int? sprintId = null);
+
+    /// <summary>
+    /// Fetches every configured value of the "JS Project[Radio Buttons]" (Product) field
+    /// straight from its field context — the full universe of products (e.g. Digital Journey,
+    /// Integrations, Rentway Legacy, Rentway Pro), independent of any specific epic or issue
+    /// set. Used so Delivery Reports' Product filter always offers every product rather than
+    /// only the ones the currently loaded epic happens to touch. Cached after the first call.
+    /// </summary>
+    Task<List<string>> GetJsProjectFieldOptionsAsync();
+
     Task<List<JiraFilter>> GetMyFiltersAsync();
     Task<SprintReport> GetAllEpicIssuesAsync(string epicKey);
 

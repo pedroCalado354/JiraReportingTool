@@ -15,6 +15,9 @@ public class JiraService : IJiraService
     private string? _jsProjectFieldId;
     private bool    _jsProjectFieldIdLookedUp;
 
+    private List<string>? _jsProjectFieldOptions;
+    private bool           _jsProjectFieldOptionsLookedUp;
+
     private string? _committedDateFieldId;
     private string? _committedCustomersFieldId;
     private bool    _epicMetaFieldsLookedUp;
@@ -36,11 +39,10 @@ public class JiraService : IJiraService
     public async Task<string?> GetCustomerFieldIdAsync()
     {
         if (_customerFieldIdLookedUp) return _customerFieldId;
-        _customerFieldIdLookedUp = true;
         try
         {
             var resp = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/field");
-            if (!resp.IsSuccessStatusCode) return null;
+            if (!resp.IsSuccessStatusCode) return null; // transient failure — don't cache, so the next call retries
             var json = await resp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
             foreach (var field in doc.RootElement.EnumerateArray())
@@ -50,22 +52,23 @@ public class JiraService : IJiraService
                     field.TryGetProperty("id", out var idEl))
                 {
                     _customerFieldId = idEl.GetString();
+                    _customerFieldIdLookedUp = true;
                     return _customerFieldId;
                 }
             }
+            _customerFieldIdLookedUp = true; // field list fetched fine, genuinely no match — safe to cache "not found"
         }
-        catch { }
-        return null;
+        catch { } // network/parse failure — don't cache, so the next call retries
+        return _customerFieldId;
     }
 
     public async Task<string?> GetJsProjectFieldIdAsync()
     {
         if (_jsProjectFieldIdLookedUp) return _jsProjectFieldId;
-        _jsProjectFieldIdLookedUp = true;
         try
         {
             var resp = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/field");
-            if (!resp.IsSuccessStatusCode) return null;
+            if (!resp.IsSuccessStatusCode) return null; // transient failure — don't cache, so the next call retries
             var json = await resp.Content.ReadAsStringAsync();
             using var doc = JsonDocument.Parse(json);
             foreach (var field in doc.RootElement.EnumerateArray())
@@ -75,12 +78,56 @@ public class JiraService : IJiraService
                     field.TryGetProperty("id", out var idEl))
                 {
                     _jsProjectFieldId = idEl.GetString();
+                    _jsProjectFieldIdLookedUp = true;
                     return _jsProjectFieldId;
                 }
             }
+            _jsProjectFieldIdLookedUp = true; // field list fetched fine, genuinely no match — safe to cache "not found"
         }
-        catch { }
-        return null;
+        catch { } // network/parse failure — don't cache, so the next call retries
+        return _jsProjectFieldId;
+    }
+
+    // Every value configured on the "JS Project[Radio Buttons]" field's context — the full
+    // product universe, independent of any specific issue set. A radio-buttons field can have
+    // multiple contexts in theory; in practice this project uses one, but all are unioned to
+    // be safe.
+    public async Task<List<string>> GetJsProjectFieldOptionsAsync()
+    {
+        if (_jsProjectFieldOptionsLookedUp) return _jsProjectFieldOptions ?? [];
+        var options = new List<string>();
+        try
+        {
+            var fieldId = await GetJsProjectFieldIdAsync();
+            if (fieldId is null) return options; // field id itself unresolved — don't cache, allow retry
+
+            var ctxResp = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/field/{fieldId}/context");
+            if (!ctxResp.IsSuccessStatusCode) return options; // transient failure — don't cache, allow retry
+            using var ctxDoc = JsonDocument.Parse(await ctxResp.Content.ReadAsStringAsync());
+            if (!ctxDoc.RootElement.TryGetProperty("values", out var contexts)) return options;
+
+            foreach (var ctx in contexts.EnumerateArray())
+            {
+                if (!ctx.TryGetProperty("id", out var ctxIdEl)) continue;
+                var contextId = ctxIdEl.GetString();
+                if (contextId is null) continue;
+
+                var optResp = await _httpClient.GetAsync($"{_baseUrl}/rest/api/3/field/{fieldId}/context/{contextId}/option");
+                if (!optResp.IsSuccessStatusCode) continue;
+                using var optDoc = JsonDocument.Parse(await optResp.Content.ReadAsStringAsync());
+                if (!optDoc.RootElement.TryGetProperty("values", out var opts)) continue;
+
+                foreach (var opt in opts.EnumerateArray())
+                    if (opt.TryGetProperty("value", out var valEl) && valEl.GetString() is { Length: > 0 } v)
+                        options.Add(v);
+            }
+
+            _jsProjectFieldOptionsLookedUp = true; // reached the end normally — safe to cache, even if empty
+        }
+        catch { } // network/parse failure — don't cache, allow retry
+
+        _jsProjectFieldOptions = options.Distinct().ToList();
+        return _jsProjectFieldOptions;
     }
 
     private async Task EnsureEpicMetaFieldIdsAsync()
@@ -382,19 +429,22 @@ public class JiraService : IJiraService
         return FetchDeliveryReportAsync(jql);
     }
 
-    // Fetches every issue for a single Product ("JS Project[Radio Buttons]") value with a
-    // worklog inside [start, end] — deliberately NOT scoped by the Jira "Sprint" field. Some
-    // products (e.g. Integrations) log work continuously and only loosely tie tickets to any
-    // one sprint, so filtering by sprint membership undercounts them; a product + worklog-date
-    // window matches what Jira itself reports for that window. Not cached — always live, same
-    // as GetDeliveryDataByFilterAsync.
-    public Task<SprintReport> GetIssuesByProductInRangeAsync(string product, DateTime start, DateTime end)
+    // Fetches every issue for a single Product ("JS Project[Radio Buttons]") value that either
+    // has a worklog inside [start, end], OR — when sprintId is given — is a native member of
+    // that Jira sprint. Some products (e.g. Integrations) log work continuously and only loosely
+    // tie tickets to any one sprint, so filtering by sprint membership alone undercounts them;
+    // but worklog-date alone drops zero-worklog backlog/To Do issues for the sprint's own
+    // product that haven't had time logged yet. The OR covers both populations. Not cached —
+    // always live, same as GetDeliveryDataByFilterAsync.
+    public Task<SprintReport> GetIssuesByProductInRangeAsync(string product, DateTime start, DateTime end, int? sprintId = null)
     {
         var productClause = product == DeliveryHealthCalculator.NoProductLabel
             ? "\"JS Project[Radio Buttons]\" is EMPTY"
             : $"\"JS Project[Radio Buttons]\" = \"{product.Replace("\"", "\\\"")}\"";
+        var activityClause = $"worklogDate >= \"{start:yyyy-MM-dd}\" AND worklogDate <= \"{end:yyyy-MM-dd}\"";
+        if (sprintId.HasValue) activityClause = $"({activityClause}) OR Sprint = {sprintId.Value}";
         var jql = Uri.EscapeDataString(
-            $"{productClause} AND worklogDate >= \"{start:yyyy-MM-dd}\" AND worklogDate <= \"{end:yyyy-MM-dd}\" ORDER BY status ASC, priority DESC");
+            $"{productClause} AND ({activityClause}) ORDER BY status ASC, priority DESC");
         return FetchDeliveryReportAsync(jql);
     }
 

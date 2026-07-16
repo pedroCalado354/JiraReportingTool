@@ -102,6 +102,13 @@ public static class DeliveryHealthCalculator
     public const string NoProductLabel = "—";
     public static string ProductOf(SprintIssue i) => string.IsNullOrWhiteSpace(i.Product) ? NoProductLabel : i.Product;
 
+    // The fixed set of values configured on the "JS Project[Radio Buttons]" field — kept here as
+    // a hardcoded fallback (rather than relying solely on Jira's field-context API, which
+    // requires Jira Administrator global permission and 403s for a regular API token) so
+    // Delivery Reports' Product filter always offers every product regardless of which epic is
+    // loaded, matching Support Trends' cross-epic view.
+    public static readonly string[] KnownProducts = ["Digital Journey", "Integrations", "Rentway Legacy", "Rentway Pro"];
+
     // Hours logged within the sprint's date window only — the same convention as the KPI grid's
     // "Logged Hours" (Compute()'s sprintWindowLoggedHours), so hour totals shown elsewhere on the
     // page (e.g. Bug vs Feature / Bug Origin) reconcile with it instead of pulling in an issue's
@@ -115,8 +122,11 @@ public static class DeliveryHealthCalculator
     // ── Bug vs Feature split: signals firefighting (bugs) vs building (everything else) ──
     // "Bug" here means Bug or Redesign work (a Redesign is corrective/rework, not new build);
     // "Feature / Task" is Task issue type only — anything else (e.g. Story) counts in neither
-    // bucket rather than being folded into "Feature".
-    public sealed record BugFeatureSplit(int BugCount, int FeatureCount, double BugHours, double FeatureHours, double BugPct);
+    // bucket rather than being folded into "Feature". BugCount/FeatureCount are the true totals
+    // in scope (including issues nobody has logged time on yet); *WorkedOnCount is the subset
+    // that actually has a worklog in the sprint window, which is what BugHours/FeatureHours
+    // is computed from.
+    public sealed record BugFeatureSplit(int BugCount, int FeatureCount, double BugHours, double FeatureHours, double BugPct, int BugWorkedOnCount, int FeatureWorkedOnCount);
 
     public static bool IsBugLike(SprintIssue i) =>
         string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase) ||
@@ -129,12 +139,16 @@ public static class DeliveryHealthCalculator
         var bugHours = SprintWindowHours(bugs, report.StartDate, report.EndDate);
         var featureHours = SprintWindowHours(features, report.StartDate, report.EndDate);
         var totalHours = bugHours + featureHours;
+        var bugWorkedOnCount = bugs.Count(i => SprintWindowHours([i], report.StartDate, report.EndDate) > 0);
+        var featureWorkedOnCount = features.Count(i => SprintWindowHours([i], report.StartDate, report.EndDate) > 0);
         return new BugFeatureSplit(
             BugCount: bugs.Count,
             FeatureCount: features.Count,
             BugHours: bugHours,
             FeatureHours: featureHours,
-            BugPct: totalHours <= 0 ? 0 : Math.Round(bugHours * 100.0 / totalHours, 1));
+            BugPct: totalHours <= 0 ? 0 : Math.Round(bugHours * 100.0 / totalHours, 1),
+            BugWorkedOnCount: bugWorkedOnCount,
+            FeatureWorkedOnCount: featureWorkedOnCount);
     }
 
     // ── Bug origin: of the bugs above, how many trace back to a customer-reported JSSUPPORT
@@ -142,7 +156,10 @@ public static class DeliveryHealthCalculator
     // Support Bugs page's "JSSUPPORT Linked" tab and Support Trends (LinkedIssueKeys requires
     // the "issuelinks" field to have been requested) — but unlike those pages, not scoped to
     // any specific epic; every bug in the passed-in issue list is considered.
-    public sealed record BugOriginSplit(int SupportLinkedCount, int FeatureFoundCount, double SupportLinkedHours, double FeatureFoundHours, double SupportLinkedPct);
+    // SupportLinkedCount/FeatureFoundCount are true totals in scope (including bugs nobody has
+    // logged time on yet); *WorkedOnCount is the subset that actually has a worklog in the
+    // sprint window, which is what SupportLinkedHours/FeatureFoundHours is computed from.
+    public sealed record BugOriginSplit(int SupportLinkedCount, int FeatureFoundCount, double SupportLinkedHours, double FeatureFoundHours, double SupportLinkedPct, int SupportLinkedWorkedOnCount, int FeatureFoundWorkedOnCount);
 
     public static bool IsSupportLinkedBug(SprintIssue i) =>
         i.Key.Contains("JSSUPPORT", StringComparison.OrdinalIgnoreCase) ||
@@ -155,12 +172,16 @@ public static class DeliveryHealthCalculator
         var featureFound = bugs.Where(i => !IsSupportLinkedBug(i)).ToList();
         var supportHours = SprintWindowHours(supportLinked, report.StartDate, report.EndDate);
         var featureHours = SprintWindowHours(featureFound, report.StartDate, report.EndDate);
+        var supportWorkedOnCount = supportLinked.Count(i => SprintWindowHours([i], report.StartDate, report.EndDate) > 0);
+        var featureWorkedOnCount = featureFound.Count(i => SprintWindowHours([i], report.StartDate, report.EndDate) > 0);
         return new BugOriginSplit(
             SupportLinkedCount: supportLinked.Count,
             FeatureFoundCount: featureFound.Count,
             SupportLinkedHours: supportHours,
             FeatureFoundHours: featureHours,
-            SupportLinkedPct: bugs.Count == 0 ? 0 : Math.Round(supportLinked.Count * 100.0 / bugs.Count, 1));
+            SupportLinkedPct: bugs.Count == 0 ? 0 : Math.Round(supportLinked.Count * 100.0 / bugs.Count, 1),
+            SupportLinkedWorkedOnCount: supportWorkedOnCount,
+            FeatureFoundWorkedOnCount: featureWorkedOnCount);
     }
 
     // ── Issues by epic: which epics are generating the load, closed this sprint vs still open.
@@ -251,13 +272,18 @@ public static class DeliveryHealthCalculator
         .OrderByDescending(p => p.Count)
         .ToList();
 
-    public sealed record BugTypeSplit(int BugTypeCount, int RedesignTypeCount, int BugTypeClosedCount, int RedesignTypeClosedCount);
+    // BugTypeCount/RedesignTypeCount are true totals in the passed-in bug list (including ones
+    // nobody has logged time on yet); *WorkedOnCount is the subset that actually has a worklog
+    // in the sprint window.
+    public sealed record BugTypeSplit(int BugTypeCount, int RedesignTypeCount, int BugTypeClosedCount, int RedesignTypeClosedCount, int BugTypeWorkedOnCount, int RedesignTypeWorkedOnCount);
 
-    public static BugTypeSplit ComputeBugVsRedesignSplit(List<SprintIssue> bugs) => new(
+    public static BugTypeSplit ComputeBugVsRedesignSplit(SprintReport report, List<SprintIssue> bugs) => new(
         BugTypeCount: bugs.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase)),
         RedesignTypeCount: bugs.Count(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase)),
         BugTypeClosedCount: bugs.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase) && i.StatusCategoryKey == "done"),
-        RedesignTypeClosedCount: bugs.Count(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase) && i.StatusCategoryKey == "done"));
+        RedesignTypeClosedCount: bugs.Count(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase) && i.StatusCategoryKey == "done"),
+        BugTypeWorkedOnCount: bugs.Count(i => string.Equals(i.IssueType, "Bug", StringComparison.OrdinalIgnoreCase) && SprintWindowHours([i], report.StartDate, report.EndDate) > 0),
+        RedesignTypeWorkedOnCount: bugs.Count(i => string.Equals(i.IssueType, "Redesign", StringComparison.OrdinalIgnoreCase) && SprintWindowHours([i], report.StartDate, report.EndDate) > 0));
 
     // ── Origin-row summary for the Bug Origin donut (JSSUPPORT-linked / Feature-found):
     // how many of this origin's bugs are closed, and how much time went into each issue type.
@@ -389,9 +415,15 @@ public static class DeliveryHealthCalculator
             return Math.Max(0, i.OriginalEstimateSeconds / 3600.0 - loggedByDay);
         }
 
+        // Day 1 is anchored to the full total, matching the Ideal line's starting point, even
+        // though resolutions/logged hours dated that same calendar day exist (Jira's sprint
+        // "start" is a timestamp, e.g. 08:00 — same-day activity after that moment would
+        // otherwise make Actual open already below Ideal). That activity still counts — it just
+        // shows up as the first visible drop on day 2 instead of retroactively lowering day 1.
+        var day1Total = useCountFallback ? scopedIssues.Count : totalEstimateHours;
         var points = new List<(DateTime, double)>();
         for (var d = start.Value; d <= cap; d = d.AddDays(1))
-            points.Add((d, scopedIssues.Sum(i => RemainingFor(i, d))));
+            points.Add((d, d == start.Value ? day1Total : scopedIssues.Sum(i => RemainingFor(i, d))));
         return points;
     }
 
@@ -432,9 +464,12 @@ public static class DeliveryHealthCalculator
         bool IsDoneByDay(SprintIssue i, DateTime d) => i.StatusCategoryKey == "done" &&
             (i.ResolutionDate.HasValue ? i.ResolutionDate.Value.Date <= d : d >= cap);
 
+        // Day 1 is anchored to the full count, matching the Ideal line's starting point — see
+        // ComputeBurndown for why (same-day resolutions after the sprint's start timestamp
+        // otherwise open Actual already below Ideal on day 1).
         var points = new List<(DateTime, int)>();
         for (var d = start.Value; d <= cap; d = d.AddDays(1))
-            points.Add((d, scopedIssues.Count(i => !IsDoneByDay(i, d))));
+            points.Add((d, d == start.Value ? scopedIssues.Count : scopedIssues.Count(i => !IsDoneByDay(i, d))));
         return points;
     }
 
