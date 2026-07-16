@@ -176,6 +176,16 @@ window.exportSectionsAsHtml = (sectionIds, fileName, chartIds, title, notesHtml)
             clone.insertBefore(clone.children[1], clone.children[0]);
         }
 
+        // This section is rendered off-screen on the live page (so its chart stays up to date
+        // without requiring the Bug Capacity popup to be open) — undo that positioning on the
+        // cloned copy so it renders normally in the export.
+        if (id === 'html-export-bugcap-burndown') {
+            clone.style.position = 'static';
+            clone.style.left = 'auto';
+            clone.style.top = 'auto';
+            clone.style.width = 'auto';
+        }
+
         // The "By Product" table is deliberately narrow on-screen (it sits beside the donut,
         // priority breakdown, etc.), but the export has far more spare width — widen it there.
         const productTableWrap = clone.querySelector('.dr-product-table-wrap');

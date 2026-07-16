@@ -427,9 +427,17 @@ public static class DeliveryHealthCalculator
         return points;
     }
 
+    // Weekdays fully completed strictly before d, relative to start — 0 on day 1 itself (so the
+    // Ideal line still opens at the full total), and held flat across a weekend since Saturday/
+    // Sunday never advance the weekday count (only the following Monday does).
+    private static int ElapsedWeekdaysBefore(DateTime start, DateTime d) =>
+        d <= start ? 0 : CountWeekdays(start, d.AddDays(-1));
+
     // Ideal burndown: straight-line trajectory from total scoped hours (sprint start) to zero
     // (sprint end), for every calendar day in the sprint — unlike ComputeBurndown, this is not
-    // capped at "today" so the full reference line renders even for days still to come.
+    // capped at "today" so the full reference line renders even for days still to come. The pace
+    // is weekday-based (Mon–Fri only) — the line holds flat over weekends instead of implying
+    // work happens then too, matching how the rest of the app counts sprint/capacity days.
     public static List<(DateTime Date, double IdealRemainingHours)> ComputeIdealBurndown(SprintReport report, List<SprintIssue> scopedIssues)
     {
         var start = report.StartDate?.Date;
@@ -439,12 +447,12 @@ public static class DeliveryHealthCalculator
         var totalHours = scopedIssues.Sum(i => i.OriginalEstimateSeconds) / 3600.0;
         if (totalHours == 0) totalHours = scopedIssues.Count;
 
-        var totalDays = (end.Value - start.Value).Days;
+        var totalWeekdays = Math.Max(1, CountWeekdays(start.Value, end.Value));
         var points = new List<(DateTime, double)>();
         for (var d = start.Value; d <= end.Value; d = d.AddDays(1))
         {
-            var elapsedDays = (d - start.Value).Days;
-            var idealRemaining = totalDays <= 0 ? 0 : totalHours * (1 - (double)elapsedDays / totalDays);
+            var elapsedWeekdays = ElapsedWeekdaysBefore(start.Value, d);
+            var idealRemaining = totalHours * (1 - (double)elapsedWeekdays / totalWeekdays);
             points.Add((d, Math.Max(0, idealRemaining)));
         }
         return points;
@@ -474,7 +482,8 @@ public static class DeliveryHealthCalculator
     }
 
     // Ideal task-count burndown: straight-line trajectory from total scoped issue count (sprint
-    // start) to zero (sprint end) — mirrors ComputeIdealBurndown but in issue counts.
+    // start) to zero (sprint end) — mirrors ComputeIdealBurndown but in issue counts, same
+    // weekday-only pace (flat over weekends).
     public static List<(DateTime Date, double IdealRemainingCount)> ComputeIdealTaskCountBurndown(SprintReport report, List<SprintIssue> scopedIssues)
     {
         var start = report.StartDate?.Date;
@@ -482,12 +491,12 @@ public static class DeliveryHealthCalculator
         if (start is null || end is null) return [];
 
         var totalCount = scopedIssues.Count;
-        var totalDays = (end.Value - start.Value).Days;
+        var totalWeekdays = Math.Max(1, CountWeekdays(start.Value, end.Value));
         var points = new List<(DateTime, double)>();
         for (var d = start.Value; d <= end.Value; d = d.AddDays(1))
         {
-            var elapsedDays = (d - start.Value).Days;
-            var idealRemaining = totalDays <= 0 ? 0 : totalCount * (1 - (double)elapsedDays / totalDays);
+            var elapsedWeekdays = ElapsedWeekdaysBefore(start.Value, d);
+            var idealRemaining = totalCount * (1 - (double)elapsedWeekdays / totalWeekdays);
             points.Add((d, Math.Max(0, idealRemaining)));
         }
         return points;
